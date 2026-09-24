@@ -3,17 +3,18 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import 'models/message.dart';
 import 'screens/chat_screen.dart';
+import 'services/settings_service.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Inicializa o Hive
   await Hive.initFlutter();
 
-  // Registra os adapters
   Hive.registerAdapter(MessageAdapter());
+
   await Hive.openBox<Message>('messages');
 
+  await SettingsService.instance.init();
 
   runApp(const GamaApp());
 }
@@ -25,12 +26,11 @@ class GamaApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Frequência40 — Gama',
+
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-      ),
+
+      theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
+
       home: const ChatScreen(),
     );
   }

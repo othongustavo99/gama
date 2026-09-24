@@ -11,7 +11,7 @@ class Message extends HiveObject {
   final String role; // "user" | "assistant" | "system"
 
   @HiveField(2)
-  final String content;
+  String content; // <-- agora é mutável
 
   @HiveField(3)
   final DateTime timestamp;
@@ -23,12 +23,8 @@ class Message extends HiveObject {
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 
-  // Helpers úteis
   bool get isUser => role == 'user';
   bool get isAssistant => role == 'assistant';
 
-  Map<String, dynamic> toJson() => {
-        'role': role,
-        'content': content,
-      };
+  Map<String, dynamic> toJson() => {'role': role, 'content': content};
 }
