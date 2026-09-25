@@ -2,15 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
-import 'settings_screen.dart';
 import '../models/message.dart';
+import '../services/conversation_service.dart';
 import '../services/ollama_service.dart';
+import 'settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  final String conversationId;
+
+  const ChatScreen({super.key, required this.conversationId});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -20,8 +22,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final OllamaService _ollama = OllamaService();
+  final ConversationService _service = ConversationService.instance;
 
-  late Box<Message> _messagesBox;
   List<Message> _messages = [];
   bool _isLoading = false;
   StreamSubscription? _streamSubscription;
@@ -29,19 +31,24 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _messagesBox = Hive.box<Message>('messages');
     _loadMessages();
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationId != widget.conversationId) {
+      _streamSubscription?.cancel();
+      _isLoading = false;
+      _loadMessages();
+    }
   }
 
   void _loadMessages() {
     setState(() {
-      _messages = _messagesBox.values.toList();
+      _messages = _service.getMessages(widget.conversationId);
     });
     _scrollToBottom(force: true);
-  }
-
-  Future<void> _saveMessage(Message message) async {
-    await _messagesBox.add(message);
   }
 
   void _scrollToBottom({bool force = false}) {
@@ -49,7 +56,6 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_scrollController.hasClients) return;
 
       final position = _scrollController.position;
-      // Só força o scroll se o usuário já estiver perto do final
       if (force || position.pixels >= position.maxScrollExtent - 120) {
         _scrollController.animateTo(
           position.maxScrollExtent,
@@ -68,21 +74,33 @@ class _ChatScreenState extends State<ChatScreen> {
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       role: 'user',
       content: text,
+      conversationId: widget.conversationId,
     );
 
     setState(() {
       _messages.add(userMessage);
       _isLoading = true;
     });
-    await _saveMessage(userMessage);
+
+    await _service.addMessage(userMessage);
     _controller.clear();
     _scrollToBottom(force: true);
 
-    // Mensagem vazia da Gama (vamos preenchendo)
+    // Atualiza o título da conversa com a primeira mensagem (estilo ChatGPT)
+    final conv = _service.currentConversation;
+    if (conv != null && (conv.title == 'Nova conversa' || conv.title.isEmpty)) {
+      final shortTitle = text.length > 40
+          ? '${text.substring(0, 40)}...'
+          : text;
+      await _service.renameConversation(widget.conversationId, shortTitle);
+    }
+
+    // Mensagem vazia da Gama (vamos preenchendo com o streaming)
     final assistantMessage = Message(
       id: '${DateTime.now().millisecondsSinceEpoch}_ai',
       role: 'assistant',
       content: '',
+      conversationId: widget.conversationId,
     );
 
     setState(() {
@@ -91,7 +109,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final stream = _ollama.chatStream(
-        messages: _messages.sublist(0, _messages.length - 1),
+        messages: _messages.where((m) => m.content.isNotEmpty).toList(),
       );
 
       _streamSubscription = stream.listen(
@@ -107,7 +125,9 @@ class _ChatScreenState extends State<ChatScreen> {
           _scrollToBottom();
         },
         onDone: () async {
-          await _saveMessage(_messages.last);
+          if (_messages.isNotEmpty && _messages.last.isAssistant) {
+            await _service.addMessage(_messages.last);
+          }
           if (mounted) {
             setState(() => _isLoading = false);
           }
@@ -121,31 +141,32 @@ class _ChatScreenState extends State<ChatScreen> {
             if (_messages.isNotEmpty && _messages.last.isAssistant) {
               _messages.last.content = _messages.last.content.isEmpty
                   ? errorMessage
-                  : '${_messages.last.content}\n\n'
-                        '[Erro: $e]';
+                  : '${_messages.last.content}\n\n[Erro: $e]';
             }
-
             _isLoading = false;
           });
 
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
-            await _saveMessage(_messages.last);
+            await _service.addMessage(_messages.last);
           }
         },
         cancelOnError: true,
       );
     } catch (e) {
       setState(() {
-        _messages.last.content = 'Desculpa, deu erro: $e';
+        if (_messages.isNotEmpty) {
+          _messages.last.content = 'Desculpa, deu erro: $e';
+        }
         _isLoading = false;
       });
-      await _saveMessage(_messages.last);
+      if (_messages.isNotEmpty) {
+        await _service.addMessage(_messages.last);
+      }
     }
   }
 
   Future<void> _stopGeneration() async {
     await _streamSubscription?.cancel();
-
     _streamSubscription = null;
 
     if (!mounted) return;
@@ -155,7 +176,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (lastMessage != null &&
         lastMessage.isAssistant &&
         lastMessage.content.isNotEmpty) {
-      await _saveMessage(lastMessage);
+      await _service.addMessage(lastMessage);
     }
 
     setState(() {
@@ -163,11 +184,39 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Future<void> _clearMemory() async {
-    await _messagesBox.clear();
-    setState(() {
-      _messages.clear();
-    });
+  Future<void> _clearCurrentConversation() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1F1F1F),
+        title: const Text('Limpar esta conversa?'),
+        content: const Text('Isso apaga todas as mensagens desta conversa.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Apagar',
+              style: TextStyle(color: Colors.redAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      // Apaga só as mensagens desta conversa
+      final messages = _service.getMessages(widget.conversationId);
+      for (final msg in messages) {
+        await msg.delete();
+      }
+      setState(() {
+        _messages.clear();
+      });
+    }
   }
 
   @override
@@ -180,256 +229,226 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0F0F0F),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF1A1A1A),
-        title: const Text(
-          'Gama',
-          style: TextStyle(fontWeight: FontWeight.w600),
-        ),
-        centerTitle: true,
-        elevation: 0,
-        actions: [
-          if (_isLoading)
-            IconButton(
-              icon: const Icon(Icons.stop_circle_outlined),
-              tooltip: 'Parar geração',
-              onPressed: _stopGeneration,
-            ),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Configurações',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Limpar memória',
-            onPressed: () async {
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  backgroundColor: const Color(0xFF1F1F1F),
-                  title: const Text('Limpar memória?'),
-                  content: const Text('Isso apaga toda a conversa salva.'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancelar'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text(
-                        'Apagar',
-                        style: TextStyle(color: Colors.redAccent),
+    return Column(
+      children: [
+        // ===== APP BAR =====
+        Container(
+          color: const Color(0xFF1A1A1A),
+          child: SafeArea(
+            bottom: false,
+            child: SizedBox(
+              height: 56,
+              child: Row(
+                children: [
+                  // Botão do Drawer
+                  IconButton(
+                    icon: const Icon(Icons.menu, color: Colors.white),
+                    onPressed: () => Scaffold.of(context).openDrawer(),
+                  ),
+                  Expanded(
+                    child: Text(
+                      _service.currentConversation?.title ?? 'Gamma',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  ],
-                ),
-              );
-
-              if (confirm == true) {
-                await _clearMemory();
-              }
-            },
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                final msg = _messages[index];
-                final isUser = msg.isUser;
-
-                return Align(
-                  alignment: isUser
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
-                  child: GestureDetector(
-                    onLongPress: () {
-                      Clipboard.setData(ClipboardData(text: msg.content));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Mensagem copiada'),
-                          duration: Duration(seconds: 1),
+                  ),
+                  if (_isLoading)
+                    IconButton(
+                      icon: const Icon(
+                        Icons.stop_circle_outlined,
+                        color: Colors.white70,
+                      ),
+                      tooltip: 'Parar geração',
+                      onPressed: _stopGeneration,
+                    ),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.settings_outlined,
+                      color: Colors.white70,
+                    ),
+                    tooltip: 'Configurações',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const SettingsScreen(),
                         ),
                       );
                     },
-                    child: Container(
-                      constraints: BoxConstraints(
-                        maxWidth: MediaQuery.of(context).size.width * 0.78,
-                      ),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isUser
-                            ? const Color(0xFF2563EB)
-                            : const Color(0xFF1F1F1F),
-                        borderRadius: BorderRadius.only(
-                          topLeft: const Radius.circular(18),
-                          topRight: const Radius.circular(18),
-                          bottomLeft: Radius.circular(isUser ? 18 : 4),
-                          bottomRight: Radius.circular(isUser ? 4 : 18),
-                        ),
-                      ),
-                      child: msg.content.isEmpty && !isUser && _isLoading
-                          ? const Text(
-                              '...',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                height: 1.4,
-                              ),
-                            )
-                          : MarkdownBody(
-                              data: msg.content,
-                              selectable: true,
-                              styleSheet: MarkdownStyleSheet(
-                                p: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  height: 1.4,
-                                ),
-                                h1: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                h2: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                h3: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                code: TextStyle(
-                                  backgroundColor: Colors.black.withValues(
-                                    alpha: 0.35,
-                                  ),
-                                  color: const Color(0xFF7DD3FC),
-                                  fontSize: 14,
-                                  fontFamily: 'monospace',
-                                ),
-                                codeblockDecoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.45),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                codeblockPadding: const EdgeInsets.all(12),
-                                blockquote: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 16,
-                                ),
-                                blockquoteDecoration: const BoxDecoration(
-                                  border: Border(
-                                    left: BorderSide(
-                                      color: Color(0xFF2563EB),
-                                      width: 3,
-                                    ),
-                                  ),
-                                ),
-                                listBullet: const TextStyle(
-                                  color: Colors.white,
-                                ),
-                                strong: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                em: const TextStyle(
-                                  color: Colors.white,
-                                  fontStyle: FontStyle.italic,
-                                ),
-                                a: const TextStyle(
-                                  color: Color(0xFF60A5FA),
-                                  decoration: TextDecoration.underline,
-                                ),
-                              ),
-                            ),
-                    ),
                   ),
-                );
-              },
-            ),
-          ),
-          if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 6),
-              child: Text(
-                'Gama está digitando...',
-                style: TextStyle(color: Colors.grey, fontSize: 13),
-              ),
-            ),
-          Container(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-            decoration: const BoxDecoration(
-              color: Color(0xFF1A1A1A),
-              border: Border(top: BorderSide(color: Color(0xFF2A2A2A))),
-            ),
-            child: SafeArea(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      style: const TextStyle(color: Colors.white),
-                      maxLines: 5,
-                      minLines: 1,
-                      textInputAction: TextInputAction.newline,
-                      decoration: InputDecoration(
-                        hintText: 'Fale com a Gama...',
-                        hintStyle: TextStyle(color: Colors.grey.shade500),
-                        filled: true,
-                        fillColor: const Color(0xFF2A2A2A),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 12,
-                        ),
-                      ),
-                      onSubmitted: (_) {
-                        // No mobile, enter cria nova linha.
-                        // Só envia se quiser forçar (ou use botão).
-                      },
+                  IconButton(
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      color: Colors.white70,
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: _isLoading
-                          ? Colors.grey.shade700
-                          : const Color(0xFF2563EB),
-                      shape: BoxShape.circle,
-                    ),
-                    child: IconButton(
-                      onPressed: _isLoading ? null : _sendMessage,
-                      icon: const Icon(Icons.send_rounded, color: Colors.white),
-                    ),
+                    tooltip: 'Limpar conversa',
+                    onPressed: _clearCurrentConversation,
                   ),
                 ],
               ),
             ),
           ),
-        ],
-      ),
+        ),
+
+        // ===== LISTA DE MENSAGENS =====
+        Expanded(
+          child: _messages.isEmpty
+              ? const Center(
+                  child: Text(
+                    'Como posso te ajudar hoje?',
+                    style: TextStyle(color: Colors.white38, fontSize: 16),
+                  ),
+                )
+              : ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  itemCount: _messages.length,
+                  itemBuilder: (context, index) {
+                    final msg = _messages[index];
+                    final isUser = msg.isUser;
+
+                    return Align(
+                      alignment: isUser
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: GestureDetector(
+                        onLongPress: () {
+                          Clipboard.setData(ClipboardData(text: msg.content));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Mensagem copiada'),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                        },
+                        child: Container(
+                          constraints: BoxConstraints(
+                            maxWidth: MediaQuery.of(context).size.width * 0.78,
+                          ),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isUser
+                                ? const Color(0xFFFF6B00)
+                                : const Color(0xFF1F1F1F),
+                            borderRadius: BorderRadius.only(
+                              topLeft: const Radius.circular(18),
+                              topRight: const Radius.circular(18),
+                              bottomLeft: Radius.circular(isUser ? 18 : 4),
+                              bottomRight: Radius.circular(isUser ? 4 : 18),
+                            ),
+                          ),
+                          child: msg.content.isEmpty && !isUser && _isLoading
+                              ? const Text(
+                                  '...',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    height: 1.4,
+                                  ),
+                                )
+                              : MarkdownBody(
+                                  data: msg.content,
+                                  selectable: true,
+                                  styleSheet: MarkdownStyleSheet(
+                                    p: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15.5,
+                                      height: 1.45,
+                                    ),
+                                    code: const TextStyle(
+                                      backgroundColor: Color(0xFF2A2A2A),
+                                      color: Color(0xFFE0E0E0),
+                                      fontSize: 13.5,
+                                    ),
+                                    codeblockDecoration: BoxDecoration(
+                                      color: const Color(0xFF2A2A2A),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+
+        // ===== INDICADOR "DIGITANDO" =====
+        if (_isLoading)
+          const Padding(
+            padding: EdgeInsets.only(left: 20, bottom: 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Gamma está digitando...',
+                style: TextStyle(color: Colors.grey, fontSize: 13),
+              ),
+            ),
+          ),
+
+        // ===== CAMPO DE TEXTO =====
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          decoration: const BoxDecoration(
+            color: Color(0xFF1A1A1A),
+            border: Border(top: BorderSide(color: Color(0xFF2A2A2A))),
+          ),
+          child: SafeArea(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    style: const TextStyle(color: Colors.white),
+                    maxLines: 5,
+                    minLines: 1,
+                    textInputAction: TextInputAction.newline,
+                    decoration: InputDecoration(
+                      hintText: 'Fale com a Gamma...',
+                      hintStyle: TextStyle(color: Colors.grey.shade500),
+                      filled: true,
+                      fillColor: const Color(0xFF2A2A2A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 12,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: _isLoading
+                        ? Colors.grey.shade700
+                        : const Color(0xFFFF6B00),
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    onPressed: _isLoading ? null : _sendMessage,
+                    icon: const Icon(Icons.send_rounded, color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

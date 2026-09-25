@@ -6,7 +6,7 @@ from .prompts import build_system_prompt
 
 class GamaCore:
     """
-    Núcleo central da Gama.
+    Núcleo central da Gamma.
 
     Responsável por:
     - personalidade

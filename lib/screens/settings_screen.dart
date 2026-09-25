@@ -328,7 +328,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: _save,
 
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2563EB),
+                backgroundColor: const Color(0xFFFF6B00),
 
                 foregroundColor: Colors.white,
 
