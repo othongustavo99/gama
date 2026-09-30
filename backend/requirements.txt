@@ -2,3 +2,5 @@ fastapi
 uvicorn[standard]
 httpx
 pydantic
+pypdf>=5.0.0
+python-multipart>=0.0.9

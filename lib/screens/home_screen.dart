@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/gama_colors.dart';
 import '../services/conversation_service.dart';
 import '../widgets/app_drawer.dart';
 import 'chat_screen.dart';
@@ -22,7 +23,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final currentId = _service.currentConversationId;
 
         return Scaffold(
-          backgroundColor: const Color(0xFF0D0D0D),
+          backgroundColor: GamaColors.background,
           drawer: AppDrawer(
             onNewChat: () async {
               await _service.createConversation();
@@ -34,7 +35,16 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           body: currentId == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const Center(
+                  child: SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: GamaColors.accent,
+                    ),
+                  ),
+                )
               : ChatScreen(key: ValueKey(currentId), conversationId: currentId),
         );
       },
