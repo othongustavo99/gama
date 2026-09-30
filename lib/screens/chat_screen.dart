@@ -52,27 +52,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _initSpeech();
   }
 
-  Future<void> _openLink(String? href) async {
-    if (href == null || href.trim().isEmpty) return;
-    var raw = href.trim();
-    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
-      raw = 'https://$raw';
-    }
-    final uri = Uri.tryParse(raw);
-    if (uri == null) {
-      _snack('Link inválido');
-      return;
-    }
-    try {
-      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!ok) {
-        await launchUrl(uri, mode: LaunchMode.platformDefault);
-      }
-    } catch (e) {
-      _snack('Não abriu o link: $e');
-    }
-  }
-
   Future<void> _initSpeech() async {
     try {
       _speechReady = await _speech.initialize(
@@ -155,6 +134,28 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     });
+  }
+
+  Future<void> _openLink(String? href) async {
+    if (href == null || href.trim().isEmpty) return;
+    var raw = href.trim();
+    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+      raw = 'https://$raw';
+    }
+    final uri = Uri.tryParse(raw);
+    if (uri == null) {
+      _snack('Link inválido');
+      return;
+    }
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok) {
+        // fallback Windows / alguns Android
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
+    } catch (e) {
+      _snack('Não abriu o link: $e');
+    }
   }
 
   void _snack(String text) {
@@ -361,23 +362,7 @@ class _ChatScreenState extends State<ChatScreen> {
         },
         onDone: () async {
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
-            final msg = _messages.last;
-            if (_pendingSources.isNotEmpty &&
-                !msg.content.contains('**Fontes:**')) {
-              final links = _pendingSources
-                  .where((s) => s.url.isNotEmpty)
-                  .map((s) {
-                    final name = s.title.trim().isEmpty
-                        ? s.url
-                        : s.title.trim();
-                    return '[$name](${s.url})';
-                  })
-                  .join(' · ');
-              if (links.isNotEmpty) {
-                msg.content = '${msg.content.trim()}\n\n**Fontes:** $links';
-              }
-            }
-            await _service.addMessage(msg);
+            await _service.addMessage(_messages.last);
           }
           if (mounted) {
             setState(() {
@@ -645,7 +630,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                     ? const _TypingDots()
                                     : MarkdownBody(
                                         data: msg.content,
-                                        // IMPORTANTE: selectable: true bloqueia o clique no link
+                                        // selectable: true impede o clique no link
                                         selectable: false,
                                         shrinkWrap: true,
                                         softLineBreak: true,
@@ -705,10 +690,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     : _streamPhase == 'thinking'
                     ? 'Pensando…'
                     : 'Gamma está respondendo…',
-                style: const TextStyle(
-                  color: GamaColors.textMuted,
-                  fontSize: 12,
-                ),
+                style: const TextStyle(color: GamaColors.textMuted, fontSize: 12),
               ),
             ),
           ),
