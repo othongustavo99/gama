@@ -1,15 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .ollama import ollama
+from .config import settings
+from .llm import llm
 from .routes.chat import router as chat_router
-from .routes.memory import router as memory_router
 from .routes.extract import router as extract_router
+from .routes.memory import router as memory_router
 
 
 app = FastAPI(
     title="Frequência40 API",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 app.add_middleware(
@@ -27,7 +28,7 @@ app.include_router(extract_router)
 
 @app.get("/health")
 async def health():
-    ollama_ok = await ollama.health()
+    ok = await llm.health()
     features = [
         "chat",
         "memory",
@@ -35,12 +36,16 @@ async def health():
         "model_summary",
         "memory_meta",
         "extract",
+        "multi_provider",
     ]
 
     return {
-        "status": "ok" if ollama_ok else "degraded",
+        "status": "ok" if ok else "degraded",
         "service": "frequencia40",
-        "version": "0.4.0",
-        "ollama": "online" if ollama_ok else "offline",
+        "version": "0.5.0",
+        "provider": settings.PROVIDER,
+        "llm": "online" if ok else "offline",
+        # compat com app antigo que olha "ollama"
+        "ollama": "online" if ok else "offline",
         "features": features,
     }

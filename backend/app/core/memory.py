@@ -1,13 +1,11 @@
 """
 Memória de longo prazo da Gamma.
-
-Armazena fatos estáveis sobre o usuário e preferências.
-Não é treino do modelo — é contexto injetado no system prompt.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 from datetime import datetime, timezone
@@ -15,10 +13,15 @@ from pathlib import Path
 from typing import List
 
 
-# Pasta de dados ao lado do backend (backend/data/memory.json)
-_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-_MEMORY_FILE = _DATA_DIR / "memory.json"
+def _data_dir() -> Path:
+    env = os.getenv("DATA_DIR", "").strip()
+    if env:
+        return Path(env)
+    # padrão: backend/data
+    return Path(__file__).resolve().parents[2] / "data"
 
+
+_MEMORY_FILE = _data_dir() / "memory.json"
 _lock = threading.Lock()
 
 
@@ -27,17 +30,6 @@ def _utc_now() -> str:
 
 
 class MemoryStore:
-    """
-    Persistência simples em JSON.
-
-    Estrutura:
-    {
-      "facts": [
-        {"id": "...", "text": "...", "created_at": "...", "source": "user|auto"}
-      ]
-    }
-    """
-
     MAX_FACTS = 40
 
     def __init__(self, path: Path | None = None):
@@ -54,6 +46,7 @@ class MemoryStore:
             return {"facts": []}
 
     def _write(self, data: dict) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -66,7 +59,6 @@ class MemoryStore:
         if not text:
             raise ValueError("Fato vazio")
 
-        # Evita duplicata óbvia
         with _lock:
             data = self._read()
             facts = data.get("facts", [])
@@ -82,7 +74,6 @@ class MemoryStore:
                 "source": source,
             }
             facts.append(item)
-            # Mantém só os mais recentes
             if len(facts) > self.MAX_FACTS:
                 facts = facts[-self.MAX_FACTS :]
             data["facts"] = facts
@@ -108,7 +99,6 @@ class MemoryStore:
         facts = self.list_facts()
         if not facts:
             return ""
-
         lines = [f"- {f['text']}" for f in facts]
         return (
             "MEMÓRIA DE LONGO PRAZO (fatos sobre o usuário e preferências):\n"
@@ -119,20 +109,13 @@ class MemoryStore:
         )
 
 
-# Padrões para extrair memória automaticamente de frases do usuário
 _REMEMBER_PATTERNS = [
     re.compile(
         r"(?:lembre(?:-se)?|lembra|grave|anote|salva(?:r)?(?:\s+na\s+mem[oó]ria)?)\s+(?:que\s+)?(.+)",
         re.IGNORECASE,
     ),
-    re.compile(
-        r"(?:remember(?:\s+that)?|note\s+that)\s+(.+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"meu nome [eé]\s+(.+)",
-        re.IGNORECASE,
-    ),
+    re.compile(r"(?:remember(?:\s+that)?|note\s+that)\s+(.+)", re.IGNORECASE),
+    re.compile(r"meu nome [eé]\s+(.+)", re.IGNORECASE),
     re.compile(
         r"eu (?:sou|trabalho(?:\s+como)?|prefiro|uso)\s+(.+)",
         re.IGNORECASE,
@@ -141,14 +124,9 @@ _REMEMBER_PATTERNS = [
 
 
 def try_extract_memory(user_text: str) -> str | None:
-    """
-    Tenta extrair um fato memorizável a partir da mensagem do usuário.
-    Retorna o texto do fato ou None.
-    """
     text = user_text.strip()
     if len(text) < 8 or len(text) > 300:
         return None
-
     for pattern in _REMEMBER_PATTERNS:
         m = pattern.search(text)
         if m:
@@ -158,5 +136,4 @@ def try_extract_memory(user_text: str) -> str | None:
     return None
 
 
-# Instância global
 memory_store = MemoryStore()

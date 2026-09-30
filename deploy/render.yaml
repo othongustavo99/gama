@@ -1,0 +1,22 @@
+# Blueprint Render — opcional
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: frequencia40-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: LLM_PROVIDER
+        value: openrouter
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_DEFAULT_MODEL
+        value: openai/gpt-4o-mini
+      - key: DATA_DIR
+        value: /data
+      - key: APP_NAME
+        value: Frequencia40-Gamma

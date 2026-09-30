@@ -4,56 +4,62 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..core.gama import GamaCore
+from ..llm import llm
 from ..models import ChatRequest
-from ..ollama import OllamaClient
 
 
 router = APIRouter()
-
-ollama = OllamaClient()
 gama = GamaCore()
 
 
 @router.get("/models")
 async def list_models():
-    models = await ollama.list_models()
-    return {"models": models}
+    models = await llm.list_models()
+    return {
+        "models": models,
+        "provider": llm.provider,
+    }
 
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
     """
-    Chat com:
-    - personalidade + memória
-    - resumo de contexto pelo modelo (quando a conversa é longa)
-    - meta NDJSON inicial se um fato foi gravado na memória
+    Chat com Gama Core + provider (ollama | openrouter | groq).
+
+    O stream continua no formato NDJSON estilo Ollama
+    para o app Flutter não mudar.
     """
     messages = [
         {"role": message.role, "content": message.content}
         for message in request.messages
     ]
 
+    model = llm.resolve_model(request.model)
+
     gama_messages, fact_saved = await gama.build_messages(
         messages,
-        model=request.model,
-        ollama_client=ollama,
+        model=model,
+        ollama_client=llm,
     )
 
     async def stream_with_meta():
-        # Linha de meta (Flutter trata e não mostra como texto da resposta)
         if fact_saved:
-            meta = {
-                "gama_meta": {
-                    "memory_saved": fact_saved,
-                }
-            }
+            meta = {"gama_meta": {"memory_saved": fact_saved}}
             yield json.dumps(meta, ensure_ascii=False) + "\n"
 
-        async for chunk in ollama.stream_chat(
-            model=request.model,
-            messages=gama_messages,
-        ):
-            yield chunk
+        try:
+            async for chunk in llm.stream_chat(
+                model=model,
+                messages=gama_messages,
+            ):
+                yield chunk
+        except Exception as e:
+            err = {
+                "error": str(e),
+                "message": {"role": "assistant", "content": f"Erro no provider: {e}"},
+                "done": True,
+            }
+            yield json.dumps(err, ensure_ascii=False) + "\n"
 
     return StreamingResponse(
         stream_with_meta(),
