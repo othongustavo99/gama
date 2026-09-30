@@ -40,5 +40,16 @@ class Settings:
     APP_URL = os.getenv("APP_URL", "https://frequencia40.local")
     APP_NAME = os.getenv("APP_NAME", "Frequencia40-Gamma")
 
+    # --- Web search ---
+    # 1 = ligado (padrão), 0 = desliga busca automática
+    WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "1").strip() not in (
+        "0",
+        "false",
+        "False",
+        "no",
+    )
+    # Opcional: https://brave.com/search/api/
+    BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "").strip()
+
 
 settings = Settings()

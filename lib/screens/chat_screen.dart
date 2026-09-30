@@ -698,7 +698,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     textInputAction: TextInputAction.newline,
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
-                      hintText: 'Mensagem, /memoria ou anexe um arquivo…',
+                      hintText: 'Digite sua mensagem...',
                       hintStyle: const TextStyle(
                         color: GamaColors.textMuted,
                         fontSize: 14,

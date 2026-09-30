@@ -6,11 +6,12 @@ from .llm import llm
 from .routes.chat import router as chat_router
 from .routes.extract import router as extract_router
 from .routes.memory import router as memory_router
+from .routes.search import router as search_router
 
 
 app = FastAPI(
     title="Frequência40 API",
-    version="0.5.0",
+    version="0.6.0",
 )
 
 app.add_middleware(
@@ -24,6 +25,7 @@ app.add_middleware(
 app.include_router(chat_router)
 app.include_router(memory_router)
 app.include_router(extract_router)
+app.include_router(search_router)
 
 
 @app.get("/health")
@@ -37,15 +39,16 @@ async def health():
         "memory_meta",
         "extract",
         "multi_provider",
+        "web_search",
     ]
 
     return {
         "status": "ok" if ok else "degraded",
         "service": "frequencia40",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "provider": settings.PROVIDER,
+        "web_search": settings.WEB_SEARCH_ENABLED,
         "llm": "online" if ok else "offline",
-        # compat com app antigo que olha "ollama"
         "ollama": "online" if ok else "offline",
         "features": features,
     }

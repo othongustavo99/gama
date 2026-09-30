@@ -24,10 +24,7 @@ async def list_models():
 @router.post("/chat")
 async def chat(request: ChatRequest):
     """
-    Chat com Gama Core + provider (ollama | openrouter | groq).
-
-    O stream continua no formato NDJSON estilo Ollama
-    para o app Flutter não mudar.
+    Chat com Gama Core + busca na web (quando fizer sentido) + LLM.
     """
     messages = [
         {"role": message.role, "content": message.content}
@@ -36,16 +33,20 @@ async def chat(request: ChatRequest):
 
     model = llm.resolve_model(request.model)
 
-    gama_messages, fact_saved = await gama.build_messages(
+    gama_messages, fact_saved, search_query = await gama.build_messages(
         messages,
         model=model,
         ollama_client=llm,
     )
 
     async def stream_with_meta():
+        meta: dict = {}
         if fact_saved:
-            meta = {"gama_meta": {"memory_saved": fact_saved}}
-            yield json.dumps(meta, ensure_ascii=False) + "\n"
+            meta["memory_saved"] = fact_saved
+        if search_query:
+            meta["web_search"] = search_query
+        if meta:
+            yield json.dumps({"gama_meta": meta}, ensure_ascii=False) + "\n"
 
         try:
             async for chunk in llm.stream_chat(
@@ -56,7 +57,10 @@ async def chat(request: ChatRequest):
         except Exception as e:
             err = {
                 "error": str(e),
-                "message": {"role": "assistant", "content": f"Erro no provider: {e}"},
+                "message": {
+                    "role": "assistant",
+                    "content": f"Erro no provider: {e}",
+                },
                 "done": True,
             }
             yield json.dumps(err, ensure_ascii=False) + "\n"
@@ -69,3 +73,4 @@ async def chat(request: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
