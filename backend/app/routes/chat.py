@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -7,7 +8,7 @@ from ..core.gama import GamaCore
 from ..llm import llm
 from ..models import ChatRequest
 
-
+logger = logging.getLogger(__name__)
 router = APIRouter()
 gama = GamaCore()
 
@@ -24,7 +25,7 @@ async def list_models():
 @router.post("/chat")
 async def chat(request: ChatRequest):
     """
-    Chat com Gama Core + busca na web (quando fizer sentido) + LLM.
+    Chat + busca (nunca deve cair em 502 por falha de search).
     """
     messages = [
         {"role": message.role, "content": message.content}
@@ -33,11 +34,27 @@ async def chat(request: ChatRequest):
 
     model = llm.resolve_model(request.model)
 
-    gama_messages, fact_saved, search_query = await gama.build_messages(
-        messages,
-        model=model,
-        ollama_client=llm,
-    )
+    fact_saved = None
+    search_query = None
+    try:
+        gama_messages, fact_saved, search_query = await gama.build_messages(
+            messages,
+            model=model,
+            ollama_client=llm,
+        )
+    except Exception as e:
+        logger.exception("build_messages failed: %s", e)
+        # Fallback: manda só as mensagens do usuário + system mínimo
+        gama_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Você é Gamma. Houve um problema interno ao montar o contexto. "
+                    "Responda o melhor possível à última mensagem do usuário."
+                ),
+            },
+            *messages[-12:],
+        ]
 
     async def stream_with_meta():
         meta: dict = {}
@@ -55,11 +72,15 @@ async def chat(request: ChatRequest):
             ):
                 yield chunk
         except Exception as e:
+            logger.exception("stream_chat failed: %s", e)
             err = {
                 "error": str(e),
                 "message": {
                     "role": "assistant",
-                    "content": f"Erro no provider: {e}",
+                    "content": (
+                        "Não consegui completar a resposta agora "
+                        f"(erro no modelo/API: {e}). Tente de novo em instantes."
+                    ),
                 },
                 "done": True,
             }
@@ -73,4 +94,3 @@ async def chat(request: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
-
