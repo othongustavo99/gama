@@ -5,7 +5,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'core/gama_colors.dart';
 import 'models/conversation.dart';
 import 'models/message.dart';
-import 'screens/home_screen.dart';
+import 'screens/splash_screen.dart';
 import 'services/conversation_service.dart';
 import 'services/settings_service.dart';
 
@@ -48,7 +48,7 @@ class GamaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Frequência40 — Gamma',
+      title: 'Gamma 1.0',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
@@ -74,15 +74,21 @@ class GamaApp extends StatelessWidget {
           backgroundColor: GamaColors.surfaceCard,
           contentTextStyle: const TextStyle(color: GamaColors.textPrimary),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
         dialogTheme: DialogThemeData(
           backgroundColor: GamaColors.surfaceCard,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
         popupMenuTheme: PopupMenuThemeData(
           color: GamaColors.surfaceCard,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
@@ -102,8 +108,7 @@ class GamaApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const HomeScreen(),
+      home: const SplashScreen(),
     );
   }
 }
-

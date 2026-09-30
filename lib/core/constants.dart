@@ -1,6 +1,6 @@
 class AppConstants {
   /// API local (desenvolvimento)
-  static const String apiBaseUrl = 'http://127.0.0.1:8000';
+  static const String apiBaseUrl = 'https://gama-production-592b.up.railway.app';
 
   /// Depois do deploy, troque nas Settings do app OU aqui:
   /// static const String apiBaseUrl = 'https://api.seudominio.com';

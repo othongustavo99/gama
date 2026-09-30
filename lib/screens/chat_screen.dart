@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -37,11 +38,67 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Arquivos anexados (ainda não enviados)
   final List<ProcessedAttachment> _attachments = [];
   final _attachmentService = AttachmentService();
+  final SpeechToText _speech = SpeechToText();
+  bool _speechReady = false;
+  bool _isListening = false;
 
   @override
   void initState() {
     super.initState();
     _loadMessages();
+    _initSpeech();
+  }
+
+  Future<void> _initSpeech() async {
+    try {
+      _speechReady = await _speech.initialize(
+        onStatus: (s) {
+          if (!mounted) return;
+          if (s == 'done' || s == 'notListening') {
+            setState(() => _isListening = false);
+          }
+        },
+        onError: (_) {
+          if (mounted) setState(() => _isListening = false);
+        },
+      );
+      if (mounted) setState(() {});
+    } catch (_) {
+      _speechReady = false;
+    }
+  }
+
+  Future<void> _toggleListen() async {
+    if (!_speechReady) {
+      await _initSpeech();
+      if (!_speechReady) {
+        _snack('Microfone indisponível neste dispositivo');
+        return;
+      }
+    }
+    if (_isListening) {
+      await _speech.stop();
+      setState(() => _isListening = false);
+      return;
+    }
+    setState(() => _isListening = true);
+    await _speech.listen(
+      localeId: 'pt_BR',
+      partialResults: true,
+      cancelOnError: true,
+      onResult: (result) {
+        if (!mounted) return;
+        setState(() {
+          _controller.text = result.recognizedWords;
+          _controller.selection = TextSelection.fromPosition(
+            TextPosition(offset: _controller.text.length),
+          );
+        });
+        if (result.finalResult) {
+          setState(() => _isListening = false);
+        }
+      },
+    );
   }
 
   @override
@@ -391,10 +448,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     onPressed: () => Scaffold.of(context).openDrawer(),
                   ),
-                  Expanded(
+                  const Expanded(
                     child: Text(
-                      _service.currentConversation?.title ?? 'Gamma',
-                      style: const TextStyle(
+                      'Gamma 1.0',
+                      style: TextStyle(
                         color: GamaColors.textPrimary,
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -445,91 +502,123 @@ class _ChatScreenState extends State<ChatScreen> {
 
         // Messages
         Expanded(
-          child: _messages.isEmpty
-              ? _EmptyState(
-                  onSuggestion: (text) {
-                    _controller.text = text;
-                    _sendMessage();
-                  },
-                )
-              : ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 16,
+          child: Stack(
+            children: [
+              // Logo de fundo (marca d'água)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Opacity(
+                    opacity: 0.20,
+                    child: Center(
+                      child: Image.asset(
+                        'assets/images/image2.png',
+                        width: 280,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                    ),
                   ),
-                  itemCount: _messages.length,
-                  itemBuilder: (context, index) {
-                    final msg = _messages[index];
-                    final isUser = msg.isUser;
-
-                    return Align(
-                      alignment: isUser
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
-                      child: GestureDetector(
-                        onLongPress: () {
-                          Clipboard.setData(ClipboardData(text: msg.content));
-                          _snack('Mensagem copiada');
+                ),
+              ),
+              Positioned.fill(
+                child: _messages.isEmpty
+                    ? _EmptyState(
+                        onSuggestion: (text) {
+                          _controller.text = text;
+                          _sendMessage();
                         },
-                        child: Container(
-                          constraints: BoxConstraints(
-                            maxWidth: MediaQuery.of(context).size.width * 0.82,
-                          ),
-                          margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 11,
-                          ),
-                          decoration: BoxDecoration(
-                            color: isUser
-                                ? GamaColors.bubbleUser
-                                : GamaColors.bubbleAssistant,
-                            borderRadius: BorderRadius.only(
-                              topLeft: const Radius.circular(16),
-                              topRight: const Radius.circular(16),
-                              bottomLeft: Radius.circular(isUser ? 16 : 4),
-                              bottomRight: Radius.circular(isUser ? 4 : 16),
-                            ),
-                            border: isUser
-                                ? null
-                                : Border.all(color: GamaColors.border),
-                          ),
-                          child: msg.content.isEmpty && !isUser && _isLoading
-                              ? const _TypingDots()
-                              : MarkdownBody(
-                                  data: msg.content,
-                                  selectable: true,
-                                  styleSheet: MarkdownStyleSheet(
-                                    p: TextStyle(
-                                      color: isUser
-                                          ? Colors.white
-                                          : GamaColors.textPrimary,
-                                      fontSize: 15,
-                                      height: 1.45,
+                      )
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 16,
+                        ),
+                        itemCount: _messages.length,
+                        itemBuilder: (context, index) {
+                          final msg = _messages[index];
+                          final isUser = msg.isUser;
+
+                          return Align(
+                            alignment: isUser
+                                ? Alignment.centerRight
+                                : Alignment.centerLeft,
+                            child: GestureDetector(
+                              onLongPress: () {
+                                Clipboard.setData(
+                                  ClipboardData(text: msg.content),
+                                );
+                                _snack('Mensagem copiada');
+                              },
+                              child: Container(
+                                constraints: BoxConstraints(
+                                  maxWidth:
+                                      MediaQuery.of(context).size.width * 0.82,
+                                ),
+                                margin: const EdgeInsets.only(bottom: 12),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 11,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isUser
+                                      ? GamaColors.bubbleUser
+                                      : GamaColors.bubbleAssistant,
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: const Radius.circular(16),
+                                    topRight: const Radius.circular(16),
+                                    bottomLeft: Radius.circular(
+                                      isUser ? 16 : 4,
                                     ),
-                                    code: TextStyle(
-                                      backgroundColor: isUser
-                                          ? Colors.black26
-                                          : const Color(0xFF2A2A2A),
-                                      color: isUser
-                                          ? Colors.white
-                                          : const Color(0xFFE8E8E8),
-                                      fontSize: 13,
-                                    ),
-                                    codeblockDecoration: BoxDecoration(
-                                      color: isUser
-                                          ? Colors.black26
-                                          : const Color(0xFF2A2A2A),
-                                      borderRadius: BorderRadius.circular(8),
+                                    bottomRight: Radius.circular(
+                                      isUser ? 4 : 16,
                                     ),
                                   ),
+                                  border: isUser
+                                      ? null
+                                      : Border.all(color: GamaColors.border),
                                 ),
-                        ),
+                                child:
+                                    msg.content.isEmpty && !isUser && _isLoading
+                                    ? const _TypingDots()
+                                    : MarkdownBody(
+                                        data: msg.content,
+                                        selectable: true,
+                                        styleSheet: MarkdownStyleSheet(
+                                          p: TextStyle(
+                                            color: isUser
+                                                ? Colors.white
+                                                : GamaColors.textPrimary,
+                                            fontSize: 15,
+                                            height: 1.45,
+                                          ),
+                                          code: TextStyle(
+                                            backgroundColor: isUser
+                                                ? Colors.black26
+                                                : const Color(0xFF2A2A2A),
+                                            color: isUser
+                                                ? Colors.white
+                                                : const Color(0xFFE8E8E8),
+                                            fontSize: 13,
+                                          ),
+                                          codeblockDecoration: BoxDecoration(
+                                            color: isUser
+                                                ? Colors.black26
+                                                : const Color(0xFF2A2A2A),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
+              ),
+            ],
+          ),
         ),
 
         if (_isLoading)
@@ -579,6 +668,16 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                IconButton(
+                  onPressed: _isLoading ? null : _toggleListen,
+                  tooltip: _isListening ? 'Parar gravação' : 'Falar',
+                  icon: Icon(
+                    _isListening ? Icons.mic : Icons.mic_none_rounded,
+                    color: _isListening
+                        ? GamaColors.accent
+                        : GamaColors.textSecondary,
+                  ),
+                ),
                 IconButton(
                   onPressed: _isLoading ? null : _pickFiles,
                   tooltip: 'Anexar código/arquivo',
