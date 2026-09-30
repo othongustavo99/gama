@@ -279,3 +279,4 @@ async def _search_ddgs(query: str, max_results: int) -> list[dict[str, str]]:
         return out
 
     return await asyncio.to_thread(_run)
+

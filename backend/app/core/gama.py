@@ -1,20 +1,18 @@
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 import logging
 
 from .context import ContextManager
 from .memory import memory_store, try_extract_memory
 from .prompts import build_system_prompt
 from ..config import settings
-from ..web_search import should_search, search_and_format
+from ..web_search import should_search, search_web, _format_results
 
 logger = logging.getLogger(__name__)
 
 
 class GamaCore:
     def __init__(self, max_context_messages: int = 24):
-        self.context_manager = ContextManager(
-            max_messages=max_context_messages
-        )
+        self.context_manager = ContextManager(max_messages=max_context_messages)
 
     async def build_messages(
         self,
@@ -24,9 +22,15 @@ class GamaCore:
         ollama_client,
         auto_memory: bool = True,
         enable_web_search: bool = True,
-    ) -> Tuple[List[Dict[str, str]], Optional[str], Optional[str]]:
+        prefetched_sources: Optional[List[Dict[str, str]]] = None,
+        prefetched_query: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, str]], Optional[str], Optional[str], List[Dict[str, str]]]:
+        """
+        Returns: prepared, fact_saved, search_query, sources
+        """
         fact_saved: Optional[str] = None
-        search_query: Optional[str] = None
+        search_query: Optional[str] = prefetched_query
+        sources: List[Dict[str, str]] = list(prefetched_sources or [])
         web_block = ""
 
         last_user = ""
@@ -44,22 +48,18 @@ class GamaCore:
                 except Exception:
                     fact_saved = None
 
-        web_on = enable_web_search and getattr(
-            settings, "WEB_SEARCH_ENABLED", True
-        )
+        web_on = enable_web_search and getattr(settings, "WEB_SEARCH_ENABLED", True)
+
         if web_on and last_user and should_search(last_user):
-            query = last_user.strip()
-            if len(query) > 200:
-                query = query[:200]
+            query = last_user.strip()[:200]
             search_query = query
-            try:
-                web_block = await search_and_format(query, max_results=5)
-            except Exception as e:
-                logger.warning("search_and_format: %s", e)
-                web_block = (
-                    "[Busca na web indisponível no momento. "
-                    "Responda com cautela e diga que não conseguiu pesquisar.]"
-                )
+            if not sources:
+                try:
+                    sources = await search_web(query, max_results=5)
+                except Exception as e:
+                    logger.warning("search: %s", e)
+                    sources = []
+            web_block = _format_results(sources, query)
 
         try:
             memory_block = memory_store.as_prompt_block()
@@ -73,20 +73,17 @@ class GamaCore:
 
         async def _summarize(older: List[Dict[str, str]]) -> str:
             sample = older[-20:] if len(older) > 20 else older
-            transcript_lines = []
+            lines = []
             for m in sample:
                 role = "Usuário" if m.get("role") == "user" else "Gamma"
                 text = (m.get("content") or "").replace("\n", " ")
                 if len(text) > 200:
                     text = text[:200] + "…"
-                transcript_lines.append(f"{role}: {text}")
-            transcript = "\n".join(transcript_lines)
+                lines.append(f"{role}: {text}")
             prompt = (
                 "Resuma em português, em no máximo 8 frases curtas, "
-                "os pontos importantes desta conversa. "
-                "Foque em decisões, fatos, preferências e tarefas. "
-                "Não invente nada.\n\n"
-                f"{transcript}"
+                "os pontos importantes desta conversa. Não invente nada.\n\n"
+                + "\n".join(lines)
             )
             return await ollama_client.chat_once(
                 model=model,
@@ -95,12 +92,9 @@ class GamaCore:
             )
 
         try:
-            context = await self.context_manager.prepare(
-                messages,
-                summarize=_summarize,
-            )
+            context = await self.context_manager.prepare(messages, summarize=_summarize)
         except Exception as e:
-            logger.warning("context prepare failed: %s", e)
+            logger.warning("context: %s", e)
             context = messages[-16:]
 
         prepared: List[Dict[str, str]] = [
@@ -109,4 +103,4 @@ class GamaCore:
         if web_block:
             prepared.append({"role": "system", "content": web_block})
         prepared.extend(context)
-        return prepared, fact_saved, search_query
+        return prepared, fact_saved, search_query, sources
