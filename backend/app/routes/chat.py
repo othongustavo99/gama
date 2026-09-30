@@ -60,7 +60,7 @@ async def chat(request: ChatRequest):
                 ) + "\n"
 
                 try:
-                    sources = await search_web(search_query, max_results=5)
+                    sources = await search_web(search_query, max_results=8)
                 except Exception as e:
                     logger.warning("search failed: %s", e)
                     sources = []

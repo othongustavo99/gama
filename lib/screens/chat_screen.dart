@@ -5,6 +5,7 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/gama_colors.dart';
 import '../models/message.dart';
@@ -33,7 +34,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   List<Message> _messages = [];
   bool _isLoading = false;
-  StreamSubscription? _streamSubscription;
+  String _streamPhase = '';
+  List<WebSource> _pendingSources = [];
+  StreamSubscription<ChatStreamEvent>? _streamSubscription;
 
   /// Arquivos anexados (ainda não enviados)
   final List<ProcessedAttachment> _attachments = [];
@@ -47,6 +50,27 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _loadMessages();
     _initSpeech();
+  }
+
+  Future<void> _openLink(String? href) async {
+    if (href == null || href.trim().isEmpty) return;
+    var raw = href.trim();
+    if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+      raw = 'https://$raw';
+    }
+    final uri = Uri.tryParse(raw);
+    if (uri == null) {
+      _snack('Link inválido');
+      return;
+    }
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok) {
+        await launchUrl(uri, mode: LaunchMode.platformDefault);
+      }
+    } catch (e) {
+      _snack('Não abriu o link: $e');
+    }
   }
 
   Future<void> _initSpeech() async {
@@ -275,6 +299,8 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _messages.add(userMessage);
       _isLoading = true;
+      _streamPhase = 'thinking';
+      _pendingSources = [];
     });
 
     await _service.addMessage(userMessage);
@@ -312,13 +338,21 @@ class _ChatScreenState extends State<ChatScreen> {
 
           if (event.memorySaved != null) {
             _snack('Salvei na memória: ${event.memorySaved}');
-            return;
+          }
+
+          if (event.phase != null) {
+            setState(() => _streamPhase = event.phase!);
+          }
+
+          if (event.sources != null && event.sources!.isNotEmpty) {
+            _pendingSources = List<WebSource>.from(event.sources!);
           }
 
           final token = event.token;
           if (token == null) return;
 
           setState(() {
+            _streamPhase = 'typing';
             if (_messages.isNotEmpty && _messages.last.isAssistant) {
               _messages.last.content += token;
             }
@@ -327,9 +361,31 @@ class _ChatScreenState extends State<ChatScreen> {
         },
         onDone: () async {
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
-            await _service.addMessage(_messages.last);
+            final msg = _messages.last;
+            if (_pendingSources.isNotEmpty &&
+                !msg.content.contains('**Fontes:**')) {
+              final links = _pendingSources
+                  .where((s) => s.url.isNotEmpty)
+                  .map((s) {
+                    final name = s.title.trim().isEmpty
+                        ? s.url
+                        : s.title.trim();
+                    return '[$name](${s.url})';
+                  })
+                  .join(' · ');
+              if (links.isNotEmpty) {
+                msg.content = '${msg.content.trim()}\n\n**Fontes:** $links';
+              }
+            }
+            await _service.addMessage(msg);
           }
-          if (mounted) setState(() => _isLoading = false);
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+              _streamPhase = '';
+              _pendingSources = [];
+            });
+          }
         },
         onError: (e) async {
           if (!mounted) return;
@@ -341,6 +397,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   : '${_messages.last.content}\n\n[Erro: $e]';
             }
             _isLoading = false;
+            _streamPhase = '';
+            _pendingSources = [];
           });
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
             await _service.addMessage(_messages.last);
@@ -371,7 +429,11 @@ class _ChatScreenState extends State<ChatScreen> {
         lastMessage.content.isNotEmpty) {
       await _service.addMessage(lastMessage);
     }
-    setState(() => _isLoading = false);
+    setState(() {
+      _isLoading = false;
+      _streamPhase = '';
+      _pendingSources = [];
+    });
   }
 
   Future<void> _clearCurrentConversation() async {
@@ -583,7 +645,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                     ? const _TypingDots()
                                     : MarkdownBody(
                                         data: msg.content,
-                                        selectable: true,
+                                        // IMPORTANTE: selectable: true bloqueia o clique no link
+                                        selectable: false,
+                                        shrinkWrap: true,
+                                        softLineBreak: true,
+                                        onTapLink: (text, href, title) {
+                                          _openLink(href);
+                                        },
                                         styleSheet: MarkdownStyleSheet(
                                           p: TextStyle(
                                             color: isUser
@@ -591,6 +659,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                                 : GamaColors.textPrimary,
                                             fontSize: 15,
                                             height: 1.45,
+                                          ),
+                                          a: const TextStyle(
+                                            color: GamaColors.accent,
+                                            decoration:
+                                                TextDecoration.underline,
                                           ),
                                           code: TextStyle(
                                             backgroundColor: isUser
@@ -622,13 +695,20 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
 
         if (_isLoading)
-          const Padding(
-            padding: EdgeInsets.only(left: 20, bottom: 6),
+          Padding(
+            padding: const EdgeInsets.only(left: 20, bottom: 6),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                'Gamma está digitando…',
-                style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                _streamPhase == 'searching'
+                    ? 'Buscando na web…'
+                    : _streamPhase == 'thinking'
+                    ? 'Pensando…'
+                    : 'Gamma está respondendo…',
+                style: const TextStyle(
+                  color: GamaColors.textMuted,
+                  fontSize: 12,
+                ),
               ),
             ),
           ),
