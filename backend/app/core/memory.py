@@ -158,14 +158,23 @@ class MemoryStore:
 
 # --------------------------------------------------------------------------- extract
 
+
 _REMEMBER_PATTERNS = [
     re.compile(
-        r"(?:lembre(?:-se)?|lembra|grave|anote|salva(?:r)?(?:\s+na\s+mem[oó]ria)?)\s+(?:que\s+)?(.+)",
+        r"(?:lembre(?:-se)?|lembra|grave|anote|salva(?:r)?)\s+(?:(?:isso|isto)\s+)?(?:na\s+mem[oó]ria\s+)?(?:que\s+)?(.+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:coloca|ponha|guarda)\s+na\s+mem[oó]ria\s+(?:que\s+)?(.+)",
         re.IGNORECASE,
     ),
     re.compile(r"(?:remember(?:\s+that)?|note\s+that)\s+(.+)", re.IGNORECASE),
     re.compile(r"meu nome [eé]\s+(.+)", re.IGNORECASE),
     re.compile(r"me chamo\s+(.+)", re.IGNORECASE),
+    re.compile(
+        r"(?:minha|meu)\s+cor\s+favorita\s+[eé]\s+(.+)",
+        re.IGNORECASE,
+    ),
     re.compile(
         r"eu (?:sou|trabalho(?:\s+como)?|prefiro|uso|moro(?:\s+em)?|estudo)\s+(.+)",
         re.IGNORECASE,
@@ -183,9 +192,10 @@ _REMEMBER_PATTERNS = [
 
 def try_extract_memory(user_text: str) -> Optional[str]:
     """Extração rápida por regex (sincrono, no início do turno)."""
-    text = (user_text or "").strip()
-    # ignora blocos enormes de código/anexo
-    if len(text) < 8 or len(text) > 500:
+    if not isinstance(user_text, str):
+        return None
+    text = user_text.strip()
+    if len(text) < 8 or len(text) > 800:
         return None
     if text.count("```") >= 2:
         return None
@@ -196,9 +206,23 @@ def try_extract_memory(user_text: str) -> Optional[str]:
         m = pattern.search(text)
         if m:
             fact = m.group(1).strip().rstrip(".!")
-            fact = re.sub(r"\s+", " ", fact)
+            fact = re.sub(r"^(?:na\s+mem[oó]ria\s+)", "", fact, flags=re.I)
+            fact = re.sub(r"\s+", " ", fact).strip()
             if 3 <= len(fact) <= 300:
+                # normaliza preferências de cor
+                if re.search(r"cor\s+favorita", text, re.I) and "cor favorita" not in fact.lower():
+                    fact = f"Cor favorita: {fact}"
                 return fact
+
+    # frase direta: "minha cor favorita é X" sem verbo de memória
+    m = re.search(
+        r"(?:minha|meu)\s+cor\s+favorita\s+[eé]\s+([^\n\.!?]+)",
+        text,
+        re.I,
+    )
+    if m:
+        return f"Cor favorita: {m.group(1).strip()}"
+
     return None
 
 
@@ -220,7 +244,7 @@ async def extract_facts_with_llm(
         return []
     # evita gastar LLM em mensagens puramente técnicas curtas sem sinal pessoal
     if not re.search(
-        r"\b(eu|meu|minha|prefiro|trabalho|projeto|app|chamo|nome|moro|empresa)\b",
+        r"\b(eu|meu|minha|prefiro|trabalho|projeto|app|chamo|nome|moro|empresa|favorita|favorito|cor|idade|anivers)\b",
         user_text,
         re.I,
     ) and not re.search(
