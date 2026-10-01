@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/constants.dart';
 import '../core/gama_colors.dart';
 import '../services/memory_service.dart';
 import '../services/ollama_service.dart';
@@ -42,21 +43,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _loadingModels = true;
       _statusMessage = null;
     });
+
+    const allowed = AppConstants.availableModels;
+
     try {
-      final models = await _api.listModels();
+      final remote = await _api.listModels();
       if (!mounted) return;
+
+      final filtered = allowed
+          .where(
+            (m) => remote.any((r) => r == m || r.endsWith(m) || m.endsWith(r)),
+          )
+          .toList();
+      final models = filtered.isNotEmpty
+          ? filtered
+          : List<String>.from(allowed);
+
       setState(() {
         _models = models;
-        if (_selectedModel == null && models.isNotEmpty) {
-          _selectedModel = models.first;
+        if (_selectedModel == null || !models.contains(_selectedModel)) {
+          _selectedModel = models.contains(AppConstants.defaultModel)
+              ? AppConstants.defaultModel
+              : models.first;
         }
         _loadingModels = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
+        _models = List<String>.from(allowed);
+        if (_selectedModel == null || !_models.contains(_selectedModel)) {
+          _selectedModel = AppConstants.defaultModel;
+        }
         _loadingModels = false;
-        _statusMessage = 'Não foi possível listar os modelos.\n$e';
+        _statusMessage =
+            'API não listou modelos. Usando: qwen2.5-coder:14b e phi4-mini.';
         _statusOk = false;
       });
     }
@@ -85,15 +106,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _factController.clear();
       await _loadMemory();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Fato salvo na memória')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Fato salvo na memória')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao salvar: $e')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Erro ao salvar: $e')));
       }
     }
   }
@@ -129,9 +149,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await SettingsService.instance.setModel(_selectedModel!);
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Configurações salvas')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Configurações salvas')));
     Navigator.pop(context);
   }
 
@@ -269,8 +288,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
                 isExpanded: true,
-                value:
-                    _models.contains(_selectedModel) ? _selectedModel : null,
+                value: _models.contains(_selectedModel) ? _selectedModel : null,
                 hint: Text(
                   _selectedModel ?? 'Selecione um modelo',
                   style: const TextStyle(color: GamaColors.textMuted),
@@ -282,10 +300,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 items: _models
                     .map(
-                      (model) => DropdownMenuItem(
-                        value: model,
-                        child: Text(model),
-                      ),
+                      (model) =>
+                          DropdownMenuItem(value: model, child: Text(model)),
                     )
                     .toList(),
                 onChanged: (value) {

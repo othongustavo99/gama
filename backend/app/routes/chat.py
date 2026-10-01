@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..core.gama import GamaCore
-from ..llm import llm
+from ..llm import llm, LLMClient
 from ..models import ChatRequest
 from ..web_search import should_search, search_web
 
@@ -124,8 +124,51 @@ async def chat(request: ChatRequest):
                 ensure_ascii=False,
             ) + "\n"
 
+            img_payload = None
+            if getattr(request, "images", None):
+                img_payload = [
+                    {"mime": i.mime, "data": i.data, "name": i.name}
+                    for i in request.images
+                    if i.data
+                ]
+
+            # Troca automática para modelo de visão só quando há imagem
+            active_model = model
+            if img_payload:
+                from ..config import settings as _settings
+                if llm.provider == "ollama":
+                    active_model = (
+                        getattr(_settings, "VISION_MODEL", None)
+                        or "qwen2-vl"
+                    )
+                elif llm.provider == "openrouter":
+                    active_model = (
+                        getattr(_settings, "VISION_MODEL", None)
+                        or "openai/gpt-4o-mini"
+                    )
+                elif llm.provider == "groq":
+                    # Groq: modelo com suporte a visão se disponível
+                    active_model = (
+                        getattr(_settings, "VISION_MODEL", None)
+                        or model
+                    )
+                gama_messages = LLMClient.inject_images(
+                    gama_messages,
+                    img_payload,
+                    provider=llm.provider,
+                )
+                yield json.dumps(
+                    {
+                        "gama_meta": {
+                            "phase": "thinking",
+                            "vision_model": active_model,
+                        }
+                    },
+                    ensure_ascii=False,
+                ) + "\n"
+
             async for chunk in llm.stream_chat(
-                model=model,
+                model=active_model,
                 messages=gama_messages,
             ):
                 yield chunk

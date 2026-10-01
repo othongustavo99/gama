@@ -14,12 +14,15 @@ class ProcessedAttachment {
   final String ext;
   final AttachmentKind kind;
 
-  /// Texto que será enviado ao modelo (extraído ou análise).
+  /// Texto para o corpo da mensagem (docs) ou rótulo curto (imagens).
   final String contentForModel;
 
-  /// Pré-visualização curta na UI (chip).
   final String label;
   final int bytes;
+
+  /// Imagem nativa: base64 puro (sem data:...). Null se não for imagem.
+  final String? imageBase64;
+  final String? mimeType;
 
   ProcessedAttachment({
     required this.name,
@@ -28,13 +31,22 @@ class ProcessedAttachment {
     required this.contentForModel,
     required this.label,
     required this.bytes,
+    this.imageBase64,
+    this.mimeType,
   });
+
+  bool get isNativeImage =>
+      kind == AttachmentKind.image &&
+      imageBase64 != null &&
+      imageBase64!.isNotEmpty;
 }
 
-/// Processa arquivos locais / câmera / galeria para o chat.
 class AttachmentService {
-  static const maxBytesPerFile = 8 * 1024 * 1024; // 8 MB
+  static const maxBytesPerFile = 8 * 1024 * 1024;
   static const maxTextExtract = 120000;
+
+  /// Limite para mandar imagem no chat (base64 ~ +33%)
+  static const maxImageBytes = 4 * 1024 * 1024;
 
   static const textExts = {
     '.dart',
@@ -71,15 +83,7 @@ class AttachmentService {
     '.csv',
   };
 
-  static const imageExts = {
-    '.png',
-    '.jpg',
-    '.jpeg',
-    '.gif',
-    '.webp',
-    '.bmp',
-    '.heic',
-  };
+  static const imageExts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'};
 
   static const audioExts = {'.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'};
 
@@ -91,6 +95,21 @@ class AttachmentService {
     if (audioExts.contains(e)) return AttachmentKind.audio;
     if (textExts.contains(e)) return AttachmentKind.text;
     return AttachmentKind.other;
+  }
+
+  static String mimeFor(String ext) {
+    switch (ext.toLowerCase()) {
+      case '.png':
+        return 'image/png';
+      case '.gif':
+        return 'image/gif';
+      case '.webp':
+        return 'image/webp';
+      case '.bmp':
+        return 'image/bmp';
+      default:
+        return 'image/jpeg';
+    }
   }
 
   Future<ProcessedAttachment> processFile(String path) async {
@@ -121,12 +140,11 @@ class AttachmentService {
 
       case AttachmentKind.zip:
         final data = await file.readAsBytes();
-        final extracted = _extractZipText(data, name);
         return ProcessedAttachment(
           name: name,
           ext: ext,
           kind: kind,
-          contentForModel: extracted,
+          contentForModel: _extractZipText(data, name),
           label: '$name (ZIP)',
           bytes: bytes,
         );
@@ -143,15 +161,26 @@ class AttachmentService {
         );
 
       case AttachmentKind.image:
-        // API tenta visão (OpenRouter) ou devolve metadados
-        final text = await _extractViaApi(path, name);
+        // Nativo: NÃO converte em texto via /extract.
+        // Manda bytes base64 no chat para o modelo de visão ver a imagem.
+        if (bytes > maxImageBytes) {
+          throw Exception(
+            '$name é grande demais para análise visual (máx. 4 MB). '
+            'Tente outra foto ou comprima.',
+          );
+        }
+        final data = await file.readAsBytes();
+        final b64 = base64Encode(data);
+        final mime = mimeFor(ext);
         return ProcessedAttachment(
           name: name,
           ext: ext,
           kind: kind,
-          contentForModel: text,
+          contentForModel: '', // texto não substitui a imagem
           label: '$name (imagem)',
           bytes: bytes,
+          imageBase64: b64,
+          mimeType: mime,
         );
 
       case AttachmentKind.audio:
@@ -160,9 +189,8 @@ class AttachmentService {
           ext: ext,
           kind: kind,
           contentForModel:
-              '[Áudio anexado: $name, $bytes bytes]\n'
-              'Transcrição automática ainda não está ativa. '
-              'Descreva o conteúdo se precisar de análise.',
+              '[Áudio: $name, $bytes bytes]\n'
+              'Transcrição automática ainda não está ativa.',
           label: '$name (áudio)',
           bytes: bytes,
         );
@@ -172,9 +200,7 @@ class AttachmentService {
           name: name,
           ext: ext,
           kind: kind,
-          contentForModel:
-              '[Arquivo anexado: $name, $bytes bytes, tipo $ext]\n'
-              'Tipo não analisado automaticamente.',
+          contentForModel: '[Arquivo: $name, $bytes bytes, tipo $ext]',
           label: name,
           bytes: bytes,
         );
@@ -198,8 +224,8 @@ class AttachmentService {
       final name = file.name;
       if (name.contains('__MACOSX') || name.endsWith('/')) continue;
       final ext = p.extension(name).toLowerCase();
-      if (!textExts.contains(ext) && ext != '.txt' && ext != '.md') {
-        buf.writeln('\n(ignorado: $name)');
+      if (!textExts.contains(ext)) {
+        buf.writeln('\n(ignorado binário: $name)');
         continue;
       }
       try {
@@ -209,7 +235,7 @@ class AttachmentService {
         );
         content = _clip(content);
         if (total + content.length > maxTextExtract) {
-          buf.writeln('\n…[limite de extração do ZIP]');
+          buf.writeln('\n…[limite do ZIP]');
           break;
         }
         buf.writeln('\n### $name');
@@ -222,9 +248,8 @@ class AttachmentService {
         buf.writeln('\n(não leu: $name)');
       }
     }
-
     if (files == 0) {
-      buf.writeln('\nNenhum arquivo de texto legível no ZIP.');
+      buf.writeln('\nNenhum texto legível no ZIP.');
     }
     return buf.toString();
   }
@@ -244,37 +269,39 @@ class AttachmentService {
       final res = await dio.post('/extract', data: form);
       final data = res.data as Map<String, dynamic>;
       final text = (data['text'] as String?)?.trim() ?? '';
-      if (text.isEmpty) {
-        return '[Arquivo: $name]\nExtração vazia.';
-      }
+      if (text.isEmpty) return '[PDF: $name]\nExtração vazia.';
       return text;
     } catch (e) {
-      final ext = p.extension(name).toLowerCase();
-      if (imageExts.contains(ext)) {
-        return '[Imagem anexada: $name]\n'
-            'Análise automática falhou ($e). '
-            'Descreva o que aparece na imagem.';
-      }
-      if (ext == '.pdf') {
-        return '[PDF: $name]\nExtração via API falhou ($e).';
-      }
-      return '[Arquivo: $name]\nFalha ao processar: $e';
+      return '[PDF: $name]\nExtração falhou ($e).';
     }
   }
 
+  /// Corpo de texto da mensagem (docs). Imagens vão em `images` no POST /chat.
   static String buildMessageBody(
     String userText,
     List<ProcessedAttachment> attachments,
   ) {
-    if (attachments.isEmpty) return userText;
+    final textParts = attachments.where((a) => !a.isNativeImage).toList();
+    final images = attachments.where((a) => a.isNativeImage).toList();
+
+    if (textParts.isEmpty && images.isEmpty) return userText;
 
     final buf = StringBuffer();
     if (userText.trim().isNotEmpty) {
       buf.writeln(userText.trim());
-      buf.writeln();
     }
-    buf.writeln('Anexos para análise:');
-    for (final a in attachments) {
+
+    if (images.isNotEmpty) {
+      if (buf.isNotEmpty) buf.writeln();
+      buf.writeln(
+        images.length == 1
+            ? 'Analise a imagem anexada (${images.first.name}).'
+            : 'Analise as ${images.length} imagens anexadas: '
+                  '${images.map((e) => e.name).join(", ")}.',
+      );
+    }
+
+    for (final a in textParts) {
       buf.writeln();
       if (a.kind == AttachmentKind.text) {
         final lang = a.ext.replaceFirst('.', '');
@@ -282,10 +309,25 @@ class AttachmentService {
         buf.writeln('```$lang');
         buf.writeln(a.contentForModel);
         buf.writeln('```');
-      } else {
+      } else if (a.contentForModel.isNotEmpty) {
         buf.writeln(a.contentForModel);
       }
     }
-    return buf.toString();
+    return buf.toString().trim();
+  }
+
+  static List<Map<String, String>> buildImagesPayload(
+    List<ProcessedAttachment> attachments,
+  ) {
+    return attachments
+        .where((a) => a.isNativeImage)
+        .map(
+          (a) => {
+            'mime': a.mimeType ?? 'image/jpeg',
+            'data': a.imageBase64!,
+            'name': a.name,
+          },
+        )
+        .toList();
   }
 }

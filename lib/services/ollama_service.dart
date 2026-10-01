@@ -107,6 +107,7 @@ class OllamaService {
   Stream<ChatStreamEvent> chatStream({
     required List<Message> messages,
     String? model,
+    List<Map<String, String>>? images,
   }) async* {
     final selectedModel = model ?? SettingsService.instance.model;
     final dio = _createDio();
@@ -118,7 +119,11 @@ class OllamaService {
 
       final response = await dio.post(
         '/chat',
-        data: {'model': selectedModel, 'messages': requestMessages},
+        data: {
+          'model': selectedModel,
+          'messages': requestMessages,
+          if (images != null && images.isNotEmpty) 'images': images,
+        },
         options: Options(
           responseType: ResponseType.stream,
           headers: {'Accept': 'application/x-ndjson'},

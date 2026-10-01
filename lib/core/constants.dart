@@ -1,14 +1,13 @@
 class AppConstants {
-  /// API local (desenvolvimento)
-  static const String apiBaseUrl = 'https://gama-production-592b.up.railway.app';
+  static const String apiBaseUrl =
+      'https://gama-production-592b.up.railway.app';
 
-  /// Depois do deploy, troque nas Settings do app OU aqui:
-  /// static const String apiBaseUrl = 'https://api.seudominio.com';
+  /// Modelo padrão
+  static const String defaultModel = 'qwen2.5-coder:14b';
 
-  /// Android Emulator:
-  /// static const String apiBaseUrl = 'http://10.0.2.2:8000';
-
-  /// Modelo padrão — no modo nuvem a API resolve o default
-  /// (OpenRouter/Groq) se você mandar um nome local.
-  static const String defaultModel = 'phi4-mini';
+  /// Únicos modelos na tela de Settings
+  static const List<String> availableModels = [
+    'qwen2.5-coder:14b',
+    'phi4-mini',
+  ];
 }

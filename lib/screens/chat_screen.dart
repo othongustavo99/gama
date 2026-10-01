@@ -323,12 +323,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _pickFiles() async {
     try {
-      // v13: allowMultiple não existe mais — pickFiles() já retorna lista
       final List<PlatformFile> files = await FilePicker.pickFiles(
         type: FileType.any,
       );
       if (files.isEmpty) return;
-
       for (final f in files) {
         final path = f.path;
         if (path == null || path.isEmpty) {
@@ -344,7 +342,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _addPath(String path) async {
     try {
-      _snack('Processando anexo…');
+      _snack(
+        path.toLowerCase().endsWith('.png') ||
+                path.toLowerCase().endsWith('.jpg') ||
+                path.toLowerCase().endsWith('.jpeg') ||
+                path.toLowerCase().endsWith('.webp') ||
+                path.toLowerCase().endsWith('.gif')
+            ? 'Preparando imagem…'
+            : 'Processando anexo…',
+      );
       final processed = await _attachmentService.processFile(path);
       if (!mounted) return;
       setState(() => _attachments.add(processed));
@@ -362,6 +368,8 @@ class _ChatScreenState extends State<ChatScreen> {
   String _buildMessageWithAttachments(String userText) {
     return AttachmentService.buildMessageBody(userText, _attachments);
   }
+
+  // imagens nativas → POST /chat images[]; docs → texto no content
 
   /// Comandos locais /memoria — não vão para o modelo.
   Future<bool> _handleSlashCommand(String text) async {
@@ -453,7 +461,9 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
 
-    final text = _buildMessageWithAttachments(rawText);
+    final pending = List<ProcessedAttachment>.from(_attachments);
+    final text = AttachmentService.buildMessageBody(rawText, pending);
+    final imagePayload = AttachmentService.buildImagesPayload(pending);
     _attachments.clear();
 
     final userMessage = Message(
@@ -497,6 +507,7 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final stream = _ollama.chatStream(
         messages: _messages.where((m) => m.content.isNotEmpty).toList(),
+        images: imagePayload.isEmpty ? null : imagePayload,
       );
 
       _streamSubscription = stream.listen(

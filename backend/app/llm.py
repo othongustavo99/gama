@@ -273,15 +273,82 @@ class LLMClient:
         raise RuntimeError(f"Provider desconhecido: {self.provider}")
 
     def _normalize_messages(self, messages: list[dict]) -> List[dict]:
-        """Garante role/content no formato OpenAI."""
+        """Garante role/content no formato OpenAI (texto ou multimodal)."""
         out = []
         for m in messages:
             role = m.get("role") or "user"
-            content = m.get("content") or ""
+            content = m.get("content")
+            if content is None:
+                content = ""
             if role not in ("system", "user", "assistant"):
                 role = "user"
+            # content pode ser str OU lista [{type, text/image_url}, ...]
             out.append({"role": role, "content": content})
         return out
+
+    @staticmethod
+    def inject_images(
+        messages: list[dict],
+        images,
+        *,
+        provider: str,
+    ) -> list[dict]:
+        """
+        Anexa imagens à última mensagem do usuário.
+        - openrouter/groq: content multimodal (image_url data URI)
+        - ollama: campo images[] com base64 puro
+        """
+        if not images:
+            return messages
+
+        msgs = [dict(m) for m in messages]
+        # acha última user
+        idx = None
+        for i in range(len(msgs) - 1, -1, -1):
+            if msgs[i].get("role") == "user":
+                idx = i
+                break
+        if idx is None:
+            msgs.append({"role": "user", "content": ""})
+            idx = len(msgs) - 1
+
+        raw_content = msgs[idx].get("content") or ""
+        if isinstance(raw_content, list):
+            text = " ".join(
+                p.get("text", "")
+                for p in raw_content
+                if isinstance(p, dict) and p.get("type") == "text"
+            ).strip()
+        else:
+            text = str(raw_content).strip()
+
+        if not text:
+            text = "Analise a(s) imagem(ns) anexada(s) e responda com base no que vir."
+
+        if provider == "ollama":
+            msgs[idx]["content"] = text
+            # Ollama: lista de base64 sem data: prefix
+            msgs[idx]["images"] = [
+                (img.get("data") or "").strip()
+                for img in images
+                if (img.get("data") or "").strip()
+            ]
+        else:
+            parts = [{"type": "text", "text": text}]
+            for img in images:
+                data = (img.get("data") or "").strip()
+                if not data:
+                    continue
+                mime = img.get("mime") or "image/jpeg"
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{data}"},
+                    }
+                )
+            msgs[idx]["content"] = parts
+
+        return msgs
 
 
 # Instância global (mesmo padrão do ollama.py antigo)

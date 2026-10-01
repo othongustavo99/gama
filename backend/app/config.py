@@ -48,7 +48,7 @@ class Settings:
     SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 
-    VISION_MODEL = os.getenv("VISION_MODEL", "openai/gpt-4o-mini")
+    VISION_MODEL = os.getenv("VISION_MODEL", "qwen2.5vl:7b")
 
 
 settings = Settings()
