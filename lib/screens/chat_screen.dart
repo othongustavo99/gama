@@ -505,10 +505,6 @@ class _ChatScreenState extends State<ChatScreen> {
         (event) {
           if (!mounted) return;
 
-          if (event.memorySaved != null) {
-            _snack('Salvei na memória: ${event.memorySaved}');
-          }
-
           if (event.phase != null) {
             setState(() => _streamPhase = event.phase!);
           }

@@ -110,11 +110,6 @@ async def chat(request: ChatRequest):
                     *messages[-12:],
                 ]
 
-            if fact_saved:
-                yield json.dumps(
-                    {"gama_meta": {"memory_saved": fact_saved}},
-                    ensure_ascii=False,
-                ) + "\n"
 
             if sources and not will_search:
                 yield json.dumps(
@@ -208,17 +203,8 @@ async def chat(request: ChatRequest):
                             llm_client=llm,
                             existing_facts=existing,
                         )
-                        saved = store.add_facts(new_facts, source="auto")
-                        if saved:
-                            yield json.dumps(
-                                {
-                                    "gama_meta": {
-                                        "memory_saved": saved[0]["text"],
-                                        "memory_auto_count": len(saved),
-                                    }
-                                },
-                                ensure_ascii=False,
-                            ) + ""
+                        store.add_facts(new_facts, source="auto")
+                        # grava silenciosamente — sem notificar o cliente
                 except Exception as mem_err:
                     logger.warning("auto memory: %s", mem_err)
 

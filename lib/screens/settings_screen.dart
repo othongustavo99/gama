@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../core/constants.dart';
 import '../core/gama_colors.dart';
-import '../services/memory_service.dart';
 import '../services/ollama_service.dart';
 import '../services/settings_service.dart';
 
@@ -15,9 +14,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _urlController = TextEditingController();
-  final _factController = TextEditingController();
   final _api = OllamaService();
-  final _memory = MemoryService();
 
   List<String> _models = [];
   String? _selectedModel;
@@ -26,16 +23,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _statusMessage;
   bool? _statusOk;
 
-  List<MemoryFact> _facts = [];
-  bool _loadingMemory = false;
-
   @override
   void initState() {
     super.initState();
     _urlController.text = SettingsService.instance.baseUrl;
     _selectedModel = SettingsService.instance.model;
     _loadModels();
-    _loadMemory();
   }
 
   Future<void> _loadModels() async {
@@ -83,41 +76,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _loadMemory() async {
-    setState(() => _loadingMemory = true);
-    try {
-      final facts = await _memory.listFacts();
-      if (!mounted) return;
-      setState(() {
-        _facts = facts;
-        _loadingMemory = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loadingMemory = false);
-    }
-  }
-
-  Future<void> _addFact() async {
-    final text = _factController.text.trim();
-    if (text.length < 3) return;
-    try {
-      await _memory.addFact(text);
-      _factController.clear();
-      await _loadMemory();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Fato salvo na memória')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erro ao salvar: $e')));
-      }
-    }
-  }
-
   Future<void> _testConnection() async {
     setState(() {
       _testing = true;
@@ -139,7 +97,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     if (ok) {
       await _loadModels();
-      await _loadMemory();
     }
   }
 
@@ -157,7 +114,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _urlController.dispose();
-    _factController.dispose();
     super.dispose();
   }
 
@@ -318,109 +274,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
               ),
             ),
-
-          // ========== MEMÓRIA ==========
-          const SizedBox(height: 28),
-          const _SectionTitle('Memória de longo prazo'),
-          const SizedBox(height: 8),
-          const Text(
-            'Fatos que a Gamma usa em todas as conversas. '
-            'No chat você também pode escrever: “Lembre que eu uso Flutter”.',
-            style: TextStyle(
-              color: GamaColors.textMuted,
-              fontSize: 12,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _factController,
-                  style: const TextStyle(color: GamaColors.textPrimary),
-                  decoration: const InputDecoration(
-                    hintText: 'Ex: Meu nome é Othon',
-                    isDense: true,
-                  ),
-                  onSubmitted: (_) => _addFact(),
-                ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: _addFact,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: GamaColors.accent,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: const Text('Salvar'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (_loadingMemory)
-            const Padding(
-              padding: EdgeInsets.all(12),
-              child: Center(
-                child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: GamaColors.accent,
-                  ),
-                ),
-              ),
-            )
-          else if (_facts.isEmpty)
-            const Text(
-              'Nenhum fato ainda.',
-              style: TextStyle(color: GamaColors.textMuted, fontSize: 13),
-            )
-          else
-            ..._facts.map((f) {
-              return Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
-                decoration: BoxDecoration(
-                  color: GamaColors.surfaceCard,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: GamaColors.border),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        f.text,
-                        style: const TextStyle(
-                          color: GamaColors.textPrimary,
-                          fontSize: 13.5,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.close,
-                        size: 18,
-                        color: GamaColors.textMuted,
-                      ),
-                      onPressed: () async {
-                        await _memory.deleteFact(f.id);
-                        await _loadMemory();
-                      },
-                    ),
-                  ],
-                ),
-              );
-            }),
 
           const SizedBox(height: 36),
           SizedBox(

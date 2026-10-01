@@ -169,18 +169,26 @@ _REMEMBER_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(r"(?:remember(?:\s+that)?|note\s+that)\s+(.+)", re.IGNORECASE),
+    # Identidade básica
     re.compile(r"meu nome [eé]\s+(.+)", re.IGNORECASE),
     re.compile(r"me chamo\s+(.+)", re.IGNORECASE),
+    re.compile(r"(?:eu\s+)?tenho\s+(\d{1,3})\s*anos", re.IGNORECASE),
+    re.compile(r"minha idade [eé]\s+(\d{1,3})", re.IGNORECASE),
+    re.compile(r"(?:nasci|nascido|nascida)\s+(?:em|no dia|no ano)?\s*(.+)", re.IGNORECASE),
+    re.compile(r"(?:sou\s+de|natural\s+de|nasci\s+em)\s+(.+)", re.IGNORECASE),
+    re.compile(r"(?:moro|vivo|resido)(?:\s+em|\s+no|\s+na)?\s+(.+)", re.IGNORECASE),
+    re.compile(r"(?:sou\s+)?(?:casado|casada|solteiro|solteira|divorciado|divorciada|viúvo|viúva|namorando)", re.IGNORECASE),
+    re.compile(r"(?:trabalho\s+como|sou\s+|minha\s+profiss[aã]o\s+[eé])\s*(.+)", re.IGNORECASE),
     re.compile(
         r"(?:minha|meu)\s+cor\s+favorita\s+[eé]\s+(.+)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"eu (?:sou|trabalho(?:\s+como)?|prefiro|uso|moro(?:\s+em)?|estudo)\s+(.+)",
+        r"eu (?:sou|trabalho(?:\s+como)?|prefiro|uso|moro(?:\s+em)?|estudo|gosto\s+de)\s+(.+)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:minha|meu)\s+(?:empresa|projeto|app|linguagem|stack|framework)\s+[eé]?\s*(.+)",
+        r"(?:minha|meu)\s+(?:empresa|projeto|app|linguagem|stack|framework|time|esposa|esposo|filho|filha|família)\s+[eé]?\s*(.+)",
         re.IGNORECASE,
     ),
     re.compile(
@@ -195,7 +203,7 @@ def try_extract_memory(user_text: str) -> Optional[str]:
     if not isinstance(user_text, str):
         return None
     text = user_text.strip()
-    if len(text) < 8 or len(text) > 800:
+    if len(text) < 6 or len(text) > 800:
         return None
     if text.count("```") >= 2:
         return None
@@ -205,16 +213,24 @@ def try_extract_memory(user_text: str) -> Optional[str]:
     for pattern in _REMEMBER_PATTERNS:
         m = pattern.search(text)
         if m:
-            fact = m.group(1).strip().rstrip(".!")
+            if m.lastindex and m.group(1):
+                fact = m.group(1).strip().rstrip(".!")
+            else:
+                fact = m.group(0).strip().rstrip(".!")
             fact = re.sub(r"^(?:na\s+mem[oó]ria\s+)", "", fact, flags=re.I)
             fact = re.sub(r"\s+", " ", fact).strip()
             if 3 <= len(fact) <= 300:
-                # normaliza preferências de cor
-                if re.search(r"cor\s+favorita", text, re.I) and "cor favorita" not in fact.lower():
+                lower = text.lower()
+                if re.search(r"cor\s+favorita", lower) and "cor favorita" not in fact.lower():
                     fact = f"Cor favorita: {fact}"
+                elif re.search(r"\b(anos|idade)\b", lower) and "idade" not in fact.lower():
+                    fact = f"Idade: {fact}"
+                elif re.search(r"\b(moro|vivo|resido)\b", lower) and "moro" not in fact.lower() and "vivo" not in fact.lower():
+                    fact = f"Mora em: {fact}"
+                elif re.search(r"\b(nasci|natural\s+de)\b", lower) and "natural" not in fact.lower() and "nasci" not in fact.lower():
+                    fact = f"Natural de: {fact}"
                 return fact
 
-    # frase direta: "minha cor favorita é X" sem verbo de memória
     m = re.search(
         r"(?:minha|meu)\s+cor\s+favorita\s+[eé]\s+([^\n\.!?]+)",
         text,
@@ -235,43 +251,65 @@ async def extract_facts_with_llm(
     existing_facts: List[str],
 ) -> List[str]:
     """
-    Após o turno: pede ao modelo 0–3 fatos estáveis sobre o usuário.
-    Só grava preferências/identidade/projeto — não resumo da conversa.
+    Após o turno: extrai automaticamente fatos estáveis sobre a pessoa.
+    Foca em identidade, biografia e personalidade — sem precisar o usuário pedir.
     """
     user_text = (user_text or "").strip()
     assistant_text = (assistant_text or "").strip()
-    if len(user_text) < 12:
-        return []
-    # evita gastar LLM em mensagens puramente técnicas curtas sem sinal pessoal
-    if not re.search(
-        r"\b(eu|meu|minha|prefiro|trabalho|projeto|app|chamo|nome|moro|empresa|favorita|favorito|cor|idade|anivers)\b",
-        user_text,
-        re.I,
-    ) and not re.search(
-        r"(lembre|grave|anote|mem[oó]ria)",
-        user_text,
-        re.I,
-    ):
+    if len(user_text) < 10:
         return []
 
-    existing = "\n".join(f"- {x}" for x in existing_facts[-20:]) or "(vazia)"
-    prompt = f"""Você extrai memória de longo prazo de um assistente pessoal.
+    personal_signal = re.search(
+        r"\b("
+        r"eu|meu|minha|meus|minhas|sou|tenho|chamo|nome|"
+        r"idade|anos|nasci|nascimento|anivers[aá]rio|natural|naturalidade|"
+        r"moro|vivo|resido|cidade|estado|país|localidade|"
+        r"casado|casada|solteiro|solteira|divorciado|divorciada|viúvo|viúva|namoro|namorando|esposa|esposo|marido|filho|filha|família|"
+        r"trabalho|trabalha|profiss[aã]o|cargo|empresa|estudo|faculdade|curso|"
+        r"prefiro|gosto|odeio|favorita|favorito|hobby|hobbies|"
+        r"projeto|app|stack|linguagem|framework"
+        r")\b",
+        user_text,
+        re.I,
+    )
+    explicit_memory = re.search(
+        r"(lembre|grave|anote|mem[oó]ria|remember|note\s+that)",
+        user_text,
+        re.I,
+    )
+    if not personal_signal and not explicit_memory:
+        return []
 
-Regras:
-- Retorne APENAS um JSON array de strings (0 a 3 itens).
-- Cada item é um fato ESTÁVEL sobre o USUÁRIO (nome, preferências, stack, projeto, restrições).
-- NÃO grave: resumo da conversa, código pontual, perguntas, opiniões da IA.
-- NÃO repita fatos já existentes.
-- Se não houver nada estável, retorne [].
+    existing = "\n".join(f"- {x}" for x in existing_facts[-25:]) or "(vazia)"
+    prompt = f"""Você é um extrator de memória de longo prazo de um assistente pessoal.
+
+Sua única tarefa: identificar fatos ESTÁVEIS e RELEVANTES sobre a PESSOA (o usuário) que moldam quem ela é.
+
+PRIORIDADE MÁXIMA (grave sempre que aparecer):
+- Nome completo ou como prefere ser chamado
+- Idade / data de nascimento / aniversário
+- Naturalidade (onde nasceu) e localidade atual (cidade/estado/país onde mora)
+- Estado civil (solteiro, casado, namorando, etc.) e família próxima
+- Profissão, cargo, empresa, área de atuação, estudos
+- Preferências fortes e estáveis (comida, cor, hobbies, valores, aversões)
+- Projetos pessoais/profissionais de longo prazo, stack/tecnologias que usa
+- Qualquer traço de personalidade ou restrição importante (ex: vegetariano, tem filhos, mora sozinho)
+
+REGRAS RÍGIDAS:
+1. Retorne APENAS um JSON array de strings (0 a 5 itens). Nada mais.
+2. Cada string deve ser um fato claro e autocontido (ex: "Nome: Othon", "Mora em São Paulo", "Tem 34 anos", "É casado", "Trabalha como desenvolvedor Flutter").
+3. NÃO grave: resumo da conversa, código pontual, perguntas, opiniões temporárias da IA, tarefas do dia.
+4. NÃO repita nem parafraseie fatos já existentes abaixo.
+5. Se não houver nenhum fato novo e estável, retorne exatamente [].
 
 Fatos já gravados:
 {existing}
 
 Mensagem do usuário:
-\"\"\"{user_text[:1200]}\"\"\"
+\"\"\"{user_text[:1400]}\"\"\"
 
-Trecho da resposta da assistente (contexto):
-\"\"\"{assistant_text[:800]}\"\"\"
+Trecho da resposta da assistente (só contexto):
+\"\"\"{assistant_text[:600]}\"\"\"
 
 JSON array:"""
 
@@ -282,7 +320,6 @@ JSON array:"""
             timeout=45.0,
         )
         raw = (raw or "").strip()
-        # extrai array
         m = re.search(r"\[[\s\S]*\]", raw)
         if not m:
             return []
@@ -290,7 +327,7 @@ JSON array:"""
         if not isinstance(data, list):
             return []
         out = []
-        for item in data[:3]:
+        for item in data[:5]:
             if isinstance(item, str) and 3 <= len(item.strip()) <= 300:
                 out.append(item.strip())
         return out
