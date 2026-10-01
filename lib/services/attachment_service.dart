@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
@@ -15,7 +14,7 @@ class ProcessedAttachment {
   final String ext;
   final AttachmentKind kind;
 
-  /// Texto que será enviado ao modelo (extraído ou nota descritiva).
+  /// Texto que será enviado ao modelo (extraído ou análise).
   final String contentForModel;
 
   /// Pré-visualização curta na UI (chip).
@@ -32,10 +31,10 @@ class ProcessedAttachment {
   });
 }
 
-/// Processa arquivos locais para anexar no chat.
+/// Processa arquivos locais / câmera / galeria para o chat.
 class AttachmentService {
-  static const maxBytesPerFile = 5 * 1024 * 1024; // 5 MB
-  static const maxTextExtract = 120000; // ~120k chars no total por arquivo
+  static const maxBytesPerFile = 8 * 1024 * 1024; // 8 MB
+  static const maxTextExtract = 120000;
 
   static const textExts = {
     '.dart',
@@ -69,9 +68,7 @@ class AttachmentService {
     '.ini',
     '.cfg',
     '.gradle',
-    '.properties',
-    '.env',
-    '.gitignore',
+    '.csv',
   };
 
   static const imageExts = {
@@ -84,15 +81,7 @@ class AttachmentService {
     '.heic',
   };
 
-  static const audioExts = {
-    '.mp3',
-    '.wav',
-    '.m4a',
-    '.aac',
-    '.ogg',
-    '.flac',
-    '.wma',
-  };
+  static const audioExts = {'.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'};
 
   static AttachmentKind kindFor(String ext) {
     final e = ext.toLowerCase();
@@ -108,9 +97,12 @@ class AttachmentService {
     final name = p.basename(path);
     final ext = p.extension(path).toLowerCase();
     final file = File(path);
+    if (!await file.exists()) {
+      throw Exception('Arquivo não encontrado: $name');
+    }
     final bytes = await file.length();
     if (bytes > maxBytesPerFile) {
-      throw Exception('$name é grande demais (máx. 5 MB)');
+      throw Exception('$name é grande demais (máx. 8 MB)');
     }
 
     final kind = kindFor(ext);
@@ -140,8 +132,7 @@ class AttachmentService {
         );
 
       case AttachmentKind.pdf:
-        // Tenta API; se falhar, nota descritiva
-        final text = await _extractPdfViaApi(path, name);
+        final text = await _extractViaApi(path, name);
         return ProcessedAttachment(
           name: name,
           ext: ext,
@@ -152,14 +143,13 @@ class AttachmentService {
         );
 
       case AttachmentKind.image:
+        // API tenta visão (OpenRouter) ou devolve metadados
+        final text = await _extractViaApi(path, name);
         return ProcessedAttachment(
           name: name,
           ext: ext,
           kind: kind,
-          contentForModel:
-              '[Imagem anexada: $name, ${bytes} bytes]\n'
-              'O modelo de texto atual não “vê” pixels. '
-              'Descreva o que há na imagem ou use um modelo com visão no Ollama (ex.: llava).',
+          contentForModel: text,
           label: '$name (imagem)',
           bytes: bytes,
         );
@@ -170,29 +160,36 @@ class AttachmentService {
           ext: ext,
           kind: kind,
           contentForModel:
-              '[Áudio anexado: $name, ${bytes} bytes]\n'
-              'Transcrição automática ainda não está ativa neste build. '
-              'Cole a transcrição ou o trecho relevante em texto.',
+              '[Áudio anexado: $name, $bytes bytes]\n'
+              'Transcrição automática ainda não está ativa. '
+              'Descreva o conteúdo se precisar de análise.',
           label: '$name (áudio)',
           bytes: bytes,
         );
 
       case AttachmentKind.other:
-        throw Exception(
-          'Tipo $ext não suportado. Use código, ZIP, PDF, imagem ou áudio.',
+        return ProcessedAttachment(
+          name: name,
+          ext: ext,
+          kind: kind,
+          contentForModel:
+              '[Arquivo anexado: $name, $bytes bytes, tipo $ext]\n'
+              'Tipo não analisado automaticamente.',
+          label: name,
+          bytes: bytes,
         );
     }
   }
 
   String _clip(String text) {
-    if (text.length <= maxTextExtract) return text;
-    return '${text.substring(0, maxTextExtract)}\n\n…[texto cortado por tamanho]';
+    final t = text.trim();
+    if (t.length <= maxTextExtract) return t;
+    return '${t.substring(0, maxTextExtract)}\n\n…[texto cortado]';
   }
 
-  String _extractZipText(Uint8List data, String zipName) {
+  String _extractZipText(List<int> data, String zipName) {
     final archive = ZipDecoder().decodeBytes(data);
-    final buf = StringBuffer();
-    buf.writeln('Conteúdo extraído do ZIP: $zipName');
+    final buf = StringBuffer('### $zipName (ZIP)\n');
     var total = 0;
     var files = 0;
 
@@ -202,7 +199,7 @@ class AttachmentService {
       if (name.contains('__MACOSX') || name.endsWith('/')) continue;
       final ext = p.extension(name).toLowerCase();
       if (!textExts.contains(ext) && ext != '.txt' && ext != '.md') {
-        buf.writeln('\n(ignorado binário/outro: $name)');
+        buf.writeln('\n(ignorado: $name)');
         continue;
       }
       try {
@@ -212,7 +209,7 @@ class AttachmentService {
         );
         content = _clip(content);
         if (total + content.length > maxTextExtract) {
-          buf.writeln('\n…[limite de extração do ZIP atingido]');
+          buf.writeln('\n…[limite de extração do ZIP]');
           break;
         }
         buf.writeln('\n### $name');
@@ -222,23 +219,23 @@ class AttachmentService {
         total += content.length;
         files++;
       } catch (_) {
-        buf.writeln('\n(não foi possível ler: $name)');
+        buf.writeln('\n(não leu: $name)');
       }
     }
 
     if (files == 0) {
-      buf.writeln('\nNenhum arquivo de texto legível encontrado no ZIP.');
+      buf.writeln('\nNenhum arquivo de texto legível no ZIP.');
     }
     return buf.toString();
   }
 
-  Future<String> _extractPdfViaApi(String path, String name) async {
+  Future<String> _extractViaApi(String path, String name) async {
     try {
       final dio = Dio(
         BaseOptions(
           baseUrl: SettingsService.instance.baseUrl,
-          connectTimeout: const Duration(seconds: 15),
-          receiveTimeout: const Duration(seconds: 60),
+          connectTimeout: const Duration(seconds: 20),
+          receiveTimeout: const Duration(seconds: 120),
         ),
       );
       final form = FormData.fromMap({
@@ -248,17 +245,23 @@ class AttachmentService {
       final data = res.data as Map<String, dynamic>;
       final text = (data['text'] as String?)?.trim() ?? '';
       if (text.isEmpty) {
-        return '[PDF: $name]\nNão foi possível extrair texto (PDF escaneado ou vazio).';
+        return '[Arquivo: $name]\nExtração vazia.';
       }
-      return '### $name (PDF)\n\n${_clip(text)}';
+      return text;
     } catch (e) {
-      return '[PDF anexado: $name]\n'
-          'Extração via API falhou ($e). '
-          'Suba a Frequência40 API com suporte a /extract (pypdf) ou cole o texto do PDF.';
+      final ext = p.extension(name).toLowerCase();
+      if (imageExts.contains(ext)) {
+        return '[Imagem anexada: $name]\n'
+            'Análise automática falhou ($e). '
+            'Descreva o que aparece na imagem.';
+      }
+      if (ext == '.pdf') {
+        return '[PDF: $name]\nExtração via API falhou ($e).';
+      }
+      return '[Arquivo: $name]\nFalha ao processar: $e';
     }
   }
 
-  /// Monta o bloco final para a mensagem do usuário.
   static String buildMessageBody(
     String userText,
     List<ProcessedAttachment> attachments,

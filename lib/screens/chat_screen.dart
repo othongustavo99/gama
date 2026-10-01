@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -165,31 +167,195 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _pickFiles() async {
-    // file_picker v12+: FilePicker.pickFiles() (sem .platform)
-    // Retorna List<PlatformFile> (lista vazia se cancelar)
-    final List<PlatformFile> files = await FilePicker.pickFiles(
-      type: FileType.any,
-    );
-    if (files.isEmpty) return;
-
-    for (final f in files) {
-      final path = f.path;
-      if (path == null || path.isEmpty) {
-        _snack('${f.name}: caminho indisponível (tente de novo)');
-        continue;
-      }
-      try {
-        final processed = await _attachmentService.processFile(path);
-        setState(() => _attachments.add(processed));
-        await LibraryScreen.addEntry(
-          name: processed.name,
-          kind: processed.kind.name,
-          bytes: processed.bytes,
+  Future<void> _showAttachMenu() async {
+    if (_isLoading) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: GamaColors.surfaceElevated,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: GamaColors.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const Text(
+                  'Anexar',
+                  style: TextStyle(
+                    color: GamaColors.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  leading: const Icon(
+                    Icons.photo_camera_outlined,
+                    color: GamaColors.accent,
+                  ),
+                  title: const Text(
+                    'Câmera',
+                    style: TextStyle(color: GamaColors.textPrimary),
+                  ),
+                  subtitle: const Text(
+                    'Tirar foto',
+                    style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickFromCamera();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(
+                    Icons.photo_library_outlined,
+                    color: GamaColors.accent,
+                  ),
+                  title: const Text(
+                    'Galeria',
+                    style: TextStyle(color: GamaColors.textPrimary),
+                  ),
+                  subtitle: const Text(
+                    'Escolher imagem',
+                    style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickFromGallery();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(
+                    Icons.folder_open_rounded,
+                    color: GamaColors.accent,
+                  ),
+                  title: const Text(
+                    'Arquivos',
+                    style: TextStyle(color: GamaColors.textPrimary),
+                  ),
+                  subtitle: const Text(
+                    'PDF, ZIP, código, documentos…',
+                    style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickFiles();
+                  },
+                ),
+              ],
+            ),
+          ),
         );
-      } catch (e) {
-        _snack('$e');
+      },
+    );
+  }
+
+  Future<bool> _ensurePermission(Permission permission, String label) async {
+    var status = await permission.status;
+    if (status.isGranted || status.isLimited) return true;
+    status = await permission.request();
+    if (status.isGranted || status.isLimited) return true;
+    if (status.isPermanentlyDenied) {
+      _snack('Permissão de $label negada. Ative nas configurações do app.');
+      await openAppSettings();
+      return false;
+    }
+    _snack('Permissão de $label necessária');
+    return false;
+  }
+
+  Future<void> _pickFromCamera() async {
+    final ok = await _ensurePermission(Permission.camera, 'câmera');
+    if (!ok) return;
+    try {
+      final picker = ImagePicker();
+      final shot = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+        maxWidth: 1920,
+      );
+      if (shot == null) return;
+      await _addPath(shot.path);
+    } catch (e) {
+      _snack('Câmera: $e');
+    }
+  }
+
+  Future<void> _pickFromGallery() async {
+    // Android 13+: photos; mais antigos: storage
+    final photos = await Permission.photos.status;
+    final storage = await Permission.storage.status;
+    if (!photos.isGranted && !photos.isLimited && !storage.isGranted) {
+      final p = await Permission.photos.request();
+      if (!p.isGranted && !p.isLimited) {
+        final s = await Permission.storage.request();
+        if (!s.isGranted) {
+          _snack('Permissão de galeria necessária');
+          return;
+        }
       }
+    }
+    try {
+      final picker = ImagePicker();
+      final img = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 1920,
+      );
+      if (img == null) return;
+      await _addPath(img.path);
+    } catch (e) {
+      _snack('Galeria: $e');
+    }
+  }
+
+  Future<void> _pickFiles() async {
+    try {
+      // v13: allowMultiple não existe mais — pickFiles() já retorna lista
+      final List<PlatformFile> files = await FilePicker.pickFiles(
+        type: FileType.any,
+      );
+      if (files.isEmpty) return;
+
+      for (final f in files) {
+        final path = f.path;
+        if (path == null || path.isEmpty) {
+          _snack('${f.name}: caminho indisponível');
+          continue;
+        }
+        await _addPath(path);
+      }
+    } catch (e) {
+      _snack('Arquivos: $e');
+    }
+  }
+
+  Future<void> _addPath(String path) async {
+    try {
+      _snack('Processando anexo…');
+      final processed = await _attachmentService.processFile(path);
+      if (!mounted) return;
+      setState(() => _attachments.add(processed));
+      await LibraryScreen.addEntry(
+        name: processed.name,
+        kind: processed.kind.name,
+        bytes: processed.bytes,
+      );
+      _snack('Anexado: ${processed.label}');
+    } catch (e) {
+      _snack('$e');
     }
   }
 
@@ -690,7 +856,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     : _streamPhase == 'thinking'
                     ? 'Pensando…'
                     : 'Gamma está respondendo…',
-                style: const TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                style: const TextStyle(
+                  color: GamaColors.textMuted,
+                  fontSize: 12,
+                ),
               ),
             ),
           ),
@@ -741,8 +910,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 IconButton(
-                  onPressed: _isLoading ? null : _pickFiles,
-                  tooltip: 'Anexar código/arquivo',
+                  onPressed: _isLoading ? null : _showAttachMenu,
+                  tooltip: 'Anexar (câmera, galeria, arquivos)',
                   icon: const Icon(
                     Icons.attach_file_rounded,
                     color: GamaColors.textSecondary,
