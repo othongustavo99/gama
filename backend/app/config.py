@@ -34,7 +34,6 @@ class Settings:
     APP_URL = os.getenv("APP_URL", "https://frequencia40.local")
     APP_NAME = os.getenv("APP_NAME", "Frequencia40-Gamma")
 
-    # --- Web search ---
     WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "1").strip() not in (
         "0",
         "false",
@@ -42,11 +41,14 @@ class Settings:
         "no",
     )
     WEB_SEARCH_TIMEOUT = float(os.getenv("WEB_SEARCH_TIMEOUT", "12"))
+    # aggressive | balanced | explicit
+    WEB_SEARCH_MODE = os.getenv("WEB_SEARCH_MODE", "aggressive").strip().lower()
 
-    # Opcionais (melhoram muito a qualidade se configurados)
     BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "").strip()
-    SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()  # Google via Serper
+    SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+
+    VISION_MODEL = os.getenv("VISION_MODEL", "openai/gpt-4o-mini")
 
 
 settings = Settings()

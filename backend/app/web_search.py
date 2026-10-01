@@ -1,18 +1,10 @@
 """
-Rede ampliada de busca na web para a Gamma (Railway-safe).
+Rede ampliada + busca PROATIVA.
 
-Fontes (em paralelo quando possível):
-  - Brave Search API          (BRAVE_API_KEY)
-  - Serper / Google           (SERPER_API_KEY)
-  - Tavily                    (TAVILY_API_KEY)
-  - Wikipedia pt + en
-  - Wikidata
-  - Stack Exchange (Stack Overflow + Super User + Server Fault…)
-  - DuckDuckGo Instant Answer
-  - DuckDuckGo HTML (httpx, leve)
-  - duckduckgo-search (pacote, último recurso)
-
-Tudo com timeout global — nunca deve derrubar o /chat.
+Modos (env WEB_SEARCH_MODE):
+  aggressive  → busca em quase toda mensagem útil (padrão recomendado)
+  balanced    → perguntas, fatos, tech, atualidades
+  explicit    → só se o usuário pedir pesquisa / internet
 """
 
 from __future__ import annotations
@@ -22,7 +14,7 @@ import logging
 import os
 import re
 from typing import Any
-from urllib.parse import quote, quote_plus
+from urllib.parse import quote
 
 import httpx
 
@@ -37,68 +29,105 @@ SEARCH_TIMEOUT_SEC = float(
     )
 )
 
-_UA = (
-    "Frequencia40-Gamma/0.7 "
-    "(+https://github.com; assistant; research)"
+SEARCH_MODE = (
+    os.getenv("WEB_SEARCH_MODE", getattr(settings, "WEB_SEARCH_MODE", "aggressive") or "aggressive")
+    .strip()
+    .lower()
 )
+
+_UA = "Frequencia40-Gamma/0.8 (+assistant; research)"
 
 _EXPLICIT = re.compile(
     r"\b("
     r"pesquisa(?:r)?|busc(?:a|ar)|google|na\s+internet|web\s*search|"
-    r"procure|me\s+diga\s+sobre|atualize[-\s]?me|fontes?|"
+    r"procure|atualize[-\s]?me|com\s+fontes|"
     r"o\s+que\s+est[aá]\s+acontecendo|not[ií]cia|"
     r"pre[cç]o\s+(?:atual|hoje|agora)|cota[cç][aã]o|"
-    r"hoje\s+(?:e|é)\s+dia|quem\s+ganhou|resultado\s+do\s+jogo|"
-    r"vers[aã]o\s+mais\s+recente|lan[cç]amento\s+de|"
-    r"documenta[cç][aã]o\s+(?:oficial|de)|"
-    r"compare|diferen[cç]a\s+entre"
+    r"vers[aã]o\s+mais\s+recente|lan[cç]amento"
     r")\b",
     re.IGNORECASE,
 )
 
-_QUESTION = re.compile(
-    r"^\s*(?:o\s+que|quem|quando|onde|qual|quais|como|por\s+que|porque|"
-    r"what|who|when|where|which|how|why|is|are)\b",
+_FACTUAL = re.compile(
+    r"\b("
+    r"o\s+que\s+[ée]|quem\s+[ée]|quando\s+|onde\s+|qual\s+|quais\s+|"
+    r"como\s+(?:funciona|fazer|usar|configurar|instalar)|"
+    r"por\s+que|porque|diferen[cç]a|compare|melhor\s+|"
+    r"significa|defini[cç][aã]o|hist[oó]ria\s+d|"
+    r"what\s+is|who\s+is|how\s+to|why\s+"
+    r")\b",
     re.IGNORECASE,
 )
 
 _SKIP = re.compile(
-    r"\b("
-    r"lembre|mem[oó]ria|/memoria|escreva\s+um\s+c[oó]digo|refatore|"
-    r"corrija\s+este|analise\s+este\s+arquivo|s[oó]\s+converse|"
-    r"obrigado|valeu|ok\s*$|blz\s*$"
-    r")\b",
+    r"(?:"
+    r"^\s*(?:oi|ol[aá]|hey|eae|fala|bom\s+dia|boa\s+tarde|boa\s+noite)\s*[!.?]*\s*$|"
+    r"^\s*(?:obrigad[oa]|valeu|thanks|ok|blz|beleza|entendi|certo)\s*[!.?]*\s*$|"
+    r"^\s*/(?:memoria|memory|help|ajuda)\b|"
+    r"\blembre(?:\s+que)?\b|"
+    r"\b(?:s[oó]\s+converse|n[aã]o\s+pesquise|sem\s+busca|offline)\b"
+    r")",
     re.IGNORECASE,
 )
 
-_TECH = re.compile(
-    r"\b("
-    r"flutter|dart|python|fastapi|javascript|typescript|react|android|"
-    r"ios|sql|docker|git|api|error|exception|stack\s*trace|npm|pub\.dev"
-    r")\b",
-    re.IGNORECASE,
+# Código puro / refatoração local — não precisa web
+_CODE_ONLY = re.compile(
+    r"(?:"
+    r"```|"
+    r"^\s*(?:refatore|corrija|complete|implemente)\s+(?:este|esse|o)\s+(?:c[oó]digo|trecho)|"
+    r"erro\s+no\s+meu\s+c[oó]digo|"
+    r"analise\s+este\s+arquivo"
+    r")",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
 def should_search(user_text: str) -> bool:
     text = (user_text or "").strip()
-    if len(text) < 8:
+    if len(text) < 6:
         return False
-    if _SKIP.search(text) and not _EXPLICIT.search(text):
+
+    if _SKIP.search(text):
         return False
+
     if _EXPLICIT.search(text):
         return True
-    if _QUESTION.search(text) and len(text) < 320:
+
+    mode = SEARCH_MODE
+    if mode in ("off", "0", "false", "disabled"):
+        return False
+
+    if mode in ("explicit", "manual"):
+        return False
+
+    # aggressive / balanced
+    if _CODE_ONLY.search(text) and not _EXPLICIT.search(text):
+        # ainda busca se pedir docs/versão/erro público
+        if not re.search(r"\b(documenta[cç][aã]o|stackoverflow|pub\.dev|erro\s+oficial)\b", text, re.I):
+            return False
+
+    if mode in ("aggressive", "always", "max"):
+        # Qualquer mensagem substantiva (não cumprimentar / não só código local)
+        if len(text) >= 12:
+            return True
+        return bool(_FACTUAL.search(text))
+
+    # balanced
+    if _FACTUAL.search(text):
         return True
-    # frases com “atual”, “hoje”, “2024/2025/2026”
-    if re.search(r"\b(hoje|agora|atual(?:izado)?|202[4-9])\b", text, re.I):
+    if re.search(r"\b(hoje|agora|atual(?:izado)?|202[4-9]|not[ií]cia)\b", text, re.I):
+        return True
+    if re.search(
+        r"\b(flutter|dart|python|fastapi|android|ios|docker|api|sdk)\b",
+        text,
+        re.I,
+    ) and len(text) > 20:
         return True
     return False
 
 
 def _clean_query(q: str) -> str:
     q = re.sub(r"\s+", " ", (q or "").strip())
-    # remove pedidos meta que atrapalham o motor
     q = re.sub(
         r"^(?:por\s+favor|pesquisa(?:r)?|busc(?:a|ar)|me\s+diga|google)\s*[:,]?\s*",
         "",
@@ -112,11 +141,14 @@ def _format_results(results: list[dict[str, str]], query: str) -> str:
     if not results:
         return (
             f"[Busca na web: nenhuma fonte útil para “{query}”. "
-            "Responda com o conhecimento disponível e avise a limitação.]"
+            "Responda com o melhor conhecimento disponível, deixe clara a incerteza "
+            "e ofereça o que for mais útil mesmo assim.]"
         )
     lines = [
         f"[Resultados de busca na web para: “{query}”]",
-        "Use estas fontes. Não invente links. Cite os títulos quando fizer sentido.",
+        "Instruções: use estas fontes para enriquecer a resposta. "
+        "Seja completo, prático e honesto. Não invente links. "
+        "Incorpore os dados relevantes no texto (não precisa listar 'Fontes:' no final).",
         "",
     ]
     for i, r in enumerate(results, 1):
@@ -173,10 +205,8 @@ async def search_and_format(query: str, *, max_results: int = 8) -> str:
 
 
 async def _search_pipeline(query: str, max_results: int) -> list[dict[str, str]]:
-    """Dispara várias fontes em paralelo e mescla."""
     tasks = []
 
-    # APIs com chave (prioridade de qualidade)
     if getattr(settings, "BRAVE_API_KEY", ""):
         tasks.append(_safe("brave", _search_brave(query, max_results)))
     if getattr(settings, "SERPER_API_KEY", ""):
@@ -184,17 +214,19 @@ async def _search_pipeline(query: str, max_results: int) -> list[dict[str, str]]
     if getattr(settings, "TAVILY_API_KEY", ""):
         tasks.append(_safe("tavily", _search_tavily(query, max_results)))
 
-    # Sempre (gratuitas / estáveis)
     tasks.append(_safe("wiki_pt", _search_wikipedia(query, max_results, lang="pt")))
     tasks.append(_safe("wiki_en", _search_wikipedia(query, max_results, lang="en")))
     tasks.append(_safe("wikidata", _search_wikidata(query, max_results)))
     tasks.append(_safe("ddg_instant", _search_ddg_instant(query, max_results)))
     tasks.append(_safe("ddg_html", _search_ddg_html(query, max_results)))
 
-    if _TECH.search(query):
+    if re.search(
+        r"\b(flutter|dart|python|code|error|api|sdk|android|ios|javascript)\b",
+        query,
+        re.I,
+    ):
         tasks.append(_safe("stackexchange", _search_stackexchange(query, max_results)))
 
-    # Pacote DDGS por último (pode falhar em cloud)
     tasks.append(_safe("ddgs", _search_ddgs(query, max_results)))
 
     results_lists = await asyncio.gather(*tasks)
@@ -202,7 +234,6 @@ async def _search_pipeline(query: str, max_results: int) -> list[dict[str, str]]
     for lst in results_lists:
         merged.extend(lst)
 
-    # Preferir itens com URL http
     merged.sort(
         key=lambda x: (
             0 if (x.get("url") or "").startswith("http") else 1,
@@ -218,9 +249,6 @@ async def _safe(name: str, coro) -> list[dict[str, str]]:
     except Exception as e:
         logger.debug("search source %s: %s", name, e)
         return []
-
-
-# --------------------------------------------------------------------------- sources
 
 
 async def _search_brave(query: str, max_results: int) -> list[dict[str, str]]:
@@ -251,7 +279,6 @@ async def _search_brave(query: str, max_results: int) -> list[dict[str, str]]:
 
 
 async def _search_serper(query: str, max_results: int) -> list[dict[str, str]]:
-    """Google via Serper.dev — SERPER_API_KEY."""
     key = settings.SERPER_API_KEY
     async with httpx.AsyncClient(timeout=7.0) as client:
         r = await client.post(
@@ -367,7 +394,6 @@ async def _search_wikidata(query: str, max_results: int) -> list[dict[str, str]]
 
 
 async def _search_stackexchange(query: str, max_results: int) -> list[dict[str, str]]:
-    """API pública Stack Exchange (sem chave, com throttle)."""
     params = {
         "order": "desc",
         "sort": "relevance",
@@ -389,8 +415,7 @@ async def _search_stackexchange(query: str, max_results: int) -> list[dict[str, 
             {
                 "title": str(item.get("title") or ""),
                 "url": str(item.get("link") or ""),
-                "snippet": f"Score {item.get('score', 0)} · "
-                f"respostas: {item.get('answer_count', 0)}",
+                "snippet": f"Score {item.get('score', 0)} · respostas: {item.get('answer_count', 0)}",
                 "source": "StackOverflow",
             }
         )
@@ -435,7 +460,6 @@ async def _search_ddg_instant(query: str, max_results: int) -> list[dict[str, st
 
 
 async def _search_ddg_html(query: str, max_results: int) -> list[dict[str, str]]:
-    """HTML lite do DDG — melhor que nada quando a API falha."""
     url = "https://html.duckduckgo.com/html/"
     async with httpx.AsyncClient(
         timeout=7.0,
@@ -447,7 +471,6 @@ async def _search_ddg_html(query: str, max_results: int) -> list[dict[str, str]]
         html = r.text
 
     out: list[dict[str, str]] = []
-    # result links
     for m in re.finditer(
         r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
         html,
@@ -455,7 +478,6 @@ async def _search_ddg_html(query: str, max_results: int) -> list[dict[str, str]]
     ):
         href = m.group(1)
         title = re.sub(r"<[^>]+>", "", m.group(2)).strip()
-        # DDG redirect URLs — tenta extrair uddg=
         real = href
         um = re.search(r"uddg=([^&]+)", href)
         if um:
@@ -473,8 +495,9 @@ async def _search_ddg_html(query: str, max_results: int) -> list[dict[str, str]]
         if len(out) >= max_results:
             break
 
-    # snippets
-    snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</(?:a|td|div)', html, re.I | re.S)
+    snippets = re.findall(
+        r'class="result__snippet"[^>]*>(.*?)</(?:a|td|div)', html, re.I | re.S
+    )
     for i, sn in enumerate(snippets):
         if i < len(out):
             out[i]["snippet"] = re.sub(r"<[^>]+>", "", sn).strip()[:300]
