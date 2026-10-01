@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
+import 'library_screen.dart';
 
 class ImagesScreen extends StatefulWidget {
   const ImagesScreen({super.key});
@@ -24,7 +26,9 @@ class _ImagesScreenState extends State<ImagesScreen> {
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('gama_library') ?? '[]';
-    final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+    final list = (jsonDecode(raw) as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
     setState(() {
       _items = list
           .where((e) => e['kind'] == 'image')
@@ -60,38 +64,68 @@ class _ImagesScreenState extends State<ImagesScreen> {
                 crossAxisCount: 2,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                childAspectRatio: 1.1,
+                childAspectRatio: 0.9,
               ),
               itemCount: _items.length,
               itemBuilder: (_, i) {
                 final it = _items[i];
-                return Container(
-                  decoration: BoxDecoration(
-                    color: GamaColors.surfaceCard,
+                final path = it['path']?.toString();
+                final name = it['name']?.toString() ?? '';
+
+                return Material(
+                  color: GamaColors.surfaceCard,
+                  borderRadius: BorderRadius.circular(14),
+                  child: InkWell(
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: GamaColors.border),
-                  ),
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.image_outlined,
-                        color: GamaColors.accent,
-                        size: 36,
+                    onTap: () => LibraryScreen.openEntry(context, it),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: GamaColors.border),
                       ),
-                      const SizedBox(height: 10),
-                      Text(
-                        it['name']?.toString() ?? '',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: GamaColors.textPrimary,
-                          fontSize: 13,
-                        ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child:
+                                path != null &&
+                                    path.isNotEmpty &&
+                                    File(path).existsSync()
+                                ? Image.file(
+                                    File(path),
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const Center(
+                                      child: Icon(
+                                        Icons.broken_image_outlined,
+                                        color: GamaColors.textMuted,
+                                        size: 36,
+                                      ),
+                                    ),
+                                  )
+                                : const Center(
+                                    child: Icon(
+                                      Icons.image_outlined,
+                                      color: GamaColors.accent,
+                                      size: 36,
+                                    ),
+                                  ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: Text(
+                              name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: GamaColors.textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 );
               },

@@ -342,15 +342,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _addPath(String path) async {
     try {
-      _snack(
-        path.toLowerCase().endsWith('.png') ||
-                path.toLowerCase().endsWith('.jpg') ||
-                path.toLowerCase().endsWith('.jpeg') ||
-                path.toLowerCase().endsWith('.webp') ||
-                path.toLowerCase().endsWith('.gif')
-            ? 'Preparando imagem…'
-            : 'Processando anexo…',
-      );
       final processed = await _attachmentService.processFile(path);
       if (!mounted) return;
       setState(() => _attachments.add(processed));
@@ -358,8 +349,8 @@ class _ChatScreenState extends State<ChatScreen> {
         name: processed.name,
         kind: processed.kind.name,
         bytes: processed.bytes,
+        sourcePath: path,
       );
-      _snack('Anexado: ${processed.label}');
     } catch (e) {
       _snack('$e');
     }
