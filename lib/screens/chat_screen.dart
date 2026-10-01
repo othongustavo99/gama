@@ -664,15 +664,17 @@ class _ChatScreenState extends State<ChatScreen> {
                     onPressed: () => Scaffold.of(context).openDrawer(),
                   ),
                   const Expanded(
-                    child: Text(
-                      'Gamma 1.0',
-                      style: TextStyle(
-                        color: GamaColors.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.2,
+                    child: Center(
+                      child: Text(
+                        'Gamma 1.0',
+                        style: TextStyle(
+                          color: GamaColors.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.2,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   if (_isLoading)

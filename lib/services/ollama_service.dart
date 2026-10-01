@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../models/message.dart';
+import 'identity_service.dart';
 import 'settings_service.dart';
 
 class WebSource {
@@ -123,10 +124,15 @@ class OllamaService {
           'model': selectedModel,
           'messages': requestMessages,
           if (images != null && images.isNotEmpty) 'images': images,
+          'user_id': IdentityService.instance.userId,
+          'auto_memory': true,
         },
         options: Options(
           responseType: ResponseType.stream,
-          headers: {'Accept': 'application/x-ndjson'},
+          headers: {
+            'Accept': 'application/x-ndjson',
+            'X-User-Id': IdentityService.instance.userId,
+          },
         ),
       );
 

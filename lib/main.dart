@@ -7,6 +7,7 @@ import 'models/conversation.dart';
 import 'models/message.dart';
 import 'screens/splash_screen.dart';
 import 'services/conversation_service.dart';
+import 'services/identity_service.dart';
 import 'services/settings_service.dart';
 
 Future<void> main() async {
@@ -27,6 +28,7 @@ Future<void> main() async {
   Hive.registerAdapter(ConversationAdapter());
 
   try {
+    await IdentityService.instance.init();
     await SettingsService.instance.init();
     await ConversationService.instance.init();
   } catch (e, stack) {
@@ -74,26 +76,10 @@ class GamaApp extends StatelessWidget {
           backgroundColor: GamaColors.surfaceCard,
           contentTextStyle: const TextStyle(color: GamaColors.textPrimary),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-        ),
-        dialogTheme: DialogThemeData(
-          backgroundColor: GamaColors.surfaceCard,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        popupMenuTheme: PopupMenuThemeData(
-          color: GamaColors.surfaceCard,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: GamaColors.surfaceInput,
-          hintStyle: const TextStyle(color: GamaColors.textMuted),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: GamaColors.border),

@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 
+import 'identity_service.dart';
 import 'settings_service.dart';
 
 class MemoryFact {
@@ -31,7 +32,8 @@ class MemoryService {
       BaseOptions(
         baseUrl: SettingsService.instance.baseUrl,
         connectTimeout: const Duration(seconds: 8),
-        receiveTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 20),
+        headers: {'X-User-Id': IdentityService.instance.userId},
       ),
     );
   }
@@ -48,9 +50,7 @@ class MemoryService {
   Future<MemoryFact> addFact(String text) async {
     final res = await _dio().post('/memory', data: {'text': text});
     final data = res.data as Map<String, dynamic>;
-    return MemoryFact.fromJson(
-      Map<String, dynamic>.from(data['fact'] as Map),
-    );
+    return MemoryFact.fromJson(Map<String, dynamic>.from(data['fact'] as Map));
   }
 
   Future<void> deleteFact(String id) async {

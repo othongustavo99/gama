@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../core/gama_colors.dart';
 import '../models/conversation.dart';
 import '../services/conversation_service.dart';
+import '../services/identity_service.dart';
+import '../services/auth_service.dart';
+import '../screens/login_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/images_screen.dart';
 import '../screens/library_screen.dart';
@@ -23,6 +26,7 @@ class AppDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final service = ConversationService.instance;
+    final identity = IdentityService.instance;
 
     return Drawer(
       backgroundColor: GamaColors.surfaceElevated,
@@ -35,88 +39,103 @@ class AppDrawer extends StatelessWidget {
               child: Row(
                 children: [
                   Container(
-                    width: 32,
-                    height: 32,
+                    width: 40,
+                    height: 40,
                     decoration: BoxDecoration(
                       color: GamaColors.accentSoft,
-                      borderRadius: BorderRadius.circular(9),
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(
                         color: GamaColors.accent.withOpacity(0.35),
                       ),
                     ),
                     alignment: Alignment.center,
-                    child: const Text(
-                      'G',
-                      style: TextStyle(
-                        color: GamaColors.accent,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child:
+                        identity.photoUrl != null &&
+                            identity.photoUrl!.isNotEmpty
+                        ? Image.network(
+                            identity.photoUrl!,
+                            fit: BoxFit.cover,
+                            width: 40,
+                            height: 40,
+                            errorBuilder: (_, __, ___) => const Text(
+                              'G',
+                              style: TextStyle(
+                                color: GamaColors.accent,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          )
+                        : const Text(
+                            'G',
+                            style: TextStyle(
+                              color: GamaColors.accent,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                   ),
-                  const SizedBox(width: 10),
-                  const Expanded(
+                  const SizedBox(width: 12),
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Gamma',
-                          style: TextStyle(
+                          identity.displayName,
+                          style: const TextStyle(
                             color: GamaColors.textPrimary,
-                            fontSize: 18,
+                            fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                         Text(
-                          'Frequência40',
-                          style: TextStyle(
+                          identity.provider == 'google'
+                              ? (identity.email ?? 'Conta Google')
+                              : 'Gamma · convidado',
+                          style: const TextStyle(
                             color: GamaColors.textMuted,
                             fontSize: 11,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.edit_square,
-                      color: GamaColors.textSecondary,
-                      size: 22,
-                    ),
-                    tooltip: 'Nova conversa',
-                    onPressed: onNewChat,
-                  ),
                 ],
               ),
             ),
-
+            const Divider(color: GamaColors.divider, height: 1),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
               child: Material(
-                color: GamaColors.surfaceCard,
+                color: GamaColors.accent.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(12),
                 child: InkWell(
-                  onTap: onNewChat,
                   borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: GamaColors.border),
-                    ),
-                    child: const Row(
+                  onTap: () {
+                    Navigator.pop(context);
+                    onNewChat();
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    child: Row(
                       children: [
-                        Icon(Icons.add, color: GamaColors.accent, size: 20),
+                        Icon(
+                          Icons.edit_outlined,
+                          color: GamaColors.accent,
+                          size: 20,
+                        ),
                         SizedBox(width: 10),
                         Text(
                           'Nova conversa',
                           style: TextStyle(
                             color: GamaColors.textPrimary,
+                            fontWeight: FontWeight.w600,
                             fontSize: 14,
-                            fontWeight: FontWeight.w500,
                           ),
                         ),
                       ],
@@ -125,7 +144,6 @@ class AppDrawer extends StatelessWidget {
                 ),
               ),
             ),
-
             _DrawerItem(
               icon: Icons.image_outlined,
               label: 'Imagens',
@@ -181,104 +199,122 @@ class AppDrawer extends StatelessWidget {
                 );
               },
             ),
-
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Divider(color: GamaColors.divider, height: 1),
+            _DrawerItem(
+              icon: Icons.settings_outlined,
+              label: 'Configurações',
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                );
+              },
             ),
-
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 6),
+              child: Text(
+                'Conversas',
+                style: TextStyle(
+                  color: GamaColors.textMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
             Expanded(
-              child: ListenableBuilder(
-                listenable: service,
+              child: AnimatedBuilder(
+                animation: service,
                 builder: (context, _) {
-                  final pinned = service.pinnedConversations;
-                  final recent = service.recentConversations;
-
-                  if (pinned.isEmpty && recent.isEmpty) {
+                  final items = [
+                    ...service.pinnedConversations,
+                    ...service.recentConversations,
+                  ];
+                  if (items.isEmpty) {
                     return const Center(
-                      child: Text(
-                        'Nenhuma conversa ainda',
-                        style: TextStyle(
-                          color: GamaColors.textMuted,
-                          fontSize: 13,
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text(
+                          'Nenhuma conversa ainda',
+                          style: TextStyle(
+                            color: GamaColors.textMuted,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     );
                   }
-
-                  return ListView(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    children: [
-                      if (pinned.isNotEmpty) ...[
-                        const _SectionLabel('Fixados'),
-                        ...pinned.map(
-                          (c) => _ConversationTile(
-                            conversation: c,
-                            isSelected: c.id == service.currentConversationId,
-                            onTap: () => onSelectConversation(c.id),
-                            onPin: () => service.togglePin(c.id),
-                            onDelete: () => _confirmDelete(context, c),
-                            onRename: () => _renameDialog(context, c),
-                          ),
-                        ),
-                      ],
-                      if (recent.isNotEmpty) ...[
-                        const _SectionLabel('Recentes'),
-                        ...recent.map(
-                          (c) => _ConversationTile(
-                            conversation: c,
-                            isSelected: c.id == service.currentConversationId,
-                            onTap: () => onSelectConversation(c.id),
-                            onPin: () => service.togglePin(c.id),
-                            onDelete: () => _confirmDelete(context, c),
-                            onRename: () => _renameDialog(context, c),
-                          ),
-                        ),
-                      ],
-                    ],
+                  return ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                    itemCount: items.length,
+                    itemBuilder: (context, index) {
+                      final c = items[index];
+                      final selected = c.id == service.currentConversationId;
+                      return _ConversationTile(
+                        conversation: c,
+                        isSelected: selected,
+                        onTap: () {
+                          Navigator.pop(context);
+                          onSelectConversation(c.id);
+                        },
+                        onPin: () => service.togglePin(c.id),
+                        onRename: () => _rename(context, service, c),
+                        onDelete: () => _delete(context, service, c),
+                      );
+                    },
                   );
                 },
               ),
             ),
-
             const Divider(color: GamaColors.divider, height: 1),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-              child: ListTile(
-                leading: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: GamaColors.surfaceCard,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: GamaColors.border),
-                  ),
-                  child: const Icon(
-                    Icons.settings_outlined,
-                    color: GamaColors.textSecondary,
-                    size: 18,
-                  ),
-                ),
-                title: const Text(
-                  'Configurações',
-                  style: TextStyle(
-                    color: GamaColors.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                dense: true,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                  );
-                },
+            ListTile(
+              dense: true,
+              leading: const Icon(
+                Icons.logout_rounded,
+                color: GamaColors.textMuted,
+                size: 22,
               ),
+              title: const Text(
+                'Sair da conta',
+                style: TextStyle(color: GamaColors.textSecondary, fontSize: 14),
+              ),
+              onTap: () async {
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: GamaColors.surfaceCard,
+                    title: const Text(
+                      'Sair?',
+                      style: TextStyle(color: GamaColors.textPrimary),
+                    ),
+                    content: const Text(
+                      'Você volta à tela de login. A memória desta conta permanece no servidor.',
+                      style: TextStyle(color: GamaColors.textSecondary),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancelar'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text(
+                          'Sair',
+                          style: TextStyle(color: GamaColors.error),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+                if (ok == true && context.mounted) {
+                  await AuthService.instance.signOut();
+                  if (context.mounted) {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                      (_) => false,
+                    );
+                  }
+                }
+              },
             ),
           ],
         ),
@@ -286,8 +322,12 @@ class AppDrawer extends StatelessWidget {
     );
   }
 
-  Future<void> _confirmDelete(BuildContext context, Conversation c) async {
-    final confirm = await showDialog<bool>(
+  Future<void> _delete(
+    BuildContext context,
+    ConversationService service,
+    Conversation c,
+  ) async {
+    final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: GamaColors.surfaceCard,
@@ -296,16 +336,13 @@ class AppDrawer extends StatelessWidget {
           style: TextStyle(color: GamaColors.textPrimary),
         ),
         content: Text(
-          '“${c.title}” será apagada permanentemente.',
+          '"${c.title}" será apagada permanentemente.',
           style: const TextStyle(color: GamaColors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text(
-              'Cancelar',
-              style: TextStyle(color: GamaColors.textSecondary),
-            ),
+            child: const Text('Cancelar'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -317,37 +354,38 @@ class AppDrawer extends StatelessWidget {
         ],
       ),
     );
-    if (confirm == true) {
-      await ConversationService.instance.deleteConversation(c.id);
+    if (ok == true) {
+      await service.deleteConversation(c.id);
     }
   }
 
-  Future<void> _renameDialog(BuildContext context, Conversation c) async {
+  Future<void> _rename(
+    BuildContext context,
+    ConversationService service,
+    Conversation c,
+  ) async {
     final controller = TextEditingController(text: c.title);
-    final newTitle = await showDialog<String>(
+    final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: GamaColors.surfaceCard,
         title: const Text(
-          'Renomear conversa',
+          'Renomear',
           style: TextStyle(color: GamaColors.textPrimary),
         ),
         content: TextField(
           controller: controller,
           autofocus: true,
           style: const TextStyle(color: GamaColors.textPrimary),
-          decoration: const InputDecoration(hintText: 'Título da conversa'),
+          decoration: const InputDecoration(hintText: 'Título'),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text(
-              'Cancelar',
-              style: TextStyle(color: GamaColors.textSecondary),
-            ),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
+            onPressed: () => Navigator.pop(ctx, true),
             child: const Text(
               'Salvar',
               style: TextStyle(color: GamaColors.accent),
@@ -356,30 +394,12 @@ class AppDrawer extends StatelessWidget {
         ],
       ),
     );
-    if (newTitle != null) {
-      await ConversationService.instance.renameConversation(c.id, newTitle);
+    if (ok == true) {
+      final t = controller.text.trim();
+      if (t.isNotEmpty) {
+        await service.renameConversation(c.id, t);
+      }
     }
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  final String text;
-  const _SectionLabel(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-      child: Text(
-        text,
-        style: const TextStyle(
-          color: GamaColors.textMuted,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.3,
-        ),
-      ),
-    );
   }
 }
 
@@ -396,20 +416,14 @@ class _DrawerItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: ListTile(
-        leading: Icon(icon, color: GamaColors.textSecondary, size: 20),
-        title: Text(
-          label,
-          style: const TextStyle(color: GamaColors.textPrimary, fontSize: 14),
-        ),
-        onTap: onTap,
-        dense: true,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-        visualDensity: VisualDensity.compact,
+    return ListTile(
+      dense: true,
+      leading: Icon(icon, color: GamaColors.textMuted, size: 22),
+      title: Text(
+        label,
+        style: const TextStyle(color: GamaColors.textSecondary, fontSize: 14),
       ),
+      onTap: onTap,
     );
   }
 }
@@ -419,24 +433,26 @@ class _ConversationTile extends StatelessWidget {
   final bool isSelected;
   final VoidCallback onTap;
   final VoidCallback onPin;
-  final VoidCallback onDelete;
   final VoidCallback onRename;
+  final VoidCallback onDelete;
 
   const _ConversationTile({
     required this.conversation,
     required this.isSelected,
     required this.onTap,
     required this.onPin,
-    required this.onDelete,
     required this.onRename,
+    required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      padding: const EdgeInsets.only(bottom: 2),
       child: Material(
-        color: isSelected ? GamaColors.accentSoft : Colors.transparent,
+        color: isSelected
+            ? GamaColors.accent.withOpacity(0.1)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           onTap: onTap,

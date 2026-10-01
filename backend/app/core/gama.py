@@ -2,7 +2,7 @@ from typing import List, Dict, Optional, Tuple, Any
 import logging
 
 from .context import ContextManager
-from .memory import memory_store, try_extract_memory
+from .memory import get_store, try_extract_memory
 from .prompts import build_system_prompt
 from ..config import settings
 from ..web_search import should_search, search_web, _format_results
@@ -24,10 +24,12 @@ class GamaCore:
         enable_web_search: bool = True,
         prefetched_sources: Optional[List[Dict[str, str]]] = None,
         prefetched_query: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, str]], Optional[str], Optional[str], List[Dict[str, str]]]:
         """
         Returns: prepared, fact_saved, search_query, sources
         """
+        store = get_store(user_id)
         fact_saved: Optional[str] = None
         search_query: Optional[str] = prefetched_query
         sources: List[Dict[str, str]] = list(prefetched_sources or [])
@@ -43,7 +45,7 @@ class GamaCore:
             extracted = try_extract_memory(last_user)
             if extracted:
                 try:
-                    memory_store.add_fact(extracted, source="auto")
+                    store.add_fact(extracted, source="auto")
                     fact_saved = extracted
                 except Exception:
                     fact_saved = None
@@ -62,7 +64,7 @@ class GamaCore:
             web_block = _format_results(sources, query)
 
         try:
-            memory_block = memory_store.as_prompt_block()
+            memory_block = store.as_prompt_block()
         except Exception:
             memory_block = ""
 

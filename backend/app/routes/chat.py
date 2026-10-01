@@ -8,6 +8,7 @@ from ..core.gama import GamaCore
 from ..llm import llm, LLMClient
 from ..models import ChatRequest
 from ..web_search import should_search, search_web
+from ..core.memory import get_store, extract_facts_with_llm
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,7 +36,13 @@ async def chat(request: ChatRequest):
 
     last_user = ""
     if messages and messages[-1].get("role") == "user":
-        last_user = messages[-1].get("content") or ""
+        _c = messages[-1].get("content") or ""
+        if isinstance(_c, list):
+            last_user = " ".join(
+                (p.get("text") or "") for p in _c if isinstance(p, dict)
+            )
+        else:
+            last_user = str(_c)
 
     will_search = bool(last_user and should_search(last_user))
 
@@ -83,12 +90,15 @@ async def chat(request: ChatRequest):
 
             # --- monta contexto ---
             try:
+                uid = (request.user_id or "default").strip() or "default"
                 gama_messages, fact_saved, search_query, sources = await gama.build_messages(
                     messages,
                     model=model,
                     ollama_client=llm,
                     prefetched_sources=sources if will_search else None,
                     prefetched_query=search_query,
+                    user_id=uid,
+                    auto_memory=getattr(request, "auto_memory", True),
                 )
             except Exception as e:
                 logger.exception("build_messages: %s", e)
@@ -167,11 +177,50 @@ async def chat(request: ChatRequest):
                     ensure_ascii=False,
                 ) + "\n"
 
+            assistant_acc: list[str] = []
             async for chunk in llm.stream_chat(
                 model=active_model,
                 messages=gama_messages,
             ):
+                try:
+                    line = chunk.strip()
+                    if line:
+                        obj = json.loads(line)
+                        c = ((obj.get("message") or {}).get("content")) or ""
+                        if c:
+                            assistant_acc.append(c)
+                except Exception:
+                    pass
                 yield chunk
+
+            # Memória automática pós-turno
+            if getattr(request, "auto_memory", True):
+                try:
+                    u = (getattr(request, "user_id", None) or "default")
+                    user_txt = last_user if isinstance(last_user, str) else ""
+                    if user_txt.strip():
+                        store = get_store(u)
+                        existing = [f.get("text", "") for f in store.list_facts()]
+                        new_facts = await extract_facts_with_llm(
+                            user_text=user_txt,
+                            assistant_text="".join(assistant_acc),
+                            model=model,
+                            llm_client=llm,
+                            existing_facts=existing,
+                        )
+                        saved = store.add_facts(new_facts, source="auto")
+                        if saved:
+                            yield json.dumps(
+                                {
+                                    "gama_meta": {
+                                        "memory_saved": saved[0]["text"],
+                                        "memory_auto_count": len(saved),
+                                    }
+                                },
+                                ensure_ascii=False,
+                            ) + ""
+                except Exception as mem_err:
+                    logger.warning("auto memory: %s", mem_err)
 
         except Exception as e:
             logger.exception("chat stream: %s", e)

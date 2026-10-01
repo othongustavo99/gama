@@ -20,3 +20,5 @@ class ChatRequest(BaseModel):
     model: str
     messages: List[ChatMessage]
     images: Optional[List[ChatImage]] = Field(default=None)
+    user_id: Optional[str] = Field(default=None)
+    auto_memory: bool = True
