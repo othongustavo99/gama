@@ -42,11 +42,11 @@ class ProcessedAttachment {
 }
 
 class AttachmentService {
-  static const maxBytesPerFile = 8 * 1024 * 1024;
-  static const maxTextExtract = 120000;
+  static const maxBytesPerFile = 32 * 1024 * 1024; // 32 MB
+  static const maxTextExtract = 200000;
 
   /// Limite para mandar imagem no chat (base64 ~ +33%)
-  static const maxImageBytes = 4 * 1024 * 1024;
+  static const maxImageBytes = 8 * 1024 * 1024; // 8 MB
 
   static const textExts = {
     '.dart',
@@ -121,7 +121,7 @@ class AttachmentService {
     }
     final bytes = await file.length();
     if (bytes > maxBytesPerFile) {
-      throw Exception('$name é grande demais (máx. 8 MB)');
+      throw Exception('$name é grande demais (máx. 32 MB)');
     }
 
     final kind = kindFor(ext);
@@ -165,7 +165,7 @@ class AttachmentService {
         // Manda bytes base64 no chat para o modelo de visão ver a imagem.
         if (bytes > maxImageBytes) {
           throw Exception(
-            '$name é grande demais para análise visual (máx. 4 MB). '
+            '$name é grande demais para análise visual (máx. 8 MB). '
             'Tente outra foto ou comprima.',
           );
         }

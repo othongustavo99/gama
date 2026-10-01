@@ -3,6 +3,7 @@ import logging
 
 from .context import ContextManager
 from .memory import get_store, try_extract_memory
+from .url_fetch import build_url_context
 from .prompts import build_system_prompt
 from ..config import settings
 from ..web_search import should_search, search_web, _format_results
@@ -99,10 +100,19 @@ class GamaCore:
             logger.warning("context: %s", e)
             context = messages[-16:]
 
+        url_block = ""
+        try:
+            if last_user and isinstance(last_user, str) and "http" in last_user.lower():
+                url_block = await build_url_context(last_user)
+        except Exception as e:
+            logger.warning("url_context: %s", e)
+
         prepared: List[Dict[str, str]] = [
             {"role": "system", "content": system_prompt},
         ]
         if web_block:
             prepared.append({"role": "system", "content": web_block})
+        if url_block:
+            prepared.append({"role": "system", "content": url_block})
         prepared.extend(context)
         return prepared, fact_saved, search_query, sources

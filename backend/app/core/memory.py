@@ -38,7 +38,7 @@ def _safe_user_id(user_id: Optional[str]) -> str:
 
 
 class MemoryStore:
-    MAX_FACTS = 60
+    MAX_FACTS = 100
 
     def __init__(self, user_id: Optional[str] = None):
         self.user_id = _safe_user_id(user_id)
@@ -278,7 +278,9 @@ async def extract_facts_with_llm(
         re.I,
     )
     if not personal_signal and not explicit_memory:
-        return []
+        # modo amplo: ainda tenta se a mensagem for conversacional
+        if len(user_text) < 20 or user_text.count("```") >= 2:
+            return []
 
     existing = "\n".join(f"- {x}" for x in existing_facts[-25:]) or "(vazia)"
     prompt = f"""Você é um extrator de memória de longo prazo de um assistente pessoal.
