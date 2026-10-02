@@ -70,7 +70,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
         _loadingModels = false;
         _statusMessage =
-            'API não listou modelos. Usando: qwen2.5-coder:7b.';
+            'API não listou modelos. Usando: llama-3.3-70b-versatile.';
         _statusOk = false;
       });
     }
@@ -270,7 +270,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const Padding(
               padding: EdgeInsets.only(top: 8),
               child: Text(
-                'Nenhum modelo encontrado. Verifique a conexão e o Ollama.',
+                'Nenhum modelo encontrado. Verifique a API e a GROQ_API_KEY.',
                 style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
               ),
             ),

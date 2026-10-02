@@ -1,16 +1,14 @@
 class AppConstants {
-  /// URL pública do backend do Gama.
-  ///
-  /// Depois de subir o servidor, troque somente este endereço pelo domínio
-  /// HTTPS da sua API. Nunca coloque aqui o endereço do Ollama.
+  /// URL pública do backend (Railway só com FastAPI — sem Ollama).
   static const String apiBaseUrl =
       'https://gama-production-592b.up.railway.app';
 
-  /// Modelo padrão do Gama.
-  static const String defaultModel = 'qwen3.5:4b';
+  /// Modelo padrão Groq — forte em programação e rápido.
+  static const String defaultModel = 'llama-3.3-70b-versatile';
 
-  /// Modelos que o aplicativo pode selecionar.
+  /// Modelos liberados no app (devem bater com GROQ_MODELS no backend).
   static const List<String> availableModels = [
-    'qwen3.5:4b',
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
   ];
 }
