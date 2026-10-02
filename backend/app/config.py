@@ -23,7 +23,7 @@ class Settings:
 
     OLLAMA_URL = os.getenv(
         "OLLAMA_URL",
-        "http://lhama.railway.internal:11434",
+        "http://ollama.railway.internal:11434",
     ).strip().rstrip("/")
     # Mantém o modelo carregado entre mensagens para evitar recarga frequente.
     OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "24h").strip() or "24h"
