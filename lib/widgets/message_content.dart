@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -32,20 +31,16 @@ ParsedMessage parseMessageContent(String content) {
     return const ParsedMessage(text: '', attachments: []);
   }
 
-  // Formato compacto novo:
-  // Anexos para análise:
-  // ### nome (ZIP)
-  // [arquivo:.zip|12345]
   final marker = RegExp(r'\n*Anexos para análise:\s*\n?', caseSensitive: false);
   final m = marker.firstMatch(raw);
 
   String mainText;
   String section;
+
   if (m != null) {
     mainText = raw.substring(0, m.start).trim();
     section = raw.substring(m.end).trim();
   } else if (_looksLikeDump(raw)) {
-    // legado: ZIP/PDF inteiro na bolha → um card só
     final name = _guessName(raw);
     return ParsedMessage(
       text: '',
@@ -55,9 +50,9 @@ ParsedMessage parseMessageContent(String content) {
           kindLabel: raw.contains('(ZIP)') || raw.contains('.zip')
               ? 'ZIP'
               : raw.contains('(PDF)') || raw.contains('.pdf')
-              ? 'PDF'
-              : 'arquivo',
-          body: raw.length > 4000 ? '${raw.substring(0, 4000)}\n…' : raw,
+                  ? 'PDF'
+                  : 'arquivo',
+          body: raw.length > 3000 ? '${raw.substring(0, 3000)}\n…' : raw,
         ),
       ],
     );
@@ -86,26 +81,21 @@ ParsedMessage parseMessageContent(String content) {
     if (meta != null) {
       bytes = int.tryParse(meta.group(2)!);
     }
-    // body só se houver conteúdo real além do meta (legado expandido)
     var body = t;
     body = body.replaceFirst(RegExp(r'^###[^\n]*\n'), '');
     body = body.replaceAll(RegExp(r'\[arquivo:[^\]]+\]'), '').trim();
     if (body.length < 8) body = '';
 
-    attachments.add(
-      AttachmentPreview(
-        name: title.isEmpty ? 'Anexo' : title,
-        kindLabel: kind,
-        body: body,
-        bytes: bytes,
-      ),
-    );
+    attachments.add(AttachmentPreview(
+      name: title.isEmpty ? 'Anexo' : title,
+      kindLabel: kind,
+      body: body,
+      bytes: bytes,
+    ));
   }
 
   if (attachments.isEmpty && section.isNotEmpty) {
-    attachments.add(
-      AttachmentPreview(name: 'Anexo', kindLabel: 'arquivo', body: ''),
-    );
+    attachments.add(const AttachmentPreview(name: 'Anexo', kindLabel: 'arquivo'));
   }
 
   return ParsedMessage(text: mainText, attachments: attachments);
@@ -113,9 +103,8 @@ ParsedMessage parseMessageContent(String content) {
 
 bool _looksLikeDump(String raw) {
   if (raw.length < 400) return false;
-  final codeFences = '```'.allMatches(raw).length;
-  if (codeFences >= 2) return true;
-  if (raw.contains('(ZIP)') || raw.contains('### ') && raw.length > 800) {
+  if ('```'.allMatches(raw).length >= 2) return true;
+  if (raw.contains('(ZIP)') || (raw.contains('### ') && raw.length > 800)) {
     return true;
   }
   return false;
@@ -155,7 +144,8 @@ class MessageContentView extends StatelessWidget {
     final textStyle = TextStyle(
       color: isUser ? Colors.white : GamaColors.textPrimary,
       fontSize: 15,
-      height: 1.45,
+      height: 1.5,
+      letterSpacing: 0.1,
     );
 
     return Column(
@@ -169,10 +159,7 @@ class MessageContentView extends StatelessWidget {
               if (onTapLink != null) {
                 onTapLink!(href);
               } else if (href != null) {
-                launchUrl(
-                  Uri.parse(href),
-                  mode: LaunchMode.externalApplication,
-                );
+                launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
               }
             },
             styleSheet: MarkdownStyleSheet(
@@ -180,17 +167,38 @@ class MessageContentView extends StatelessWidget {
               a: textStyle.copyWith(
                 color: isUser ? Colors.white : GamaColors.accent,
                 decoration: TextDecoration.underline,
+                decorationColor: isUser ? Colors.white70 : GamaColors.accent,
               ),
-              code: textStyle.copyWith(fontSize: 13, fontFamily: 'monospace'),
+              code: textStyle.copyWith(
+                fontSize: 13,
+                fontFamily: 'monospace',
+                backgroundColor: isUser
+                    ? Colors.black.withOpacity(0.2)
+                    : Colors.black.withOpacity(0.35),
+              ),
+              codeblockDecoration: BoxDecoration(
+                color: isUser
+                    ? Colors.black.withOpacity(0.22)
+                    : const Color(0xFF0E0E10),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: isUser
+                      ? Colors.white.withOpacity(0.12)
+                      : GamaColors.border,
+                ),
+              ),
               listBullet: textStyle,
+              h1: textStyle.copyWith(fontSize: 18, fontWeight: FontWeight.w700),
+              h2: textStyle.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
+              h3: textStyle.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
             ),
           ),
         if (parsed.attachments.isNotEmpty) ...[
-          if (parsed.text.isNotEmpty) const SizedBox(height: 8),
+          if (parsed.text.isNotEmpty) const SizedBox(height: 10),
           ...parsed.attachments.map(
             (a) => Padding(
               padding: const EdgeInsets.only(bottom: 6),
-              child: _AttachmentCard(preview: a, isUser: isUser),
+              child: _AttachmentChip(preview: a, isUser: isUser),
             ),
           ),
         ],
@@ -212,69 +220,102 @@ class MessageContentView extends StatelessWidget {
   }
 }
 
-class _AttachmentCard extends StatefulWidget {
+/// Card compacto tipo “chip de arquivo” (estilo moderno).
+class _AttachmentChip extends StatefulWidget {
   final AttachmentPreview preview;
   final bool isUser;
 
-  const _AttachmentCard({required this.preview, required this.isUser});
+  const _AttachmentChip({required this.preview, required this.isUser});
 
   @override
-  State<_AttachmentCard> createState() => _AttachmentCardState();
+  State<_AttachmentChip> createState() => _AttachmentChipState();
 }
 
-class _AttachmentCardState extends State<_AttachmentCard> {
+class _AttachmentChipState extends State<_AttachmentChip> {
   bool _expanded = false;
 
   IconData get _icon {
-    switch (widget.preview.kindLabel.toUpperCase()) {
-      case 'ZIP':
-        return Icons.folder_zip_outlined;
-      case 'PDF':
-        return Icons.picture_as_pdf_outlined;
-      case 'IMAGEM':
-        return Icons.image_outlined;
-      case 'CÓDIGO':
-      case 'CODIGO':
+    switch (widget.preview.kindLabel.toLowerCase()) {
+      case 'zip':
+        return Icons.folder_zip_rounded;
+      case 'pdf':
+        return Icons.picture_as_pdf_rounded;
+      case 'imagem':
+        return Icons.image_rounded;
+      case 'áudio':
+      case 'audio':
+        return Icons.audiotrack_rounded;
+      case 'código':
+      case 'codigo':
         return Icons.code_rounded;
       default:
-        return Icons.insert_drive_file_outlined;
+        return Icons.insert_drive_file_rounded;
+    }
+  }
+
+  Color get _iconBg {
+    switch (widget.preview.kindLabel.toLowerCase()) {
+      case 'zip':
+        return const Color(0xFF3D2E1A);
+      case 'pdf':
+        return const Color(0xFF3A1F1F);
+      case 'imagem':
+        return const Color(0xFF1A2E2A);
+      case 'código':
+      case 'codigo':
+        return const Color(0xFF1A2433);
+      default:
+        return const Color(0xFF252528);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final isUser = widget.isUser;
-    final border = isUser ? Colors.white.withOpacity(0.28) : GamaColors.border;
-    final bg = isUser
-        ? Colors.black.withOpacity(0.22)
-        : GamaColors.surfaceInput;
     final hasBody = widget.preview.body.trim().isNotEmpty;
     final size = _fmtBytes(widget.preview.bytes);
 
     return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(12),
+      color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         onTap: hasBody ? () => setState(() => _expanded = !_expanded) : null,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: border),
+            color: isUser
+                ? Colors.black.withOpacity(0.22)
+                : GamaColors.surfaceInput,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isUser
+                  ? Colors.white.withOpacity(0.18)
+                  : GamaColors.border,
+            ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Icon(
-                    _icon,
-                    size: 22,
-                    color: isUser ? Colors.white : GamaColors.accent,
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: isUser
+                          ? Colors.white.withOpacity(0.12)
+                          : _iconBg,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      _icon,
+                      size: 20,
+                      color: isUser ? Colors.white : GamaColors.accent,
+                    ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -284,23 +325,23 @@ class _AttachmentCardState extends State<_AttachmentCard> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: isUser
-                                ? Colors.white
-                                : GamaColors.textPrimary,
+                            color: isUser ? Colors.white : GamaColors.textPrimary,
                             fontWeight: FontWeight.w600,
                             fontSize: 13.5,
                           ),
                         ),
+                        const SizedBox(height: 2),
                         Text(
                           [
-                            widget.preview.kindLabel,
+                            widget.preview.kindLabel.toUpperCase(),
                             if (size.isNotEmpty) size,
-                          ].join(' · '),
+                          ].join('  ·  '),
                           style: TextStyle(
                             color: isUser
-                                ? Colors.white70
+                                ? Colors.white.withOpacity(0.65)
                                 : GamaColors.textMuted,
                             fontSize: 11,
+                            letterSpacing: 0.3,
                           ),
                         ),
                       ],
@@ -311,29 +352,33 @@ class _AttachmentCardState extends State<_AttachmentCard> {
                       _expanded
                           ? Icons.expand_less_rounded
                           : Icons.expand_more_rounded,
-                      color: isUser ? Colors.white70 : GamaColors.textMuted,
+                      color: isUser
+                          ? Colors.white.withOpacity(0.7)
+                          : GamaColors.textMuted,
+                      size: 22,
                     ),
                 ],
               ),
               if (_expanded && hasBody) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 Container(
-                  constraints: const BoxConstraints(maxHeight: 180),
+                  constraints: const BoxConstraints(maxHeight: 160),
                   width: double.infinity,
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.25),
-                    borderRadius: BorderRadius.circular(8),
+                    color: Colors.black.withOpacity(0.28),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: SingleChildScrollView(
                     child: SelectableText(
                       widget.preview.body,
                       style: TextStyle(
                         color: isUser
-                            ? Colors.white70
+                            ? Colors.white.withOpacity(0.75)
                             : GamaColors.textSecondary,
                         fontSize: 11,
                         fontFamily: 'monospace',
+                        height: 1.35,
                       ),
                     ),
                   ),

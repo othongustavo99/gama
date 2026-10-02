@@ -27,9 +27,11 @@ class _HomeScreenState extends State<HomeScreen> {
           drawer: AppDrawer(
             onNewChat: () async {
               await _service.createConversation();
+              if (mounted) Navigator.pop(context);
             },
             onSelectConversation: (id) async {
               await _service.selectConversation(id);
+              if (mounted) Navigator.pop(context);
             },
           ),
           body: currentId == null

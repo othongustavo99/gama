@@ -253,8 +253,9 @@ class LLMClient:
                 )
                 note = (
                     f"\n\n[Usuário anexou imagem(ns): {names}. "
-                    "Descreva o que puder com base no contexto; "
-                    "análise visual nativa pode estar limitada neste provedor.]"
+                    "Você NÃO consegue ver o conteúdo da imagem neste provedor. "
+                    "Não invente nem descreva o que ela mostra: avise o usuário "
+                    "e peça que descreva a imagem ou cole o texto dela.]"
                 )
                 result[i]["content"] = str(current) + note
                 break

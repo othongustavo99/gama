@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../core/constants.dart';
 import '../core/gama_colors.dart';
 import '../services/ollama_service.dart';
 import '../services/settings_service.dart';
@@ -37,40 +36,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _statusMessage = null;
     });
 
-    const allowed = AppConstants.availableModels;
-
     try {
-      final remote = await _api.listModels();
+      final models = await _api.listModels();
       if (!mounted) return;
-
-      final filtered = allowed
-          .where(
-            (m) => remote.any((r) => r == m || r.endsWith(m) || m.endsWith(r)),
-          )
-          .toList();
-      final models = filtered.isNotEmpty
-          ? filtered
-          : List<String>.from(allowed);
 
       setState(() {
         _models = models;
-        if (_selectedModel == null || !models.contains(_selectedModel)) {
-          _selectedModel = models.contains(AppConstants.defaultModel)
-              ? AppConstants.defaultModel
-              : models.first;
+        if (_selectedModel == null && models.isNotEmpty) {
+          _selectedModel = models.first;
         }
         _loadingModels = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _models = List<String>.from(allowed);
-        if (_selectedModel == null || !_models.contains(_selectedModel)) {
-          _selectedModel = AppConstants.defaultModel;
-        }
         _loadingModels = false;
-        _statusMessage =
-            'API não listou modelos. Usando: llama-3.3-70b-versatile.';
+        _statusMessage = 'Não foi possível listar os modelos.\n$e';
         _statusOk = false;
       });
     }
@@ -81,13 +62,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _testing = true;
       _statusMessage = null;
     });
+
     final previous = SettingsService.instance.baseUrl;
     await SettingsService.instance.setBaseUrl(_urlController.text);
     final ok = await _api.ping();
+
     if (!ok) {
       await SettingsService.instance.setBaseUrl(previous);
     }
+
     if (!mounted) return;
+
     setState(() {
       _testing = false;
       _statusOk = ok;
@@ -95,6 +80,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ? 'Frequência40 API e Ollama estão online.'
           : 'Falha ao conectar à Frequência40 API ou ao Ollama.';
     });
+
     if (ok) {
       await _loadModels();
     }
@@ -105,7 +91,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (_selectedModel != null && _selectedModel!.isNotEmpty) {
       await SettingsService.instance.setModel(_selectedModel!);
     }
+
     if (!mounted) return;
+
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('Configurações salvas')));
     Navigator.pop(context);
@@ -148,7 +136,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             decoration: const InputDecoration(
               labelText: 'URL da API',
               labelStyle: TextStyle(color: GamaColors.textMuted),
-              hintText: 'https://seu-dominio-da-api',
+              hintText: 'http://192.168.0.3:8000',
               prefixIcon: Icon(Icons.link, color: GamaColors.textMuted),
             ),
             keyboardType: TextInputType.url,
@@ -270,11 +258,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const Padding(
               padding: EdgeInsets.only(top: 8),
               child: Text(
-                'Nenhum modelo encontrado. Verifique a API e a GROQ_API_KEY.',
+                'Nenhum modelo encontrado. Verifique a conexão e se o Ollama possui modelos instalados.',
                 style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
               ),
             ),
-
           const SizedBox(height: 36),
           SizedBox(
             width: double.infinity,
@@ -290,15 +277,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               child: const Text(
-                'Salvar configurações',
+                'Salvar',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
             ),
           ),
           const SizedBox(height: 20),
           const Text(
-            'Release: use a URL HTTPS pública do servidor do Gama.\n'
-            'O APK não depende do Ollama nem do seu PC.',
+            'Emulador Android:\n'
+            'http://10.0.2.2:8000\n\n'
+            'Celular físico:\n'
+            'use o IP da máquina onde a Frequência40 API está rodando.',
             style: TextStyle(
               color: GamaColors.textMuted,
               fontSize: 12,

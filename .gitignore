@@ -52,5 +52,8 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Dados locais do backend (memória pessoal)
+backend/data/
+
 # Logs
 *.log

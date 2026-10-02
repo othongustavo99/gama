@@ -21,9 +21,10 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
+      OLLAMA_DEFAULT_MODEL: ${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}
     entrypoint: ["/bin/sh", "-c"]
     command: >-
-      "ollama pull qwen2.5-coder:7b"
+      "ollama pull $${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}"
 
   api:
     build:
@@ -35,9 +36,9 @@ services:
         condition: service_completed_successfully
     environment:
       LLM_PROVIDER: ollama
-      OLLAMA_URL: http://ollama.railway.internal:11434
-      OLLAMA_DEFAULT_MODEL: qwen2.5:1.5b
-      OLLAMA_MODELS: qwen2.5:1.5b
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_DEFAULT_MODEL: ${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}
+      OLLAMA_MODELS: ${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}
       DATA_DIR: /data
       APP_NAME: Frequencia40-Gamma
       APP_URL: ${APP_URL:-http://localhost:8080}

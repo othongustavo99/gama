@@ -7,7 +7,6 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/gama_colors.dart';
@@ -18,6 +17,7 @@ import '../services/memory_service.dart';
 import '../services/ollama_service.dart';
 import 'library_screen.dart';
 import 'settings_screen.dart';
+import '../widgets/message_content.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
@@ -81,6 +81,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _resumeListenIfArmed() async {
     if (!_micArmed || !mounted || !_speechReady) return;
     try {
+      // preserva o que já foi ditado antes de reiniciar a sessão
+      _textBeforeMic = _controller.text;
       await _startListenSession();
     } catch (e) {
       debugPrint('resume listen: $e');
@@ -349,19 +351,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _pickFromGallery() async {
-    // Android 13+: photos; mais antigos: storage
-    final photos = await Permission.photos.status;
-    final storage = await Permission.storage.status;
-    if (!photos.isGranted && !photos.isLimited && !storage.isGranted) {
-      final p = await Permission.photos.request();
-      if (!p.isGranted && !p.isLimited) {
-        final s = await Permission.storage.request();
-        if (!s.isGranted) {
-          _snack('Permissão de galeria necessária');
-          return;
-        }
-      }
-    }
+    // image_picker usa o seletor de fotos do sistema: não exige permissão.
     try {
       final picker = ImagePicker();
       final img = await picker.pickImage(
@@ -378,11 +368,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _pickFiles() async {
     try {
-      final List<PlatformFile> files = await FilePicker.pickFiles(
-        type: FileType.any,
-      );
-      if (files.isEmpty) return;
-      for (final f in files) {
+      final result = await FilePicker.pickFiles(type: FileType.any);
+      if (result == null || result.isEmpty) return;
+      // file_picker 13.x devolve List<PlatformFile>? (sem .files)
+      for (final f in result) {
         final path = f.path;
         if (path == null || path.isEmpty) {
           _snack('${f.name}: caminho indisponível');
@@ -498,6 +487,14 @@ class _ChatScreenState extends State<ChatScreen> {
     final rawText = _controller.text.trim();
     if ((rawText.isEmpty && _attachments.isEmpty) || _isLoading) return;
 
+    if (_micArmed || _isListening) {
+      _micArmed = false;
+      try {
+        await _speech.stop();
+      } catch (_) {}
+      if (mounted) setState(() => _isListening = false);
+    }
+
     // Comandos de memória
     if (rawText.startsWith('/') && _attachments.isEmpty) {
       final handled = await _handleSlashCommand(rawText);
@@ -508,14 +505,15 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final pending = List<ProcessedAttachment>.from(_attachments);
-    final text = AttachmentService.buildMessageBody(rawText, pending);
+    final apiText = AttachmentService.buildMessageBody(rawText, pending);
+    final displayText = AttachmentService.buildDisplayMessage(rawText, pending);
     final imagePayload = AttachmentService.buildImagesPayload(pending);
     _attachments.clear();
 
     final userMessage = Message(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       role: 'user',
-      content: text,
+      content: displayText.isEmpty ? apiText : displayText,
       conversationId: widget.conversationId,
     );
 
@@ -527,6 +525,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     await _service.addMessage(userMessage);
+    if (!mounted) return;
     _controller.clear();
     _scrollToBottom(force: true);
 
@@ -551,8 +550,22 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
+      final apiMessages = <Message>[
+        for (final m in _messages)
+          if (m.content.isNotEmpty)
+            m.id == userMessage.id
+                ? Message(
+                    id: m.id,
+                    role: m.role,
+                    content: apiText,
+                    conversationId: m.conversationId,
+                    timestamp: m.timestamp,
+                  )
+                : m,
+      ];
+
       final stream = _ollama.chatStream(
-        messages: _messages.where((m) => m.content.isNotEmpty).toList(),
+        messages: apiMessages,
         images: imagePayload.isEmpty ? null : imagePayload,
       );
 
@@ -581,6 +594,10 @@ class _ChatScreenState extends State<ChatScreen> {
         },
         onDone: () async {
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
+            if (_messages.last.content.trim().isEmpty) {
+              _messages.last.content =
+                  'Não recebi resposta do servidor. Tente novamente.';
+            }
             await _service.addMessage(_messages.last);
           }
           if (mounted) {
@@ -611,6 +628,7 @@ class _ChatScreenState extends State<ChatScreen> {
         cancelOnError: true,
       );
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         if (_messages.isNotEmpty) {
           _messages.last.content = 'Desculpa, deu erro: $e';
@@ -634,6 +652,11 @@ class _ChatScreenState extends State<ChatScreen> {
       await _service.addMessage(lastMessage);
     }
     setState(() {
+      if (lastMessage != null &&
+          lastMessage.isAssistant &&
+          lastMessage.content.isEmpty) {
+        _messages.remove(lastMessage);
+      }
       _isLoading = false;
       _streamPhase = '';
       _pendingSources = [];
@@ -837,15 +860,24 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ? GamaColors.bubbleUser
                                       : GamaColors.bubbleAssistant,
                                   borderRadius: BorderRadius.only(
-                                    topLeft: const Radius.circular(16),
-                                    topRight: const Radius.circular(16),
+                                    topLeft: const Radius.circular(18),
+                                    topRight: const Radius.circular(18),
                                     bottomLeft: Radius.circular(
-                                      isUser ? 16 : 4,
+                                      isUser ? 18 : 6,
                                     ),
                                     bottomRight: Radius.circular(
-                                      isUser ? 4 : 16,
+                                      isUser ? 6 : 18,
                                     ),
                                   ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: isUser
+                                          ? GamaColors.accent.withOpacity(0.18)
+                                          : Colors.black.withOpacity(0.25),
+                                      blurRadius: isUser ? 12 : 8,
+                                      offset: const Offset(0, 3),
+                                    ),
+                                  ],
                                   border: isUser
                                       ? null
                                       : Border.all(color: GamaColors.border),
@@ -853,46 +885,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                 child:
                                     msg.content.isEmpty && !isUser && _isLoading
                                     ? const _TypingDots()
-                                    : MarkdownBody(
-                                        data: msg.content,
-                                        // selectable: true impede o clique no link
-                                        selectable: false,
-                                        shrinkWrap: true,
-                                        softLineBreak: true,
-                                        onTapLink: (text, href, title) {
-                                          _openLink(href);
-                                        },
-                                        styleSheet: MarkdownStyleSheet(
-                                          p: TextStyle(
-                                            color: isUser
-                                                ? Colors.white
-                                                : GamaColors.textPrimary,
-                                            fontSize: 15,
-                                            height: 1.45,
-                                          ),
-                                          a: const TextStyle(
-                                            color: GamaColors.accent,
-                                            decoration:
-                                                TextDecoration.underline,
-                                          ),
-                                          code: TextStyle(
-                                            backgroundColor: isUser
-                                                ? Colors.black26
-                                                : const Color(0xFF2A2A2A),
-                                            color: isUser
-                                                ? Colors.white
-                                                : const Color(0xFFE8E8E8),
-                                            fontSize: 13,
-                                          ),
-                                          codeblockDecoration: BoxDecoration(
-                                            color: isUser
-                                                ? Colors.black26
-                                                : const Color(0xFF2A2A2A),
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                          ),
-                                        ),
+                                    : MessageContentView(
+                                        content: msg.content,
+                                        isUser: isUser,
+                                        onTapLink: _openLink,
                                       ),
                               ),
                             ),
@@ -915,9 +911,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     : _streamPhase == 'thinking'
                     ? 'Pensando…'
                     : 'Gamma está respondendo…',
-                style: const TextStyle(
+                style: TextStyle(
                   color: GamaColors.textMuted,
                   fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.2,
                 ),
               ),
             ),
@@ -927,20 +925,52 @@ class _ChatScreenState extends State<ChatScreen> {
         if (_attachments.isNotEmpty)
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
             color: GamaColors.surface,
             child: Wrap(
               spacing: 8,
-              runSpacing: 6,
+              runSpacing: 8,
               children: _attachments.map((a) {
-                return Chip(
-                  label: Text(a.label, style: const TextStyle(fontSize: 12)),
-                  backgroundColor: GamaColors.surfaceCard,
-                  side: const BorderSide(color: GamaColors.border),
-                  deleteIcon: const Icon(Icons.close, size: 16),
-                  onDeleted: () {
-                    setState(() => _attachments.remove(a));
-                  },
+                return Container(
+                  padding: const EdgeInsets.only(left: 4, right: 4),
+                  decoration: BoxDecoration(
+                    color: GamaColors.surfaceCard,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: GamaColors.border),
+                  ),
+                  child: Chip(
+                    avatar: CircleAvatar(
+                      backgroundColor: GamaColors.accentSoft,
+                      child: Icon(
+                        a.kind.name == 'image'
+                            ? Icons.image_rounded
+                            : a.kind.name == 'zip'
+                            ? Icons.folder_zip_rounded
+                            : a.kind.name == 'pdf'
+                            ? Icons.picture_as_pdf_rounded
+                            : Icons.insert_drive_file_rounded,
+                        size: 16,
+                        color: GamaColors.accent,
+                      ),
+                    ),
+                    label: Text(
+                      a.label,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: GamaColors.textPrimary,
+                      ),
+                    ),
+                    backgroundColor: Colors.transparent,
+                    side: BorderSide.none,
+                    deleteIcon: const Icon(
+                      Icons.close_rounded,
+                      size: 16,
+                      color: GamaColors.textMuted,
+                    ),
+                    onDeleted: () {
+                      setState(() => _attachments.remove(a));
+                    },
+                  ),
                 );
               }).toList(),
             ),
@@ -948,10 +978,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
         // Input
         Container(
-          padding: const EdgeInsets.fromLTRB(8, 10, 12, 10),
-          decoration: const BoxDecoration(
+          padding: const EdgeInsets.fromLTRB(6, 12, 10, 12),
+          decoration: BoxDecoration(
             color: GamaColors.surface,
-            border: Border(top: BorderSide(color: GamaColors.divider)),
+            border: const Border(top: BorderSide(color: GamaColors.divider)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.35),
+                blurRadius: 16,
+                offset: const Offset(0, -4),
+              ),
+            ],
           ),
           child: SafeArea(
             top: false,
