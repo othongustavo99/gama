@@ -1,41 +1,44 @@
 import os
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
 class Settings:
     HOST = os.getenv("FREQUENCIA40_HOST", "0.0.0.0")
-    PORT = int(os.getenv("FREQUENCIA40_PORT", "8000"))
+    PORT = int(os.getenv("PORT", os.getenv("FREQUENCIA40_PORT", "8000")))
 
-    # O Gama usa Ollama no servidor, nunca o Ollama do PC do usuário.
-    # Provedor de IA configurável pelo ambiente.
+    # O backend usa o serviço Ollama no Railway.
     PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
 
-# Se OLLAMA_URL estiver vazio, usa o domínio privado do serviço chamado "ollama".
+    if PROVIDER != "ollama":
+        raise ValueError(
+            f"LLM_PROVIDER inválido: {PROVIDER!r}. "
+            "Use LLM_PROVIDER=ollama."
+        )
+
     OLLAMA_URL = os.getenv(
         "OLLAMA_URL",
         "http://ollama.railway.internal:11434",
     ).strip().rstrip("/")
 
-    if PROVIDER != "ollama":
-        raise ValueError(
-            f"LLM_PROVIDER={PROVIDER!r} não é suportado. "
-            "Este backend está configurado para usar 'ollama'."
-    )
-
     if not OLLAMA_URL:
         raise ValueError("OLLAMA_URL não pode ficar vazio.")
 
-    # Modelo principal: escolhido para caber confortavelmente em servidores
-    # de 8–16 GB de RAM quando usado em quantização Q4_K_M.
     OLLAMA_DEFAULT_MODEL = os.getenv(
-        "OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:7b"
+        "OLLAMA_DEFAULT_MODEL",
+        "qwen2.5-coder:7b",
     ).strip()
 
-    # Por padrão só expomos o modelo principal. Para adicionar outro modelo,
-    # use OLLAMA_MODELS="qwen2.5-coder:7b,outro-modelo".
     OLLAMA_MODELS = [
         model.strip()
         for model in os.getenv(
-            "OLLAMA_MODELS", "qwen2.5-coder:7b"
+            "OLLAMA_MODELS",
+            OLLAMA_DEFAULT_MODEL,
         ).split(",")
         if model.strip()
     ]
@@ -44,18 +47,14 @@ class Settings:
     APP_URL = os.getenv("APP_URL", "")
     APP_NAME = os.getenv("APP_NAME", "Frequencia40-Gamma")
 
-    WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "1").strip().lower() not in (
-        "0", "false", "no"
-    )
+    WEB_SEARCH_ENABLED = env_bool("WEB_SEARCH_ENABLED", True)
     WEB_SEARCH_TIMEOUT = float(os.getenv("WEB_SEARCH_TIMEOUT", "12"))
-    WEB_SEARCH_MODE = os.getenv("WEB_SEARCH_MODE", "aggressive").strip().lower()
+    WEB_SEARCH_MODE = os.getenv("WEB_SEARCH_MODE", "balanced").strip().lower()
 
     BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "").strip()
     SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 
-    # O Qwen2.5-Coder 7B é um modelo de texto/código. Não tentamos mandar
-    # imagens diretamente para ele.
     VISION_MODEL = os.getenv("VISION_MODEL", "").strip()
 
 
