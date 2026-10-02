@@ -5,19 +5,9 @@ class Settings:
     HOST = os.getenv("FREQUENCIA40_HOST", "0.0.0.0")
     PORT = int(os.getenv("FREQUENCIA40_PORT", "8000"))
 
-    PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+    PROVIDER = os.getenv("LLM_PROVIDER", "groq").strip().lower()
 
     OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-
-    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-    OPENROUTER_BASE_URL = os.getenv(
-        "OPENROUTER_BASE_URL",
-        "https://openrouter.ai/api/v1",
-    )
-    OPENROUTER_DEFAULT_MODEL = os.getenv(
-        "OPENROUTER_DEFAULT_MODEL",
-        "openai/gpt-4o-mini",
-    )
 
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
     GROQ_BASE_URL = os.getenv(
@@ -48,7 +38,7 @@ class Settings:
     SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 
-    VISION_MODEL = os.getenv("VISION_MODEL", "qwen2.5vl:7b")
+    VISION_MODEL = os.getenv("VISION_MODEL", "")
 
 
 settings = Settings()

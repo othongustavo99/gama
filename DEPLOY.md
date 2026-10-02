@@ -1,67 +1,41 @@
-# Frequência40 / Gamma — Passos 1 e 2 (nuvem + deploy)
+# Deploy Frequencia40-Gamma (sem OpenRouter)
 
-## Passo 1 — Provider nuvem
+## Passo 1 — Teste local com Groq
 
-Arquivos backend a substituir/adicionar:
-
-```
-backend/app/config.py      ← substituir
-backend/app/llm.py         ← NOVO (substitui o uso direto de ollama.py)
-backend/app/routes/chat.py ← substituir
-backend/app/main.py        ← substituir
-backend/app/core/memory.py ← substituir (DATA_DIR no deploy)
-backend/requirements.txt   ← ok como está
-backend/Dockerfile         ← NOVO
-backend/.env.example       ← NOVO
-```
-
-O arquivo `ollama.py` pode ficar (não quebra), mas o chat agora usa `llm.py`.
-
-### Teste local com OpenRouter
-
-1. Conta em https://openrouter.ai → criar API key  
-2. No `backend`:
+1. Conta em https://console.groq.com → criar API key  
+2. No PowerShell / terminal:
 
 ```bash
 # Windows PowerShell
-$env:LLM_PROVIDER="openrouter"
-$env:OPENROUTER_API_KEY="sk-or-v1-SUA_CHAVE"
-$env:OPENROUTER_DEFAULT_MODEL="openai/gpt-4o-mini"
-
-cd backend
-.\venv\Scripts\activate
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-3. Abra http://127.0.0.1:8000/health  
-   Deve mostrar `"provider":"openrouter"` e `"version":"0.5.0"`.
-
-4. No app Gamma → Settings → URL `http://127.0.0.1:8000` → Testar → Salvar  
-5. Mande uma mensagem. O stream continua igual.
-
-### Voltar para Ollama local
-
-```bash
-$env:LLM_PROVIDER="ollama"
-# ou não defina nada (default = ollama)
-```
-
-### Groq (alternativa)
-
-```bash
 $env:LLM_PROVIDER="groq"
-$env:GROQ_API_KEY="gsk_..."
+$env:GROQ_API_KEY="gsk_SUA_CHAVE"
 $env:GROQ_DEFAULT_MODEL="llama-3.3-70b-versatile"
+
+# Linux / macOS
+export LLM_PROVIDER=groq
+export GROQ_API_KEY=gsk_SUA_CHAVE
+export GROQ_DEFAULT_MODEL=llama-3.3-70b-versatile
 ```
+
+3. Suba a API:
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+4. Teste: http://127.0.0.1:8000/health  
+   Deve mostrar `"provider":"groq"` e `"version":"...`.
 
 ---
 
-## Passo 2 — Deploy da API (Railway — mais simples)
+## Passo 2 — Deploy da API (Railway — recomendado)
 
-### Opção A: Railway (recomendado)
+### Opção A: Railway
 
 1. Conta em https://railway.app  
-2. New Project → Deploy from GitHub (subá só a pasta `backend`)  
+2. New Project → Deploy from GitHub (suba só a pasta `backend`)  
    **ou** Railway CLI:
 
 ```bash
@@ -75,9 +49,9 @@ railway up
 
 | Key | Value |
 |-----|--------|
-| `LLM_PROVIDER` | `openrouter` |
-| `OPENROUTER_API_KEY` | sua chave |
-| `OPENROUTER_DEFAULT_MODEL` | `openai/gpt-4o-mini` |
+| `LLM_PROVIDER` | `groq` |
+| `GROQ_API_KEY` | sua chave gsk_... |
+| `GROQ_DEFAULT_MODEL` | `llama-3.3-70b-versatile` |
 | `DATA_DIR` | `/data` |
 | `APP_NAME` | `Frequencia40-Gamma` |
 
@@ -90,7 +64,7 @@ railway up
 
 1. https://render.com → New → Web Service  
 2. Root: pasta `backend`, Docker  
-3. Mesmas env vars  
+3. Mesmas env vars acima  
 4. Plano free funciona para demo (pode “dormir” após inatividade)
 
 ### Domínio próprio (opcional)
@@ -108,7 +82,7 @@ HTTPS já vem no Railway/Render.
 
 | Item | Custo |
 |------|--------|
-| OpenRouter gpt-4o-mini | centavos por muitas mensagens |
+| Groq (free tier generoso) | grátis na maioria dos usos |
 | Railway hobby / free trial | ~US$ 0–5/mês no começo |
 | Domínio .com.br | ~R$ 40/ano (opcional) |
 
@@ -116,9 +90,9 @@ HTTPS já vem no Railway/Render.
 
 ## Checklist final
 
-- [ ] `/health` na URL pública retorna `ok` + `provider`
+- [ ] `/health` na URL pública retorna `ok` + `provider: groq`
 - [ ] App Settings aponta para a URL pública
 - [ ] Chat responde sem o PC ter Ollama ligado
 - [ ] Memória e anexos ainda funcionam
 
-Pronto: API no ar, PC pode desligar.
+Pronto: API no ar só no Railway + Groq. OpenRouter removido.

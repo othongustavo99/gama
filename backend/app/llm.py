@@ -2,9 +2,8 @@
 Cliente unificado de LLM.
 
 Providers:
-  - ollama      → API local do Ollama
-  - openrouter  → OpenAI-compatible (https://openrouter.ai)
-  - groq        → OpenAI-compatible (https://console.groq.com)
+  - ollama  → API local do Ollama
+  - groq    → OpenAI-compatible (https://console.groq.com)
 
 O stream sempre devolve NDJSON no formato que o Flutter já espera
 (estilo Ollama): {"message":{"content":"..."},"done":false/true}
@@ -28,8 +27,6 @@ class LLMClient:
     async def health(self) -> bool:
         if self.provider == "ollama":
             return await self._ollama_health()
-        if self.provider == "openrouter":
-            return bool(settings.OPENROUTER_API_KEY)
         if self.provider == "groq":
             return bool(settings.GROQ_API_KEY)
         return False
@@ -46,14 +43,6 @@ class LLMClient:
     async def list_models(self) -> list[str]:
         if self.provider == "ollama":
             return await self._ollama_list_models()
-        if self.provider == "openrouter":
-            return [
-                settings.OPENROUTER_DEFAULT_MODEL,
-                "openai/gpt-4o-mini",
-                "anthropic/claude-3.5-haiku",
-                "google/gemini-2.0-flash-001",
-                "meta-llama/llama-3.3-70b-instruct",
-            ]
         if self.provider == "groq":
             return [
                 settings.GROQ_DEFAULT_MODEL,
@@ -75,12 +64,7 @@ class LLMClient:
         """Se o app mandar modelo local/vazio no provider cloud, usa o default."""
         name = (requested or "").strip()
         if self.provider == "ollama":
-            return name or "phi4-mini"
-        if self.provider == "openrouter":
-            # OpenRouter usa ids tipo "openai/gpt-4o-mini"
-            if not name or "/" not in name:
-                return settings.OPENROUTER_DEFAULT_MODEL
-            return name
+            return name or "qwen2.5-coder:14b"
         if self.provider == "groq":
             groq_ok = {
                 "llama-3.3-70b-versatile",
@@ -91,7 +75,7 @@ class LLMClient:
             if name in groq_ok:
                 return name
             return settings.GROQ_DEFAULT_MODEL
-        return name or "phi4-mini"
+        return name or "qwen2.5-coder:14b"
 
     # --------------------------------------------------------------- chat once
     async def chat_once(
@@ -242,27 +226,12 @@ class LLMClient:
 
     # ---------------------------------------------------------------- helpers
     def _openai_endpoint(self) -> tuple[str, dict]:
-        if self.provider == "openrouter":
-            key = settings.OPENROUTER_API_KEY
-            if not key:
-                raise RuntimeError(
-                    "OPENROUTER_API_KEY não configurada. "
-                    "Defina a variável de ambiente no deploy."
-                )
-            headers = {
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": settings.APP_URL,
-                "X-Title": settings.APP_NAME,
-            }
-            return f"{settings.OPENROUTER_BASE_URL}/chat/completions", headers
-
         if self.provider == "groq":
             key = settings.GROQ_API_KEY
             if not key:
                 raise RuntimeError(
                     "GROQ_API_KEY não configurada. "
-                    "Defina a variável de ambiente no deploy."
+                    "Defina a variável de ambiente no deploy (Railway)."
                 )
             headers = {
                 "Authorization": f"Bearer {key}",
@@ -295,7 +264,7 @@ class LLMClient:
     ) -> list[dict]:
         """
         Anexa imagens à última mensagem do usuário.
-        - openrouter/groq: content multimodal (image_url data URI)
+        - groq: content multimodal (image_url data URI) — se o modelo suportar
         - ollama: campo images[] com base64 puro
         """
         if not images:

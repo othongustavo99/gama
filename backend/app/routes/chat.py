@@ -146,13 +146,8 @@ async def chat(request: ChatRequest):
                         getattr(_settings, "VISION_MODEL", None)
                         or "qwen2-vl"
                     )
-                elif llm.provider == "openrouter":
-                    active_model = (
-                        getattr(_settings, "VISION_MODEL", None)
-                        or "openai/gpt-4o-mini"
-                    )
                 elif llm.provider == "groq":
-                    # Groq: modelo com suporte a visão se disponível
+                    # Groq: usa o modelo atual (visão limitada)
                     active_model = (
                         getattr(_settings, "VISION_MODEL", None)
                         or model

@@ -20,7 +20,8 @@ class AuthService {
   static final AuthService instance = AuthService._();
 
   // ── Mobile: Web client ID (serverClientId) ─────────────────────────
-  static const String? serverClientId = null;
+  static const String? serverClientId =
+      null;
 
   // ── Desktop: OAuth tipo "Aplicativo para computador" ───────────────
   // Google Cloud → Credenciais → Criar → OAuth → Desktop

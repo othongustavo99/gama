@@ -4,16 +4,11 @@ Extração de texto de arquivos (PDF, ZIP, texto) e descrição de imagens.
 
 from __future__ import annotations
 
-import base64
 import io
 import logging
 import zipfile
-from typing import Optional
 
-import httpx
 from fastapi import APIRouter, File, HTTPException, UploadFile
-
-from ..config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["extract"])
@@ -87,91 +82,16 @@ async def extract_file(file: UploadFile = File(...)):
 
 async def _describe_image(raw: bytes, name: str) -> str:
     """
-    Tenta descrever a imagem via modelo de visão (OpenRouter).
-    Sem chave: retorna metadados + orientação para o chat.
+    Descrição de imagem simplificada (sem OpenRouter).
+    Retorna apenas metadados + orientação para o usuário descrever.
     """
     meta = _image_meta(raw, name)
-
-    key = getattr(settings, "OPENROUTER_API_KEY", "") or ""
-    if not key:
-        return (
-            f"{meta}\n\n"
-            "Não há modelo de visão configurado (OPENROUTER_API_KEY). "
-            "Peça ao usuário para descrever o que vê na imagem, "
-            "ou configure visão na API."
-        )
-
-    # data URL
-    mime = "image/jpeg"
-    lower = name.lower()
-    if lower.endswith(".png"):
-        mime = "image/png"
-    elif lower.endswith(".webp"):
-        mime = "image/webp"
-    elif lower.endswith(".gif"):
-        mime = "image/gif"
-
-    b64 = base64.b64encode(raw).decode("ascii")
-    # limita payload (~4MB base64 é pesado); se grande, só meta
-    if len(b64) > 3_500_000:
-        return f"{meta}\n\nImagem grande demais para visão automática. Peça descrição ao usuário."
-
-    data_url = f"data:{mime};base64,{b64}"
-    vision_model = (
-        getattr(settings, "VISION_MODEL", None)
-        or "openai/gpt-4o-mini"
+    return (
+        f"{meta}\n\n"
+        "Descrição automática de imagem desativada (OpenRouter removido). "
+        "Peça ao usuário para descrever o que vê na imagem."
     )
 
-    payload = {
-        "model": vision_model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            "Descreva esta imagem em português, de forma objetiva e útil "
-                            "para um assistente de programação/produtividade. "
-                            "Se houver texto na imagem (OCR), transcreva. "
-                            "Se for print de código ou erro, destaque o conteúdo relevante. "
-                            "Se for foto de documento, resuma o que consegue ler."
-                        ),
-                    },
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            }
-        ],
-        "max_tokens": 1200,
-    }
-
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": getattr(settings, "APP_URL", "https://frequencia40.local"),
-        "X-Title": getattr(settings, "APP_NAME", "Frequencia40-Gamma"),
-    }
-    base = getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-
-    try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            r = await client.post(
-                f"{base}/chat/completions",
-                headers=headers,
-                json=payload,
-            )
-            r.raise_for_status()
-            data = r.json()
-        content = (
-            ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
-            or ""
-        ).strip()
-        if not content:
-            return f"{meta}\n\nVisão não retornou texto."
-        return f"### {name} (imagem — análise automática)\n\n{meta}\n\n{content}"
-    except Exception as e:
-        logger.warning("vision describe failed: %s", e)
-        return f"{meta}\n\nFalha na análise visual automática ({e})."
 
 
 def _image_meta(raw: bytes, name: str) -> str:
