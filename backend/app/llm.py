@@ -17,7 +17,7 @@ from .config import settings
 
 
 class LLMClient:
-    provider = "ollama"
+    provider = settings.PROVIDER
 
     async def health(self) -> bool:
         try:

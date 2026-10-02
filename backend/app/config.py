@@ -6,8 +6,23 @@ class Settings:
     PORT = int(os.getenv("FREQUENCIA40_PORT", "8000"))
 
     # O Gama usa Ollama no servidor, nunca o Ollama do PC do usuário.
-    PROVIDER = "ollama"
-    OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434").rstrip("/")
+    # Provedor de IA configurável pelo ambiente.
+    PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+
+# Se OLLAMA_URL estiver vazio, usa o domínio privado do serviço chamado "ollama".
+    OLLAMA_URL = os.getenv(
+        "OLLAMA_URL",
+        "http://ollama.railway.internal:11434",
+    ).strip().rstrip("/")
+
+    if PROVIDER != "ollama":
+        raise ValueError(
+            f"LLM_PROVIDER={PROVIDER!r} não é suportado. "
+            "Este backend está configurado para usar 'ollama'."
+    )
+
+    if not OLLAMA_URL:
+        raise ValueError("OLLAMA_URL não pode ficar vazio.")
 
     # Modelo principal: escolhido para caber confortavelmente em servidores
     # de 8–16 GB de RAM quando usado em quantização Q4_K_M.
