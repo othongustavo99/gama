@@ -1,6 +1,9 @@
+# IMPORTANTE: esta arquitetura precisa de um servidor capaz de manter
+# Ollama + modelo em memória. Este arquivo é mantido apenas como referência;
+# para o deployment completo use docker-compose.yml em uma VM/VPS.
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "backend/Dockerfile"
 
 [deploy]
 healthcheckPath = "/health"

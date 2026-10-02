@@ -1,16 +1,10 @@
+"""Cliente do LLM remoto do Gama.
 
-"""
-Cliente de LLM da Gama.
+Arquitetura de produção:
+    APK -> FastAPI -> Ollama -> qwen2.5-coder:7b
 
-Provider único:
-  - ollama → Ollama hospedado no Railway
-
-Modelos disponíveis:
-  - qwen2.5-coder:14b → padrão
-  - phi4-mini         → secundário
-
-O stream devolve NDJSON no formato que o Flutter já espera:
-{"message":{"content":"..."},"done":false/true}
+O Ollama fica no mesmo servidor/rede Docker do backend. O endereço do Ollama
+nunca é enviado para o APK.
 """
 
 from __future__ import annotations
@@ -23,317 +17,134 @@ from .config import settings
 
 
 class LLMClient:
-    def __init__(self) -> None:
-        # A Gama usa somente Ollama.
-        self.provider = "ollama"
-
-    # ------------------------------------------------------------------
-    # HEALTH
-    # ------------------------------------------------------------------
+    provider = "ollama"
 
     async def health(self) -> bool:
-        return await self._ollama_health()
-
-    async def _ollama_health(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(
-                    f"{settings.OLLAMA_URL}/api/tags"
-                )
-
+                response = await client.get(f"{settings.OLLAMA_URL}/api/tags")
                 return response.is_success
-
         except Exception:
             return False
 
-    # ------------------------------------------------------------------
-    # MODELOS
-    # ------------------------------------------------------------------
-
     async def list_models(self) -> list[str]:
-        """
-        Retorna somente os modelos permitidos pela Gama.
+        """Retorna somente os modelos liberados para o aplicativo."""
+        allowed = settings.OLLAMA_MODELS
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.get(f"{settings.OLLAMA_URL}/api/tags")
+                response.raise_for_status()
+                installed = {
+                    str(item.get("name", "")).strip()
+                    for item in response.json().get("models", [])
+                    if item.get("name")
+                }
+        except Exception:
+            return allowed
 
-        O Railway/Ollama pode ter outros modelos instalados,
-        mas a Gama só disponibiliza estes dois para seleção.
-        """
-
-        return [
-            "qwen2.5-coder:14b",
-            "phi4-mini",
+        result = [
+            model
+            for model in allowed
+            if model in installed
+            or any(name.startswith(model + ":") for name in installed)
         ]
+        return result or allowed
 
     def resolve_model(self, requested: str | None) -> str:
-        """
-        Define o modelo utilizado.
-
-        Se o Flutter não enviar um modelo válido,
-        Qwen 2.5 Coder 14B será utilizado.
-        """
-
         model = (requested or "").strip()
-
-        allowed_models = {
-            "qwen2.5-coder:14b",
-            "phi4-mini",
-        }
-
-        if model in allowed_models:
+        allowed = set(settings.OLLAMA_MODELS)
+        if model in allowed:
             return model
-
-        return "qwen2.5-coder:14b"
-
-    # ------------------------------------------------------------------
-    # CHAT SEM STREAM
-    # ------------------------------------------------------------------
+        return settings.OLLAMA_DEFAULT_MODEL
 
     async def chat_once(
         self,
         model: str,
         messages: list[dict],
         *,
-        timeout: float = 120.0,
+        timeout: float = 180.0,
     ) -> str:
-
         model = self.resolve_model(model)
-
-        return await self._ollama_chat_once(
-            model,
-            messages,
-            timeout=timeout,
-        )
-
-    async def _ollama_chat_once(
-        self,
-        model: str,
-        messages: list[dict],
-        *,
-        timeout: float,
-    ) -> str:
-
         payload = {
             "model": model,
-            "messages": messages,
+            "messages": self._normalize_messages(messages),
             "stream": False,
         }
-
         async with httpx.AsyncClient(timeout=timeout) as client:
-
             response = await client.post(
-                f"{settings.OLLAMA_URL}/api/chat",
-                json=payload,
+                f"{settings.OLLAMA_URL}/api/chat", json=payload
             )
-
             response.raise_for_status()
-
             data = response.json()
-
-            message = data.get("message") or {}
-
-            return (message.get("content") or "").strip()
-
-    # ------------------------------------------------------------------
-    # STREAM
-    # ------------------------------------------------------------------
+            return str((data.get("message") or {}).get("content") or "").strip()
 
     async def stream_chat(
         self,
         model: str,
         messages: list[dict],
     ) -> AsyncIterator[str]:
-
         model = self.resolve_model(model)
-
-        async for line in self._ollama_stream(
-            model,
-            messages,
-        ):
-            yield line
-
-    async def _ollama_stream(
-        self,
-        model: str,
-        messages: list[dict],
-    ) -> AsyncIterator[str]:
-
         payload = {
             "model": model,
-            "messages": messages,
+            "messages": self._normalize_messages(messages),
             "stream": True,
         }
 
-        client = httpx.AsyncClient(timeout=None)
-
-        try:
-
-            request = client.build_request(
-                "POST",
-                f"{settings.OLLAMA_URL}/api/chat",
-                json=payload,
-            )
-
-            response = await client.send(
-                request,
-                stream=True,
-            )
-
-            response.raise_for_status()
-
-            async for line in response.aiter_lines():
-
-                if line:
-                    yield line + "\n"
-
-        finally:
-
-            await client.aclose()
-
-    # ------------------------------------------------------------------
-    # NORMALIZAÇÃO DE MENSAGENS
-    # ------------------------------------------------------------------
-
-    def _normalize_messages(
-        self,
-        messages: list[dict],
-    ) -> list[dict]:
-
-        output = []
-
-        for message in messages:
-
-            role = message.get("role") or "user"
-
-            content = message.get("content")
-
-            if content is None:
-                content = ""
-
-            if role not in (
-                "system",
-                "user",
-                "assistant",
-            ):
-                role = "user"
-
-            output.append(
-                {
-                    "role": role,
-                    "content": content,
-                }
-            )
-
-        return output
-
-    # ------------------------------------------------------------------
-    # IMAGENS
-    # ------------------------------------------------------------------
+        timeout = httpx.Timeout(connect=15.0, read=None, write=60.0, pool=15.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST", f"{settings.OLLAMA_URL}/api/chat", json=payload
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line:
+                        yield line + "\n"
 
     @staticmethod
-    def inject_images(
-        messages: list[dict],
-        images,
-        *,
-        provider: str,
-    ) -> list[dict]:
+    def _normalize_messages(messages: list[dict]) -> list[dict]:
+        output: list[dict] = []
+        for message in messages:
+            role = message.get("role") or "user"
+            if role not in {"system", "user", "assistant"}:
+                role = "user"
+            content = message.get("content")
+            if isinstance(content, list):
+                # Qwen2.5-Coder 7B é texto. Mantemos somente partes textuais.
+                text_parts = [
+                    str(part.get("text", ""))
+                    for part in content
+                    if isinstance(part, dict) and part.get("type") == "text"
+                ]
+                content = " ".join(p for p in text_parts if p).strip()
+            if content is None:
+                content = ""
+            output.append({"role": role, "content": str(content)})
+        return output
 
-        """
-        Adiciona imagens à última mensagem do usuário.
-
-        Ollama utiliza:
-
-        {
-            "role": "user",
-            "content": "...",
-            "images": [
-                "base64..."
-            ]
-        }
-        """
-
+    @staticmethod
+    def inject_images(messages: list[dict], images, *, provider: str) -> list[dict]:
+        """Compatibilidade: o perfil Qwen2.5-Coder 7B é texto/código."""
         if not images:
             return messages
+        result = [dict(message) for message in messages]
+        for i in range(len(result) - 1, -1, -1):
+            if result[i].get("role") == "user":
+                current = result[i].get("content") or ""
+                if isinstance(current, list):
+                    current = " ".join(
+                        str(p.get("text", ""))
+                        for p in current
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    )
+                result[i]["content"] = (
+                    f"{current}\n\n"
+                    "[Uma ou mais imagens foram anexadas. Este servidor usa "
+                    "Qwen2.5-Coder 7B, que é um modelo de texto/código e não "
+                    "faz análise visual direta.]"
+                ).strip()
+                return result
+        return result
 
-        messages_copy = [
-            dict(message)
-            for message in messages
-        ]
-
-        # Procura a última mensagem do usuário.
-        index = None
-
-        for i in range(
-            len(messages_copy) - 1,
-            -1,
-            -1,
-        ):
-
-            if messages_copy[i].get("role") == "user":
-                index = i
-                break
-
-        # Se não existir mensagem do usuário,
-        # cria uma.
-        if index is None:
-
-            messages_copy.append(
-                {
-                    "role": "user",
-                    "content": "",
-                }
-            )
-
-            index = len(messages_copy) - 1
-
-        raw_content = (
-            messages_copy[index].get("content")
-            or ""
-        )
-
-        # Extrai o texto caso o conteúdo
-        # já esteja no formato multimodal.
-        if isinstance(raw_content, list):
-
-            text = " ".join(
-                part.get("text", "")
-                for part in raw_content
-                if (
-                    isinstance(part, dict)
-                    and part.get("type") == "text"
-                )
-            ).strip()
-
-        else:
-
-            text = str(raw_content).strip()
-
-        if not text:
-
-            text = (
-                "Analise a(s) imagem(ns) anexada(s) "
-                "e responda com base no que foi observado."
-            )
-
-        # --------------------------------------------------------------
-        # OLLAMA
-        # --------------------------------------------------------------
-
-        messages_copy[index]["content"] = text
-
-        messages_copy[index]["images"] = [
-            (image.get("data") or "").strip()
-            for image in images
-            if (image.get("data") or "").strip()
-        ]
-
-        return messages_copy
-
-
-# ----------------------------------------------------------------------
-# INSTÂNCIA GLOBAL
-# ----------------------------------------------------------------------
 
 llm = LLMClient()
-
-# Mantém compatibilidade com imports antigos.
 ollama = llm
-

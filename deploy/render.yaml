@@ -1,19 +1,4 @@
-services:
-  - type: web
-    name: frequencia40-api
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    plan: free
-    healthCheckPath: /health
-    envVars:
-      - key: LLM_PROVIDER
-        value: groq
-      - key: GROQ_API_KEY
-        sync: false
-      - key: GROQ_DEFAULT_MODEL
-        value: llama-3.3-70b-versatile
-      - key: DATA_DIR
-        value: /data
-      - key: APP_NAME
-        value: Frequencia40-Gamma
+# O deployment completo usa docker-compose.yml, pois o Ollama precisa rodar
+# junto ao backend e manter o modelo em disco/memória.
+# Este arquivo não é usado pela arquitetura de produção atual.
+services: []

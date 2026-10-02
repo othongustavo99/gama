@@ -70,7 +70,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
         _loadingModels = false;
         _statusMessage =
-            'API não listou modelos. Usando: qwen2.5-coder:14b e phi4-mini.';
+            'API não listou modelos. Usando: qwen2.5-coder:7b.';
         _statusOk = false;
       });
     }
@@ -148,7 +148,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             decoration: const InputDecoration(
               labelText: 'URL da API',
               labelStyle: TextStyle(color: GamaColors.textMuted),
-              hintText: 'http://127.0.0.1:8000',
+              hintText: 'https://seu-dominio-da-api',
               prefixIcon: Icon(Icons.link, color: GamaColors.textMuted),
             ),
             keyboardType: TextInputType.url,
@@ -297,9 +297,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 20),
           const Text(
-            'Emulador Android: http://10.0.2.2:8000\n'
-            'Windows / localhost: http://127.0.0.1:8000\n'
-            'Celular na rede: IP do PC + porta 8000',
+            'Release: use a URL HTTPS pública do servidor do Gama.\n'
+            'O APK não depende do Ollama nem do seu PC.',
             style: TextStyle(
               color: GamaColors.textMuted,
               fontSize: 12,

@@ -1,98 +1,109 @@
-# Deploy Frequencia40-Gamma (sem OpenRouter)
+# Gama — Release sem depender do PC
 
-## Passo 1 — Teste local com Groq
+## Arquitetura
 
-1. Conta em https://console.groq.com → criar API key  
-2. No PowerShell / terminal:
-
-```bash
-# Windows PowerShell
-$env:LLM_PROVIDER="groq"
-$env:GROQ_API_KEY="gsk_SUA_CHAVE"
-$env:GROQ_DEFAULT_MODEL="llama-3.3-70b-versatile"
-
-# Linux / macOS
-export LLM_PROVIDER=groq
-export GROQ_API_KEY=gsk_SUA_CHAVE
-export GROQ_DEFAULT_MODEL=llama-3.3-70b-versatile
+```text
+APK Flutter -> HTTPS -> FastAPI -> rede Docker -> Ollama -> qwen2.5-coder:7b
 ```
 
-3. Suba a API:
+O Ollama não é exposto à internet. Somente a API FastAPI publica a porta 8000.
+
+## Requisitos do servidor
+
+Use uma máquina/VM com pelo menos 8 GB de RAM; 16 GB é mais confortável para o modelo,
+contexto e sistema. GPU é opcional, mas acelera bastante a inferência.
+
+O modelo `qwen2.5-coder:7b` distribuído pelo Ollama é aproximadamente 4,7 GB em Q4_K_M.
+
+## 1. Instalar Docker
+
+Instale Docker + Docker Compose no servidor Linux.
+
+## 2. Copiar o projeto
+
+Envie esta pasta para o servidor e entre nela:
 
 ```bash
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+cd gama
 ```
 
-4. Teste: http://127.0.0.1:8000/health  
-   Deve mostrar `"provider":"groq"` e `"version":"...`.
+## 3. Definir domínio
 
----
+Crie um arquivo `.env` na raiz:
 
-## Passo 2 — Deploy da API (Railway — recomendado)
+```env
+APP_URL=https://api.seudominio.com
+WEB_SEARCH_ENABLED=1
+```
 
-### Opção A: Railway
-
-1. Conta em https://railway.app  
-2. New Project → Deploy from GitHub (suba só a pasta `backend`)  
-   **ou** Railway CLI:
+## 4. Subir
 
 ```bash
-cd backend
-railway login
-railway init
-railway up
+docker compose up -d --build
 ```
 
-3. Variables no painel Railway:
+Na primeira inicialização o container `model-init` baixa automaticamente:
 
-| Key | Value |
-|-----|--------|
-| `LLM_PROVIDER` | `groq` |
-| `GROQ_API_KEY` | sua chave gsk_... |
-| `GROQ_DEFAULT_MODEL` | `llama-3.3-70b-versatile` |
-| `DATA_DIR` | `/data` |
-| `APP_NAME` | `Frequencia40-Gamma` |
+```text
+qwen2.5-coder:7b
+```
 
-4. Generate Domain no Railway → algo como  
-   `https://frequencia40-api-production.up.railway.app`
+Isso pode demorar e usa vários GB de disco.
 
-5. No app Gamma → Settings → cole essa URL **sem barra no final** → Testar → Salvar.
+## 5. Verificar
 
-### Opção B: Render
+```bash
+docker compose ps
+docker compose logs api
+docker compose logs model-init
+```
 
-1. https://render.com → New → Web Service  
-2. Root: pasta `backend`, Docker  
-3. Mesmas env vars acima  
-4. Plano free funciona para demo (pode “dormir” após inatividade)
+Teste:
 
-### Domínio próprio (opcional)
+```bash
+curl http://127.0.0.1:8000/health
+```
 
-No Registro.br / Cloudflare:
+O retorno deve indicar `"provider":"ollama"` e `"llm":"online"`.
 
-- Tipo **CNAME**: `api` → hostname do Railway/Render  
-- No app: `https://api.seudominio.com`
+## 6. HTTPS
 
-HTTPS já vem no Railway/Render.
+Para o APK Release, publique a API atrás de HTTPS usando um domínio e um proxy reverso
+como Caddy ou Nginx. Não publique `11434` na internet.
 
----
+## 7. Configurar o Flutter
 
-## Custos aproximados (início)
+Abra:
 
-| Item | Custo |
-|------|--------|
-| Groq (free tier generoso) | grátis na maioria dos usos |
-| Railway hobby / free trial | ~US$ 0–5/mês no começo |
-| Domínio .com.br | ~R$ 40/ano (opcional) |
+```text
+lib/core/constants.dart
+```
 
----
+Troque:
 
-## Checklist final
+```dart
+static const String apiBaseUrl = 'https://SEU-DOMINIO-DA-API';
+```
 
-- [ ] `/health` na URL pública retorna `ok` + `provider: groq`
-- [ ] App Settings aponta para a URL pública
-- [ ] Chat responde sem o PC ter Ollama ligado
-- [ ] Memória e anexos ainda funcionam
+pelo domínio HTTPS real da API.
 
-Pronto: API no ar só no Railway + Groq. OpenRouter removido.
+Depois:
+
+```powershell
+flutter clean
+flutter pub get
+flutter build apk --release
+```
+
+O APK não precisa do seu PC ligado. O PC pode estar completamente desligado: o modelo
+está no servidor.
+
+## Modelo
+
+Padrão:
+
+```text
+qwen2.5-coder:7b
+```
+
+O app não oferece modelos que não estejam liberados pelo backend.
