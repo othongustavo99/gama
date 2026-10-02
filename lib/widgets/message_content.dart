@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/gama_colors.dart';
@@ -50,8 +51,8 @@ ParsedMessage parseMessageContent(String content) {
           kindLabel: raw.contains('(ZIP)') || raw.contains('.zip')
               ? 'ZIP'
               : raw.contains('(PDF)') || raw.contains('.pdf')
-                  ? 'PDF'
-                  : 'arquivo',
+              ? 'PDF'
+              : 'arquivo',
           body: raw.length > 3000 ? '${raw.substring(0, 3000)}\n…' : raw,
         ),
       ],
@@ -86,16 +87,20 @@ ParsedMessage parseMessageContent(String content) {
     body = body.replaceAll(RegExp(r'\[arquivo:[^\]]+\]'), '').trim();
     if (body.length < 8) body = '';
 
-    attachments.add(AttachmentPreview(
-      name: title.isEmpty ? 'Anexo' : title,
-      kindLabel: kind,
-      body: body,
-      bytes: bytes,
-    ));
+    attachments.add(
+      AttachmentPreview(
+        name: title.isEmpty ? 'Anexo' : title,
+        kindLabel: kind,
+        body: body,
+        bytes: bytes,
+      ),
+    );
   }
 
   if (attachments.isEmpty && section.isNotEmpty) {
-    attachments.add(const AttachmentPreview(name: 'Anexo', kindLabel: 'arquivo'));
+    attachments.add(
+      const AttachmentPreview(name: 'Anexo', kindLabel: 'arquivo'),
+    );
   }
 
   return ParsedMessage(text: mainText, attachments: attachments);
@@ -159,9 +164,13 @@ class MessageContentView extends StatelessWidget {
               if (onTapLink != null) {
                 onTapLink!(href);
               } else if (href != null) {
-                launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
+                launchUrl(
+                  Uri.parse(href),
+                  mode: LaunchMode.externalApplication,
+                );
               }
             },
+            builders: {'table': _HScrollTableBuilder(isUser: isUser)},
             styleSheet: MarkdownStyleSheet(
               p: textStyle,
               a: textStyle.copyWith(
@@ -169,13 +178,7 @@ class MessageContentView extends StatelessWidget {
                 decoration: TextDecoration.underline,
                 decorationColor: isUser ? Colors.white70 : GamaColors.accent,
               ),
-              code: textStyle.copyWith(
-                fontSize: 13,
-                fontFamily: 'monospace',
-                backgroundColor: isUser
-                    ? Colors.black.withOpacity(0.2)
-                    : Colors.black.withOpacity(0.35),
-              ),
+              code: textStyle.copyWith(fontSize: 13, fontFamily: 'monospace'),
               codeblockDecoration: BoxDecoration(
                 color: isUser
                     ? Colors.black.withOpacity(0.22)
@@ -191,6 +194,19 @@ class MessageContentView extends StatelessWidget {
               h1: textStyle.copyWith(fontSize: 18, fontWeight: FontWeight.w700),
               h2: textStyle.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
               h3: textStyle.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
+              tableHead: textStyle.copyWith(fontWeight: FontWeight.w700),
+              tableBody: textStyle.copyWith(fontSize: 13),
+              tableBorder: TableBorder.all(
+                color: isUser
+                    ? Colors.white.withOpacity(0.25)
+                    : GamaColors.border,
+                width: 1,
+              ),
+              tableCellsPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 6,
+              ),
+              tableColumnWidth: const IntrinsicColumnWidth(),
             ),
           ),
         if (parsed.attachments.isNotEmpty) ...[
@@ -217,6 +233,67 @@ class MessageContentView extends StatelessWidget {
       }
       return '[$url]($url)$trail';
     });
+  }
+}
+
+/// Renderiza tabelas Markdown com scroll horizontal.
+class _HScrollTableBuilder extends MarkdownElementBuilder {
+  final bool isUser;
+
+  _HScrollTableBuilder({required this.isUser});
+
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final color = isUser ? Colors.white : GamaColors.textPrimary;
+    final rows = <TableRow>[];
+
+    for (final section in element.children ?? <md.Node>[]) {
+      if (section is! md.Element) continue;
+      final isHead = section.tag == 'thead';
+
+      for (final tr in section.children ?? <md.Node>[]) {
+        if (tr is! md.Element || tr.tag != 'tr') continue;
+
+        final cells = <Widget>[];
+        for (final cell in tr.children ?? <md.Node>[]) {
+          if (cell is! md.Element) continue;
+          cells.add(
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Text(
+                cell.textContent,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 13,
+                  height: 1.4,
+                  fontWeight: isHead ? FontWeight.w700 : FontWeight.w400,
+                ),
+              ),
+            ),
+          );
+        }
+        if (cells.isNotEmpty) rows.add(TableRow(children: cells));
+      }
+    }
+
+    if (rows.isEmpty) return const SizedBox.shrink();
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Table(
+        defaultColumnWidth: const IntrinsicColumnWidth(),
+        border: TableBorder.all(
+          color: isUser ? Colors.white.withOpacity(0.25) : GamaColors.border,
+          width: 1,
+        ),
+        children: rows,
+      ),
+    );
   }
 }
 
@@ -304,9 +381,7 @@ class _AttachmentChipState extends State<_AttachmentChip> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: isUser
-                          ? Colors.white.withOpacity(0.12)
-                          : _iconBg,
+                      color: isUser ? Colors.white.withOpacity(0.12) : _iconBg,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
@@ -325,7 +400,9 @@ class _AttachmentChipState extends State<_AttachmentChip> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: isUser ? Colors.white : GamaColors.textPrimary,
+                            color: isUser
+                                ? Colors.white
+                                : GamaColors.textPrimary,
                             fontWeight: FontWeight.w600,
                             fontSize: 13.5,
                           ),

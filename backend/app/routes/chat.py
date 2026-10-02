@@ -164,17 +164,13 @@ async def chat(request: ChatRequest):
             active_model = model
             if img_payload:
                 from ..config import settings as _settings
-                if llm.provider == "ollama":
-                    active_model = (
-                        getattr(_settings, "VISION_MODEL", None)
-                        or "qwen2-vl"
-                    )
-                elif llm.provider == "groq":
-                    # Groq: usa o modelo atual (visão limitada)
-                    active_model = (
-                        getattr(_settings, "VISION_MODEL", None)
-                        or model
-                    )
+                vision = (getattr(_settings, "VISION_MODEL", None) or "").strip()
+                # Modelo de visão SÓ quando há imagem; senão mantém o modelo de chat.
+                if vision:
+                    active_model = vision
+                elif llm.provider == "ollama":
+                    active_model = "llava"
+                # groq sem VISION_MODEL: mantém active_model (texto) + nota no inject
                 gama_messages = LLMClient.inject_images(
                     gama_messages,
                     img_payload,

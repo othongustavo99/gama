@@ -42,7 +42,7 @@ class ProcessedAttachment {
 }
 
 class AttachmentService {
-  static const maxBytesPerFile = 32 * 1024 * 1024; // 32 MB
+  static const maxBytesPerFile = 50 * 1024 * 1024; // 50 MB
   static const maxTextExtract = 200000;
 
   /// Limite para mandar imagem no chat (base64 ~ +33%)
@@ -121,7 +121,7 @@ class AttachmentService {
     }
     final bytes = await file.length();
     if (bytes > maxBytesPerFile) {
-      throw Exception('$name é grande demais (máx. 32 MB)');
+      throw Exception('$name é grande demais (máx. 50 MB)');
     }
 
     final kind = kindFor(ext);

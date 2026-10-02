@@ -13,7 +13,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["extract"])
 
-MAX_BYTES = 8 * 1024 * 1024
+MAX_BYTES = 50 * 1024 * 1024
 MAX_CHARS = 120_000
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic")
 
@@ -29,7 +29,7 @@ def _clip(text: str) -> str:
 async def extract_file(file: UploadFile = File(...)):
     raw = await file.read()
     if len(raw) > MAX_BYTES:
-        raise HTTPException(status_code=400, detail="Arquivo maior que 8 MB")
+        raise HTTPException(status_code=400, detail="Arquivo maior que 50 MB")
 
     name = file.filename or "arquivo"
     lower = name.lower()

@@ -30,7 +30,7 @@ SEARCH_TIMEOUT_SEC = float(
 )
 
 SEARCH_MODE = (
-    os.getenv("WEB_SEARCH_MODE", getattr(settings, "WEB_SEARCH_MODE", "aggressive") or "aggressive")
+    os.getenv("WEB_SEARCH_MODE", getattr(settings, "WEB_SEARCH_MODE", "balanced") or "balanced")
     .strip()
     .lower()
 )
@@ -61,11 +61,12 @@ _FACTUAL = re.compile(
 
 _SKIP = re.compile(
     r"(?:"
-    r"^\s*(?:oi|ol[aá]|hey|eae|fala|bom\s+dia|boa\s+tarde|boa\s+noite)\s*[!.?]*\s*$|"
-    r"^\s*(?:obrigad[oa]|valeu|thanks|ok|blz|beleza|entendi|certo)\s*[!.?]*\s*$|"
+    r"^\s*(?:oi|ol[aá]|hey|eae|fala|bom\s+dia|boa\s+tarde|boa\s+noite|teste|test)\s*[!.?]*\s*$|"
+    r"^\s*(?:obrigad[oa]|valeu|thanks|ok|blz|beleza|entendi|certo|sim|não|nao)\s*[!.?]*\s*$|"
     r"^\s*/(?:memoria|memory|help|ajuda)\b|"
     r"\blembre(?:\s+que)?\b|"
-    r"\b(?:s[oó]\s+converse|n[aã]o\s+pesquise|sem\s+busca|offline)\b"
+    r"\b(?:s[oó]\s+converse|n[aã]o\s+pesquise|sem\s+busca|offline)\b|"
+    r"\b(?:refatore|corrija|explique\s+(?:este|esse)\s+c[oó]digo)\b"
     r")",
     re.IGNORECASE,
 )
@@ -84,7 +85,7 @@ _CODE_ONLY = re.compile(
 
 def should_search(user_text: str) -> bool:
     text = (user_text or "").strip()
-    if len(text) < 6:
+    if len(text) < 12:
         return False
 
     if _SKIP.search(text):

@@ -13,27 +13,38 @@ import 'identity_service.dart';
 
 /// Login Google multiplataforma.
 ///
-/// - **Android / iOS:** plugin `google_sign_in` (client Android + SHA-1)
-/// - **Windows / macOS / Linux:** OAuth no navegador (client **Desktop**)
+/// Credenciais via --dart-define (não commitar secrets):
+///   GOOGLE_SERVER_CLIENT_ID
+///   GOOGLE_DESKTOP_CLIENT_ID
+///   GOOGLE_DESKTOP_CLIENT_SECRET
+///
+/// userId gravado: google_{id} → memória no servidor é a mesma em qualquer device.
 class AuthService {
   AuthService._();
   static final AuthService instance = AuthService._();
 
-  // ── Mobile: Web client ID (serverClientId) ─────────────────────────
-  static const String? serverClientId =
-      null;
-
-  // ── Desktop: OAuth tipo "Aplicativo para computador" ───────────────
-  // Google Cloud → Credenciais → Criar → OAuth → Desktop
-  // Cole os valores aqui (obrigatório no Windows):
-  static const String? desktopClientId =
-      null; // 'SEU_ID.apps.googleusercontent.com'
-  static const String? desktopClientSecret = null; // 'GOCSPX-...'
-
-  final GoogleSignIn _google = GoogleSignIn(
-    scopes: const ['email', 'profile'],
-    serverClientId: serverClientId,
+  static const String? serverClientId = String.fromEnvironment(
+    'GOOGLE_SERVER_CLIENT_ID',
+    defaultValue: '',
   );
+
+  static const String? desktopClientId = String.fromEnvironment(
+    'GOOGLE_DESKTOP_CLIENT_ID',
+    defaultValue: '',
+  );
+
+  static const String? desktopClientSecret = String.fromEnvironment(
+    'GOOGLE_DESKTOP_CLIENT_SECRET',
+    defaultValue: '',
+  );
+
+  GoogleSignIn get _google => GoogleSignIn(
+        scopes: const ['email', 'profile'],
+        serverClientId:
+            (serverClientId != null && serverClientId!.isNotEmpty)
+                ? serverClientId
+                : null,
+      );
 
   bool get isDesktop =>
       !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
@@ -68,9 +79,8 @@ class AuthService {
 
     if (clientId == null || clientId.isEmpty) {
       throw StateError(
-        'Windows: configure desktopClientId e desktopClientSecret '
-        'em lib/services/auth_service.dart\n'
-        'Google Cloud → Credenciais → OAuth → tipo Desktop.',
+        'Windows: passe --dart-define=GOOGLE_DESKTOP_CLIENT_ID=...\n'
+        'e GOOGLE_DESKTOP_CLIENT_SECRET=... (OAuth tipo Desktop no Google Cloud).',
       );
     }
 
@@ -103,9 +113,7 @@ class AuthService {
           request.response
             ..statusCode = 400
             ..headers.contentType = ContentType.html
-            ..write(
-              '<html><body>State inválido. Feche esta aba.</body></html>',
-            );
+            ..write('<html><body>State inválido.</body></html>');
           await request.response.close();
           if (!completer.isCompleted) completer.complete(null);
           return;
@@ -114,9 +122,7 @@ class AuthService {
           request.response
             ..statusCode = 400
             ..headers.contentType = ContentType.html
-            ..write(
-              '<html><body>Erro: ${q['error']}. Feche esta aba.</body></html>',
-            );
+            ..write('<html><body>Erro: ${q['error']}</body></html>');
           await request.response.close();
           if (!completer.isCompleted) completer.complete(null);
           return;
@@ -128,7 +134,7 @@ class AuthService {
           ..write(
             '<!DOCTYPE html><html><body style="font-family:system-ui;text-align:center;padding:48px">'
             '<h2 style="color:#FF6B00">Gamma</h2>'
-            '<p>Login concluído. Pode fechar esta aba e voltar ao app.</p>'
+            '<p>Login concluído. Pode fechar e voltar ao app.</p>'
             '</body></html>',
           );
         await request.response.close();
@@ -143,7 +149,7 @@ class AuthService {
     final ok = await launchUrl(authUri, mode: LaunchMode.externalApplication);
     if (!ok) {
       await server.close(force: true);
-      throw StateError('Não abriu o navegador. Verifique o padrão do sistema.');
+      throw StateError('Não abriu o navegador');
     }
 
     final code = await completer.future.timeout(
@@ -172,18 +178,13 @@ class AuthService {
       headers: {'Content-Type': 'application/x-www-form-urlencoded'},
       body: body,
     );
-
     if (tokenRes.statusCode != 200) {
-      throw StateError(
-        'Token Google (${tokenRes.statusCode}): ${tokenRes.body}',
-      );
+      throw StateError('Token Google (${tokenRes.statusCode}): ${tokenRes.body}');
     }
 
     final tokenJson = jsonDecode(tokenRes.body) as Map<String, dynamic>;
     final accessToken = tokenJson['access_token'] as String?;
-    if (accessToken == null) {
-      throw StateError('Resposta sem access_token');
-    }
+    if (accessToken == null) throw StateError('Sem access_token');
 
     final userRes = await http.get(
       Uri.parse('https://www.googleapis.com/oauth2/v2/userinfo'),
@@ -195,9 +196,7 @@ class AuthService {
 
     final user = jsonDecode(userRes.body) as Map<String, dynamic>;
     final id = user['id']?.toString();
-    if (id == null || id.isEmpty) {
-      throw StateError('Perfil sem id');
-    }
+    if (id == null || id.isEmpty) throw StateError('Perfil sem id');
 
     await IdentityService.instance.bindGoogleUser(
       googleId: id,
@@ -238,9 +237,7 @@ class AuthService {
     const chars =
         'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
     final rnd = Random.secure();
-    return List.generate(
-      length,
-      (_) => chars[rnd.nextInt(chars.length)],
-    ).join();
+    return List.generate(length, (_) => chars[rnd.nextInt(chars.length)])
+        .join();
   }
 }

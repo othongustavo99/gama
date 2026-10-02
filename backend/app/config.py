@@ -67,13 +67,13 @@ class Settings:
 
     WEB_SEARCH_ENABLED = env_bool("WEB_SEARCH_ENABLED", True)
     WEB_SEARCH_TIMEOUT = float(os.getenv("WEB_SEARCH_TIMEOUT", "12"))
-    WEB_SEARCH_MODE = os.getenv("WEB_SEARCH_MODE", "balanced").strip().lower()
+    WEB_SEARCH_MODE = os.getenv("WEB_SEARCH_MODE", "balanced").strip().lower()  # balanced|explicit|aggressive
 
     BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "").strip()
     SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 
-    VISION_MODEL = os.getenv("VISION_MODEL", "").strip()
+    VISION_MODEL = os.getenv("VISION_MODEL", "").strip()  # só com imagem; ex: llama-3.2-11b-vision-preview
 
     @property
     def default_model(self) -> str:
