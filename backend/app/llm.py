@@ -69,6 +69,7 @@ class LLMClient:
             "model": model,
             "messages": self._normalize_messages(messages),
             "stream": False,
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
         }
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
@@ -88,6 +89,7 @@ class LLMClient:
             "model": model,
             "messages": self._normalize_messages(messages),
             "stream": True,
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
         }
 
         timeout = httpx.Timeout(connect=15.0, read=None, write=60.0, pool=15.0)

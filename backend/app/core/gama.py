@@ -74,28 +74,9 @@ class GamaCore:
             web_enabled=web_on,
         )
 
-        async def _summarize(older: List[Dict[str, str]]) -> str:
-            sample = older[-20:] if len(older) > 20 else older
-            lines = []
-            for m in sample:
-                role = "Usuário" if m.get("role") == "user" else "Gamma"
-                text = (m.get("content") or "").replace("\n", " ")
-                if len(text) > 200:
-                    text = text[:200] + "…"
-                lines.append(f"{role}: {text}")
-            prompt = (
-                "Resuma em português, em no máximo 8 frases curtas, "
-                "os pontos importantes desta conversa. Não invente nada.\n\n"
-                + "\n".join(lines)
-            )
-            return await ollama_client.chat_once(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                timeout=60.0,
-            )
-
+        # Resume localmente: chamar o modelo de novo aqui pode bloquear o turno por até 60 s.
         try:
-            context = await self.context_manager.prepare(messages, summarize=_summarize)
+            context = await self.context_manager.prepare(messages)
         except Exception as e:
             logger.warning("context: %s", e)
             context = messages[-16:]
