@@ -4,11 +4,10 @@ class AppConstants {
       'https://gama-production-592b.up.railway.app';
 
   /// Modelo padrão Groq — forte em programação e rápido.
-  static const String defaultModel = 'llama-3.3-70b-versatile';
+  static const String defaultModel = 'openai/gpt-oss-120b';
 
-  /// Modelos liberados no app (devem bater com GROQ_MODELS no backend).
   static const List<String> availableModels = [
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant',
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
   ];
 }
