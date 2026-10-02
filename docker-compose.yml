@@ -36,11 +36,11 @@ services:
     environment:
       LLM_PROVIDER: ollama
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_DEFAULT_MODEL: qwen2.5-coder:7b
-      OLLAMA_MODELS: qwen2.5-coder:7b
+      OLLAMA_DEFAULT_MODEL: qwen2.5:1.5b
+      OLLAMA_MODELS: qwen2.5:1.5b
       DATA_DIR: /data
       APP_NAME: Frequencia40-Gamma
-      APP_URL: ${APP_URL:-http://localhost:8000}
+      APP_URL: ${APP_URL:-http://localhost:8080}
       WEB_SEARCH_ENABLED: ${WEB_SEARCH_ENABLED:-1}
       WEB_SEARCH_TIMEOUT: ${WEB_SEARCH_TIMEOUT:-12}
       WEB_SEARCH_MODE: ${WEB_SEARCH_MODE:-aggressive}

@@ -33,7 +33,7 @@ class Settings:
 
     OLLAMA_DEFAULT_MODEL = os.getenv(
         "OLLAMA_DEFAULT_MODEL",
-        "qwen3.5:4b",
+        "qwen2.5:1.5b",
     ).strip()
 
     OLLAMA_MODELS = [
