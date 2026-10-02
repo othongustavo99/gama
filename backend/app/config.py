@@ -73,7 +73,10 @@ class Settings:
     SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 
-    VISION_MODEL = os.getenv("VISION_MODEL", "").strip()  # só com imagem; ex: llama-3.2-11b-vision-preview
+    VISION_MODEL = os.getenv(
+        "VISION_MODEL",
+        "qwen/qwen3.8-27b",
+    ).strip()  # só quando há imagem; override no Railway se o ID mudar
 
     @property
     def default_model(self) -> str:

@@ -165,12 +165,14 @@ async def chat(request: ChatRequest):
             if img_payload:
                 from ..config import settings as _settings
                 vision = (getattr(_settings, "VISION_MODEL", None) or "").strip()
-                # Modelo de visão SÓ quando há imagem; senão mantém o modelo de chat.
+                # Modelo de visão SÓ quando há imagem anexada.
                 if vision:
                     active_model = vision
                 elif llm.provider == "ollama":
                     active_model = "llava"
-                # groq sem VISION_MODEL: mantém active_model (texto) + nota no inject
+                else:
+                    # fallback Groq multimodal conhecido
+                    active_model = "qwen/qwen3.8-27b"
                 gama_messages = LLMClient.inject_images(
                     gama_messages,
                     img_payload,

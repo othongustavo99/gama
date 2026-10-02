@@ -45,8 +45,12 @@ class LLMClient:
 
     def resolve_model(self, requested: str | None) -> str:
         model = (requested or "").strip()
+        if not model:
+            return settings.default_model
         allowed = set(settings.allowed_models)
-        if model in allowed:
+        vision = (getattr(settings, "VISION_MODEL", None) or "").strip()
+        # Modelo de visão pode estar fora da lista de chat
+        if model in allowed or (vision and model == vision):
             return model
         return settings.default_model
 
@@ -64,7 +68,8 @@ class LLMClient:
         timeout: float = 120.0,
     ) -> str:
         model = self.resolve_model(model)
-        msgs = self._normalize_messages(messages)
+        has_mm = any(isinstance(m.get("content"), list) for m in messages)
+        msgs = self._normalize_messages(messages, keep_multimodal=has_mm)
 
         if settings.PROVIDER == "groq":
             if not settings.GROQ_API_KEY:
@@ -110,7 +115,8 @@ class LLMClient:
         messages: list[dict],
     ) -> AsyncIterator[str]:
         model = self.resolve_model(model)
-        msgs = self._normalize_messages(messages)
+        has_mm = any(isinstance(m.get("content"), list) for m in messages)
+        msgs = self._normalize_messages(messages, keep_multimodal=has_mm)
 
         if settings.PROVIDER == "groq":
             async for line in self._stream_groq(model, msgs):
@@ -214,7 +220,8 @@ class LLMClient:
                         ) + "\n"
 
     @staticmethod
-    def _normalize_messages(messages: list[dict]) -> list[dict]:
+    def _normalize_messages(messages: list[dict], *, keep_multimodal: bool = False) -> list[dict]:
+        """Normaliza mensagens. Se keep_multimodal=True, preserva content em lista (visão)."""
         output: list[dict] = []
         for message in messages:
             role = message.get("role") or "user"
@@ -222,43 +229,90 @@ class LLMClient:
                 role = "user"
             content = message.get("content")
             if isinstance(content, list):
-                text_parts = [
-                    str(part.get("text", ""))
-                    for part in content
-                    if isinstance(part, dict) and part.get("type") == "text"
-                ]
-                content = " ".join(p for p in text_parts if p).strip()
+                if keep_multimodal:
+                    # Formato OpenAI: [{type:text},{type:image_url}]
+                    parts = []
+                    for part in content:
+                        if not isinstance(part, dict):
+                            continue
+                        ptype = part.get("type")
+                        if ptype == "text":
+                            parts.append({"type": "text", "text": str(part.get("text") or "")})
+                        elif ptype == "image_url":
+                            parts.append(part)
+                    content = parts if parts else ""
+                else:
+                    text_parts = [
+                        str(part.get("text", ""))
+                        for part in content
+                        if isinstance(part, dict) and part.get("type") == "text"
+                    ]
+                    content = " ".join(p for p in text_parts if p).strip()
             if content is None:
                 content = ""
-            output.append({"role": role, "content": str(content)})
+            if not isinstance(content, list):
+                content = str(content)
+            output.append({"role": role, "content": content})
         return output
 
     @staticmethod
     def inject_images(messages: list[dict], images, *, provider: str) -> list[dict]:
-        """Groq/Ollama texto: descreve anexos no texto (visão nativa limitada)."""
+        """Injeta imagens no último user message.
+
+        Groq (OpenAI-compatible): content multimodal com image_url data-URI.
+        Ollama: imagens no campo images (tratado no payload ollama se necessário)
+        ou data-URI se o modelo for multimodal OpenAI-like.
+        """
         if not images:
             return messages
         result = [dict(message) for message in messages]
+
+        # Monta partes de imagem (máx. 3 no Groq)
+        image_parts: list[dict] = []
+        for img in images[:3]:
+            data = (img.get("data") or "").strip()
+            if not data:
+                continue
+            mime = (img.get("mime") or "image/jpeg").strip()
+            if data.startswith("data:"):
+                url = data
+            else:
+                url = f"data:{mime};base64,{data}"
+            image_parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": url},
+                }
+            )
+
+        if not image_parts:
+            return messages
+
         for i in range(len(result) - 1, -1, -1):
-            if result[i].get("role") == "user":
-                current = result[i].get("content") or ""
-                if isinstance(current, list):
-                    current = " ".join(
-                        str(p.get("text", ""))
-                        for p in current
-                        if isinstance(p, dict) and p.get("type") == "text"
-                    )
-                names = ", ".join(
-                    str(img.get("name") or "imagem") for img in images
+            if result[i].get("role") != "user":
+                continue
+            current = result[i].get("content") or ""
+            if isinstance(current, list):
+                text = " ".join(
+                    str(p.get("text", ""))
+                    for p in current
+                    if isinstance(p, dict) and p.get("type") == "text"
+                ).strip()
+            else:
+                text = str(current).strip()
+
+            names = ", ".join(str(img.get("name") or "imagem") for img in images[:3])
+            if not text:
+                text = (
+                    f"Analise a(s) imagem(ns) anexada(s): {names}. "
+                    "Descreva o que vê com detalhe e responda ao pedido do usuário."
                 )
-                note = (
-                    f"\n\n[Usuário anexou imagem(ns): {names}. "
-                    "Você NÃO consegue ver o conteúdo da imagem neste provedor. "
-                    "Não invente nem descreva o que ela mostra: avise o usuário "
-                    "e peça que descreva a imagem ou cole o texto dela.]"
-                )
-                result[i]["content"] = str(current) + note
-                break
+
+            parts: list[dict] = [{"type": "text", "text": text}]
+            parts.extend(image_parts)
+            result[i]["content"] = parts
+            break
+
         return result
 
 
