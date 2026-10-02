@@ -111,7 +111,9 @@ class IdentityService {
   Future<void> signOutLocal() async {
     await init();
     await _prefs.setBool(_keyLoggedIn, false);
-    // mantém userId para não “perder” memória guest se voltar; login Google sobrescreve
+    await _prefs.setString(_keyProvider, 'guest');
+    await _prefs.remove(_keyEmail);
+    await _prefs.remove(_keyPhotoUrl);
   }
 
   Future<void> clearAll() async {

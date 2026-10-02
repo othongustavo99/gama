@@ -27,9 +27,8 @@ class _SplashScreenState extends State<SplashScreen> {
 
     if (!mounted) return;
 
-    final next = IdentityService.instance.isLoggedIn
-        ? const HomeScreen()
-        : const LoginScreen();
+    final id = IdentityService.instance;
+    final next = id.isLoggedIn ? const HomeScreen() : const LoginScreen();
 
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(

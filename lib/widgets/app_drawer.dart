@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../core/gama_colors.dart';
 import '../models/conversation.dart';
 import '../services/conversation_service.dart';
+import '../services/identity_service.dart';
+import '../services/auth_service.dart';
+import '../screens/login_screen.dart';
 import '../screens/settings_screen.dart';
 
 class AppDrawer extends StatelessWidget {
@@ -35,52 +38,38 @@ class AppDrawer extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ===== HEADER =====
+            // ===== MINI PERFIL =====
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 8, 12),
+              padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
               child: Row(
                 children: [
-                  // Marca discreta
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: GamaColors.accentSoft,
-                      borderRadius: BorderRadius.circular(9),
-                      border: Border.all(
-                        color: GamaColors.accent.withOpacity(0.35),
-                      ),
-                    ),
-                    alignment: Alignment.center,
-                    child: const Text(
-                      'G',
-                      style: TextStyle(
-                        color: GamaColors.accent,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  const Expanded(
+                  const _ProfileAvatar(size: 44),
+                  const SizedBox(width: 12),
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Gamma',
-                          style: TextStyle(
+                          IdentityService.instance.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
                             color: GamaColors.textPrimary,
-                            fontSize: 18,
+                            fontSize: 15,
                             fontWeight: FontWeight.w600,
-                            letterSpacing: -0.2,
                           ),
                         ),
+                        const SizedBox(height: 2),
                         Text(
-                          'Frequência40',
-                          style: TextStyle(
+                          IdentityService.instance.email ??
+                              (IdentityService.instance.provider == 'google'
+                                  ? 'Conta Google'
+                                  : 'Convidado'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
                             color: GamaColors.textMuted,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w400,
+                            fontSize: 12,
                           ),
                         ),
                       ],
@@ -98,7 +87,6 @@ class AppDrawer extends StatelessWidget {
                 ],
               ),
             ),
-
             // Botão nova conversa
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -231,7 +219,7 @@ class AppDrawer extends StatelessWidget {
             // ===== RODAPÉ =====
             const Divider(color: GamaColors.divider, height: 1),
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
               child: ListTile(
                 leading: Container(
                   width: 36,
@@ -268,9 +256,60 @@ class AppDrawer extends StatelessWidget {
                 },
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+              child: ListTile(
+                leading: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: GamaColors.surfaceCard,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: GamaColors.border),
+                  ),
+                  child: const Icon(
+                    Icons.logout_rounded,
+                    color: GamaColors.error,
+                    size: 18,
+                  ),
+                ),
+                title: const Text(
+                  'Sair da conta',
+                  style: TextStyle(
+                    color: GamaColors.error,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                dense: true,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                onTap: () => _logout(context),
+              ),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _logout(BuildContext context) async {
+    Navigator.pop(context);
+    try {
+      await AuthService.instance.signOut();
+    } catch (_) {
+      await IdentityService.instance.signOutLocal();
+    }
+    if (!context.mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const LoginScreen(),
+        transitionDuration: const Duration(milliseconds: 350),
+        transitionsBuilder: (_, a, __, child) =>
+            FadeTransition(opacity: a, child: child),
+      ),
+      (_) => false,
     );
   }
 
@@ -523,6 +562,54 @@ class _ConversationTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ProfileAvatar extends StatelessWidget {
+  final double size;
+  const _ProfileAvatar({this.size = 44});
+
+  @override
+  Widget build(BuildContext context) {
+    final id = IdentityService.instance;
+    final photo = id.photoUrl;
+    final letter = id.displayName.isNotEmpty
+        ? id.displayName[0].toUpperCase()
+        : 'G';
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: GamaColors.accentSoft,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: GamaColors.accent.withOpacity(0.35)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      alignment: Alignment.center,
+      child: photo != null && photo.isNotEmpty
+          ? Image.network(
+              photo,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Text(
+                letter,
+                style: const TextStyle(
+                  color: GamaColors.accent,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            )
+          : Text(
+              letter,
+              style: const TextStyle(
+                color: GamaColors.accent,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
     );
   }
 }
