@@ -316,6 +316,38 @@ class AttachmentService {
     return buf.toString().trim();
   }
 
+  /// Texto curto para a bolha do chat (nunca o ZIP/PDF inteiro).
+  static String buildDisplayMessage(
+    String userText,
+    List<ProcessedAttachment> attachments,
+  ) {
+    final buf = StringBuffer();
+    if (userText.trim().isNotEmpty) {
+      buf.writeln(userText.trim());
+    }
+    if (attachments.isEmpty) return buf.toString().trim();
+
+    if (buf.isNotEmpty) buf.writeln();
+    buf.writeln('Anexos para análise:');
+    for (final a in attachments) {
+      String kind = 'arquivo';
+      if (a.kind == AttachmentKind.zip)
+        kind = 'ZIP';
+      else if (a.kind == AttachmentKind.pdf)
+        kind = 'PDF';
+      else if (a.kind == AttachmentKind.image)
+        kind = 'imagem';
+      else if (a.kind == AttachmentKind.audio)
+        kind = 'áudio';
+      else if (a.kind == AttachmentKind.text)
+        kind = 'código';
+      // só metadados — sem contentForModel
+      buf.writeln('### ${a.name} ($kind)');
+      buf.writeln('[arquivo:${a.ext}|${a.bytes}]');
+    }
+    return buf.toString().trim();
+  }
+
   static List<Map<String, String>> buildImagesPayload(
     List<ProcessedAttachment> attachments,
   ) {

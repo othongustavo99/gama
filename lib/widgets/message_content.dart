@@ -5,7 +5,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../core/gama_colors.dart';
 
-/// Separa texto legível de blocos de anexo extraídos (ZIP/PDF/código).
 class ParsedMessage {
   final String text;
   final List<AttachmentPreview> attachments;
@@ -16,12 +15,14 @@ class ParsedMessage {
 class AttachmentPreview {
   final String name;
   final String kindLabel;
-  final String body; // conteúdo extraído (colapsado por padrão)
+  final String body;
+  final int? bytes;
 
   const AttachmentPreview({
     required this.name,
     required this.kindLabel,
-    required this.body,
+    this.body = '',
+    this.bytes,
   });
 }
 
@@ -31,69 +32,108 @@ ParsedMessage parseMessageContent(String content) {
     return const ParsedMessage(text: '', attachments: []);
   }
 
-  // Marca início da seção de anexos
+  // Formato compacto novo:
+  // Anexos para análise:
+  // ### nome (ZIP)
+  // [arquivo:.zip|12345]
   final marker = RegExp(r'\n*Anexos para análise:\s*\n?', caseSensitive: false);
   final m = marker.firstMatch(raw);
 
   String mainText;
-  String attachSection;
+  String section;
   if (m != null) {
     mainText = raw.substring(0, m.start).trim();
-    attachSection = raw.substring(m.end).trim();
-  } else if (raw.startsWith('### ') &&
-      (raw.contains('```') || raw.contains('(ZIP)') || raw.contains('(PDF)'))) {
-    // mensagem só de anexo
-    mainText = '';
-    attachSection = raw;
+    section = raw.substring(m.end).trim();
+  } else if (_looksLikeDump(raw)) {
+    // legado: ZIP/PDF inteiro na bolha → um card só
+    final name = _guessName(raw);
+    return ParsedMessage(
+      text: '',
+      attachments: [
+        AttachmentPreview(
+          name: name,
+          kindLabel: raw.contains('(ZIP)') || raw.contains('.zip')
+              ? 'ZIP'
+              : raw.contains('(PDF)') || raw.contains('.pdf')
+              ? 'PDF'
+              : 'arquivo',
+          body: raw.length > 4000 ? '${raw.substring(0, 4000)}\n…' : raw,
+        ),
+      ],
+    );
   } else {
-    // sem seção explícita: tenta blocos ### nome
-    return ParsedMessage(text: raw, attachments: []);
+    return ParsedMessage(text: raw, attachments: const []);
   }
 
   final attachments = <AttachmentPreview>[];
-  // divide por ### headers
-  final parts = attachSection.split(RegExp(r'\n(?=### )'));
-  for (final part in parts) {
-    final t = part.trim();
+  final blocks = section.split(RegExp(r'\n(?=### )'));
+  for (final block in blocks) {
+    final t = block.trim();
     if (t.isEmpty) continue;
-    final firstLine = t.split('\n').first.replaceFirst(RegExp(r'^###\s*'), '');
-    var name = firstLine.trim();
+    final lines = t.split('\n');
+    var title = lines.first.replaceFirst(RegExp(r'^###\s*'), '').trim();
     var kind = 'arquivo';
-    if (name.toLowerCase().contains('(zip)')) {
-      kind = 'ZIP';
-      name = name.replaceAll(RegExp(r'\s*\(ZIP\)', caseSensitive: false), '');
-    } else if (name.toLowerCase().contains('(pdf)')) {
-      kind = 'PDF';
-      name = name.replaceAll(RegExp(r'\s*\(PDF\)', caseSensitive: false), '');
-    } else if (name.toLowerCase().contains('imagem')) {
-      kind = 'imagem';
-    } else if (t.contains('```')) {
-      kind = 'código';
+    final kindM = RegExp(
+      r'\((ZIP|PDF|imagem|áudio|audio|código|codigo|arquivo)\)',
+      caseSensitive: false,
+    ).firstMatch(title);
+    if (kindM != null) {
+      kind = kindM.group(1)!;
+      title = title.replaceAll(kindM.group(0)!, '').trim();
     }
+    int? bytes;
+    final meta = RegExp(r'\[arquivo:([^\|\]]*)\|(\d+)\]').firstMatch(t);
+    if (meta != null) {
+      bytes = int.tryParse(meta.group(2)!);
+    }
+    // body só se houver conteúdo real além do meta (legado expandido)
+    var body = t;
+    body = body.replaceFirst(RegExp(r'^###[^\n]*\n'), '');
+    body = body.replaceAll(RegExp(r'\[arquivo:[^\]]+\]'), '').trim();
+    if (body.length < 8) body = '';
+
     attachments.add(
       AttachmentPreview(
-        name: name.isEmpty ? 'Anexo' : name,
+        name: title.isEmpty ? 'Anexo' : title,
         kindLabel: kind,
-        body: t,
+        body: body,
+        bytes: bytes,
       ),
     );
   }
 
-  // se não parseou, um card genérico
-  if (attachments.isEmpty && attachSection.isNotEmpty) {
+  if (attachments.isEmpty && section.isNotEmpty) {
     attachments.add(
-      AttachmentPreview(
-        name: 'Anexo',
-        kindLabel: 'arquivo',
-        body: attachSection,
-      ),
+      AttachmentPreview(name: 'Anexo', kindLabel: 'arquivo', body: ''),
     );
   }
 
   return ParsedMessage(text: mainText, attachments: attachments);
 }
 
-/// Render de mensagem do usuário/assistente com anexos compactos e links ok.
+bool _looksLikeDump(String raw) {
+  if (raw.length < 400) return false;
+  final codeFences = '```'.allMatches(raw).length;
+  if (codeFences >= 2) return true;
+  if (raw.contains('(ZIP)') || raw.contains('### ') && raw.length > 800) {
+    return true;
+  }
+  return false;
+}
+
+String _guessName(String raw) {
+  final m = RegExp(r'^###\s*(.+)').firstMatch(raw);
+  if (m != null) return m.group(1)!.trim();
+  return 'Arquivo anexado';
+}
+
+String _fmtBytes(int? b) {
+  if (b == null) return '';
+  if (b < 1024) return '$b B';
+  if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)} KB';
+  return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
 class MessageContentView extends StatelessWidget {
   final String content;
   final bool isUser;
@@ -128,8 +168,11 @@ class MessageContentView extends StatelessWidget {
             onTapLink: (text, href, title) {
               if (onTapLink != null) {
                 onTapLink!(href);
-              } else {
-                _open(href);
+              } else if (href != null) {
+                launchUrl(
+                  Uri.parse(href),
+                  mode: LaunchMode.externalApplication,
+                );
               }
             },
             styleSheet: MarkdownStyleSheet(
@@ -137,24 +180,9 @@ class MessageContentView extends StatelessWidget {
               a: textStyle.copyWith(
                 color: isUser ? Colors.white : GamaColors.accent,
                 decoration: TextDecoration.underline,
-                decorationColor: (isUser ? Colors.white : GamaColors.accent)
-                    .withOpacity(0.7),
               ),
-              code: textStyle.copyWith(
-                fontFamily: 'monospace',
-                fontSize: 13,
-                backgroundColor: isUser
-                    ? Colors.black26
-                    : GamaColors.surfaceInput,
-              ),
-              codeblockDecoration: BoxDecoration(
-                color: isUser ? Colors.black26 : GamaColors.surfaceInput,
-                borderRadius: BorderRadius.circular(8),
-              ),
+              code: textStyle.copyWith(fontSize: 13, fontFamily: 'monospace'),
               listBullet: textStyle,
-              h1: textStyle.copyWith(fontSize: 18, fontWeight: FontWeight.w700),
-              h2: textStyle.copyWith(fontSize: 16, fontWeight: FontWeight.w700),
-              h3: textStyle.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
             ),
           ),
         if (parsed.attachments.isNotEmpty) ...[
@@ -170,31 +198,17 @@ class MessageContentView extends StatelessWidget {
     );
   }
 
-  /// Transforma URLs soltas em markdown [url](url) sem quebrar layout.
   static String _linkifyBareUrls(String text) {
-    // não mexe se já tem markdown link
-    final re = RegExp(
-      r'''(?<!\]\()(?<!["\'])(https?:\/\/[^\s\)\]\>]+)''',
-      caseSensitive: false,
-    );
+    final re = RegExp(r'(?<!\()(https?:\/\/[^\s\)\]]+)', caseSensitive: false);
     return text.replaceAllMapped(re, (m) {
-      final url = m.group(1)!;
-      // evita pontuação final colada
-      var clean = url;
-      var trailing = '';
-      while (clean.isNotEmpty && '.,;:!?'.contains(clean[clean.length - 1])) {
-        trailing = clean[clean.length - 1] + trailing;
-        clean = clean.substring(0, clean.length - 1);
+      var url = m.group(1)!;
+      var trail = '';
+      while (url.isNotEmpty && '.,;:!?'.contains(url[url.length - 1])) {
+        trail = url[url.length - 1] + trail;
+        url = url.substring(0, url.length - 1);
       }
-      return '[$clean]($clean)$trailing';
+      return '[$url]($url)$trail';
     });
-  }
-
-  static Future<void> _open(String? href) async {
-    if (href == null || href.isEmpty) return;
-    final uri = Uri.tryParse(href);
-    if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 }
 
@@ -212,16 +226,16 @@ class _AttachmentCardState extends State<_AttachmentCard> {
   bool _expanded = false;
 
   IconData get _icon {
-    switch (widget.preview.kindLabel.toLowerCase()) {
-      case 'zip':
+    switch (widget.preview.kindLabel.toUpperCase()) {
+      case 'ZIP':
         return Icons.folder_zip_outlined;
-      case 'pdf':
+      case 'PDF':
         return Icons.picture_as_pdf_outlined;
-      case 'código':
-      case 'codigo':
-        return Icons.code_rounded;
-      case 'imagem':
+      case 'IMAGEM':
         return Icons.image_outlined;
+      case 'CÓDIGO':
+      case 'CODIGO':
+        return Icons.code_rounded;
       default:
         return Icons.insert_drive_file_outlined;
     }
@@ -229,19 +243,20 @@ class _AttachmentCardState extends State<_AttachmentCard> {
 
   @override
   Widget build(BuildContext context) {
-    final border = widget.isUser
-        ? Colors.white.withOpacity(0.25)
-        : GamaColors.border;
-    final bg = widget.isUser
-        ? Colors.black.withOpacity(0.2)
+    final isUser = widget.isUser;
+    final border = isUser ? Colors.white.withOpacity(0.28) : GamaColors.border;
+    final bg = isUser
+        ? Colors.black.withOpacity(0.22)
         : GamaColors.surfaceInput;
+    final hasBody = widget.preview.body.trim().isNotEmpty;
+    final size = _fmtBytes(widget.preview.bytes);
 
     return Material(
       color: bg,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => setState(() => _expanded = !_expanded),
+        onTap: hasBody ? () => setState(() => _expanded = !_expanded) : null,
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -256,8 +271,8 @@ class _AttachmentCardState extends State<_AttachmentCard> {
                 children: [
                   Icon(
                     _icon,
-                    size: 20,
-                    color: widget.isUser ? Colors.white : GamaColors.accent,
+                    size: 22,
+                    color: isUser ? Colors.white : GamaColors.accent,
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -269,7 +284,7 @@ class _AttachmentCardState extends State<_AttachmentCard> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: widget.isUser
+                            color: isUser
                                 ? Colors.white
                                 : GamaColors.textPrimary,
                             fontWeight: FontWeight.w600,
@@ -277,9 +292,12 @@ class _AttachmentCardState extends State<_AttachmentCard> {
                           ),
                         ),
                         Text(
-                          widget.preview.kindLabel,
+                          [
+                            widget.preview.kindLabel,
+                            if (size.isNotEmpty) size,
+                          ].join(' · '),
                           style: TextStyle(
-                            color: widget.isUser
+                            color: isUser
                                 ? Colors.white70
                                 : GamaColors.textMuted,
                             fontSize: 11,
@@ -288,21 +306,19 @@ class _AttachmentCardState extends State<_AttachmentCard> {
                       ],
                     ),
                   ),
-                  Icon(
-                    _expanded
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
-                    color: widget.isUser
-                        ? Colors.white70
-                        : GamaColors.textMuted,
-                    size: 20,
-                  ),
+                  if (hasBody)
+                    Icon(
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: isUser ? Colors.white70 : GamaColors.textMuted,
+                    ),
                 ],
               ),
-              if (_expanded) ...[
+              if (_expanded && hasBody) ...[
                 const SizedBox(height: 8),
                 Container(
-                  constraints: const BoxConstraints(maxHeight: 220),
+                  constraints: const BoxConstraints(maxHeight: 180),
                   width: double.infinity,
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
@@ -313,42 +329,11 @@ class _AttachmentCardState extends State<_AttachmentCard> {
                     child: SelectableText(
                       widget.preview.body,
                       style: TextStyle(
-                        color: widget.isUser
+                        color: isUser
                             ? Colors.white70
                             : GamaColors.textSecondary,
-                        fontSize: 11.5,
+                        fontSize: 11,
                         fontFamily: 'monospace',
-                        height: 1.35,
-                      ),
-                    ),
-                  ),
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    onPressed: () {
-                      Clipboard.setData(
-                        ClipboardData(text: widget.preview.body),
-                      );
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Conteúdo copiado'),
-                          duration: Duration(seconds: 1),
-                        ),
-                      );
-                    },
-                    icon: Icon(
-                      Icons.copy_rounded,
-                      size: 14,
-                      color: widget.isUser ? Colors.white70 : GamaColors.accent,
-                    ),
-                    label: Text(
-                      'Copiar',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: widget.isUser
-                            ? Colors.white70
-                            : GamaColors.accent,
                       ),
                     ),
                   ),

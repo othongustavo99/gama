@@ -46,12 +46,16 @@ dependencies:
   file_picker: ^13.1.0
   path: ^1.9.0
   archive: ^4.3.0
-  speech_to_text: ^7.0.0
   url_launcher: ^6.3.1
   image_picker: ^1.2.3
   permission_handler: ^12.0.1
   open_filex: ^4.7.0
   google_sign_in: ^6.2.2
+  http: ^1.2.2
+  crypto: ^3.0.6  # se ainda não tiver
+  speech_to_text: ^7.3.0
+  speech_to_text_windows: ^1.0.1
+  
 
 dev_dependencies:
   flutter_test:

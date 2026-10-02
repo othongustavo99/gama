@@ -194,7 +194,7 @@ packages:
     source: hosted
     version: "0.3.5+5"
   crypto:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: crypto
       sha256: c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf
@@ -505,7 +505,7 @@ packages:
     source: hosted
     version: "2.0.2"
   http:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: http
       sha256: "87721a4a50b19c7f1d49001e51409bddc46303966ce89a65af4f4e6004896412"
@@ -1054,7 +1054,7 @@ packages:
     source: hosted
     version: "2.5.0"
   speech_to_text_windows:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: speech_to_text_windows
       sha256: "2d1d10565b23262386b453b33656299608dc7a66784453735d6c1318f13f44d7"

@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -12,7 +13,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/gama_colors.dart';
 import '../models/message.dart';
 import '../services/attachment_service.dart';
-import '../widgets/message_content.dart';
 import '../services/conversation_service.dart';
 import '../services/memory_service.dart';
 import '../services/ollama_service.dart';
@@ -47,6 +47,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final SpeechToText _speech = SpeechToText();
   bool _speechReady = false;
   bool _isListening = false;
+  bool _micArmed = false;
+  String? _textBeforeMic;
 
   @override
   void initState() {
@@ -55,26 +57,23 @@ class _ChatScreenState extends State<ChatScreen> {
     _initSpeech();
   }
 
-  /// true enquanto o usuário quer gravar (só desliga no clique)
-  bool _micArmed = false;
-
   Future<void> _initSpeech() async {
     try {
       _speechReady = await _speech.initialize(
         onStatus: (s) {
           if (!mounted) return;
-          // Não desliga no silêncio: só reinicia se ainda estiver armado
           if (_micArmed && (s == 'done' || s == 'notListening')) {
             Future.microtask(() => _resumeListenIfArmed());
           }
         },
         onError: (e) {
-          // mantém armado; usuário decide parar
           debugPrint('speech error: $e');
         },
+        debugLogging: kDebugMode,
       );
       if (mounted) setState(() {});
-    } catch (_) {
+    } catch (e) {
+      debugPrint('speech init: $e');
       _speechReady = false;
     }
   }
@@ -82,19 +81,34 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _resumeListenIfArmed() async {
     if (!_micArmed || !mounted || !_speechReady) return;
     try {
+      await _startListenSession();
+    } catch (e) {
+      debugPrint('resume listen: $e');
+    }
+  }
+
+  Future<void> _startListenSession() async {
+    try {
       await _speech.listen(
         localeId: 'pt_BR',
         partialResults: true,
         cancelOnError: false,
         listenMode: ListenMode.dictation,
         listenFor: const Duration(minutes: 15),
-        pauseFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 45),
         onResult: _onSpeechResult,
       );
-      if (mounted) setState(() => _isListening = true);
-    } catch (e) {
-      debugPrint('resume listen: $e');
+    } catch (_) {
+      await _speech.listen(
+        partialResults: true,
+        cancelOnError: false,
+        listenMode: ListenMode.dictation,
+        listenFor: const Duration(minutes: 15),
+        pauseFor: const Duration(seconds: 45),
+        onResult: _onSpeechResult,
+      );
     }
+    if (mounted) setState(() => _isListening = true);
   }
 
   void _onSpeechResult(result) {
@@ -102,8 +116,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final words = result.recognizedWords;
     if (words.isEmpty) return;
     setState(() {
-      // acumula: se for resultado parcial substitui a "sessão" atual no fim
-      // mantém texto que o usuário já tinha antes de abrir o mic
       final base = _textBeforeMic ?? '';
       final sep = base.isEmpty || base.endsWith(' ') ? '' : ' ';
       _controller.text = '$base$sep$words'.trimLeft();
@@ -113,43 +125,33 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  String? _textBeforeMic;
-
   Future<void> _toggleListen() async {
     if (!_speechReady) {
       await _initSpeech();
       if (!_speechReady) {
-        _snack('Microfone indisponível neste dispositivo');
+        _snack(
+          'Microfone indisponível.\n'
+          'Windows: Configurações → Fala → Português (Brasil)\n'
+          'e permita o microfone para o app.',
+        );
         return;
       }
     }
 
-    // Parar: só no clique
     if (_micArmed || _isListening) {
       _micArmed = false;
       try {
         await _speech.stop();
       } catch (_) {}
-      if (mounted) {
-        setState(() => _isListening = false);
-      }
+      if (mounted) setState(() => _isListening = false);
       return;
     }
 
-    // Iniciar gravação
     _textBeforeMic = _controller.text;
     _micArmed = true;
     setState(() => _isListening = true);
     try {
-      await _speech.listen(
-        localeId: 'pt_BR',
-        partialResults: true,
-        cancelOnError: false,
-        listenMode: ListenMode.dictation,
-        listenFor: const Duration(minutes: 15),
-        pauseFor: const Duration(seconds: 30),
-        onResult: _onSpeechResult,
-      );
+      await _startListenSession();
     } catch (e) {
       _micArmed = false;
       if (mounted) {
@@ -851,10 +853,46 @@ class _ChatScreenState extends State<ChatScreen> {
                                 child:
                                     msg.content.isEmpty && !isUser && _isLoading
                                     ? const _TypingDots()
-                                    : MessageContentView(
-                                        content: msg.content,
-                                        isUser: isUser,
-                                        onTapLink: _openLink,
+                                    : MarkdownBody(
+                                        data: msg.content,
+                                        // selectable: true impede o clique no link
+                                        selectable: false,
+                                        shrinkWrap: true,
+                                        softLineBreak: true,
+                                        onTapLink: (text, href, title) {
+                                          _openLink(href);
+                                        },
+                                        styleSheet: MarkdownStyleSheet(
+                                          p: TextStyle(
+                                            color: isUser
+                                                ? Colors.white
+                                                : GamaColors.textPrimary,
+                                            fontSize: 15,
+                                            height: 1.45,
+                                          ),
+                                          a: const TextStyle(
+                                            color: GamaColors.accent,
+                                            decoration:
+                                                TextDecoration.underline,
+                                          ),
+                                          code: TextStyle(
+                                            backgroundColor: isUser
+                                                ? Colors.black26
+                                                : const Color(0xFF2A2A2A),
+                                            color: isUser
+                                                ? Colors.white
+                                                : const Color(0xFFE8E8E8),
+                                            fontSize: 13,
+                                          ),
+                                          codeblockDecoration: BoxDecoration(
+                                            color: isUser
+                                                ? Colors.black26
+                                                : const Color(0xFF2A2A2A),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                          ),
+                                        ),
                                       ),
                               ),
                             ),
