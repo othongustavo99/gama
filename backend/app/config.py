@@ -33,14 +33,14 @@ class Settings:
 
     OLLAMA_DEFAULT_MODEL = os.getenv(
         "OLLAMA_DEFAULT_MODEL",
-        "qwen2.5-coder:7b",
+        "qwen3.5:4b",
     ).strip()
 
     OLLAMA_MODELS = [
         model.strip()
         for model in os.getenv(
             "OLLAMA_MODELS",
-            OLLAMA_DEFAULT_MODEL,
+            "qwen3.5:4b",
         ).split(",")
         if model.strip()
     ]

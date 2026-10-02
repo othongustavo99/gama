@@ -7,10 +7,10 @@ class AppConstants {
       'https://gama-production-592b.up.railway.app';
 
   /// Modelo padrão do Gama.
-  static const String defaultModel = 'qwen2.5-coder:7b';
+  static const String defaultModel = 'qwen3.5:4b';
 
   /// Modelos que o aplicativo pode selecionar.
   static const List<String> availableModels = [
-    'qwen2.5-coder:7b',
+    'qwen3.5:4b',
   ];
 }
