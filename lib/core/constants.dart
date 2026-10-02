@@ -4,7 +4,7 @@ class AppConstants {
   /// Depois de subir o servidor, troque somente este endereço pelo domínio
   /// HTTPS da sua API. Nunca coloque aqui o endereço do Ollama.
   static const String apiBaseUrl =
-      'gama-production-592b.up.railway.app';
+      'https://gama-production-592b.up.railway.app';
 
   /// Modelo padrão do Gama.
   static const String defaultModel = 'qwen2.5-coder:7b';
