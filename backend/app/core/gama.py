@@ -24,10 +24,11 @@ class GamaCore:
         model: str,
         ollama_client,
         auto_memory: bool = True,
+        voice_mode: bool = False,
         enable_web_search: bool = True,
         prefetched_sources: Optional[List[Dict[str, str]]] = None,
         prefetched_query: Optional[str] = None,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
     ) -> Tuple[List[Dict[str, str]], Optional[str], Optional[str], List[Dict[str, str]]]:
         """
         Returns: prepared, fact_saved, search_query, sources
@@ -74,11 +75,13 @@ class GamaCore:
         system_prompt = build_system_prompt(
             memory_block=memory_block,
             web_enabled=web_on,
+            voice_mode=voice_mode,
         )
 
         # Resume localmente: chamar o modelo de novo aqui pode bloquear o turno por até 60 s.
         try:
             context = await self.context_manager.prepare(messages)
+            
         except Exception as e:
             logger.warning("context: %s", e)
             context = messages[-16:]

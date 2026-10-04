@@ -580,9 +580,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 : m,
       ];
 
+      final wantVoice = _speakNextReply || SettingsService.instance.ttsAuto;
+
       final stream = _ollama.chatStream(
         messages: apiMessages,
         images: imagePayload.isEmpty ? null : imagePayload,
+        voiceMode: wantVoice,
       );
 
       _streamSubscription = stream.listen(
