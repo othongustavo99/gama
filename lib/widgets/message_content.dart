@@ -159,7 +159,7 @@ class MessageContentView extends StatelessWidget {
         if (parsed.text.isNotEmpty)
           MarkdownBody(
             data: _linkifyBareUrls(parsed.text),
-            selectable: false,
+            selectable: true,
             onTapLink: (text, href, title) {
               if (onTapLink != null) {
                 onTapLink!(href);
@@ -188,6 +188,28 @@ class MessageContentView extends StatelessWidget {
                   color: isUser
                       ? Colors.white.withOpacity(0.12)
                       : GamaColors.border,
+                ),
+              ),
+              blockquote: textStyle.copyWith(
+                color: isUser
+                    ? Colors.white.withOpacity(0.9)
+                    : GamaColors.textSecondary,
+                fontSize: 14,
+                height: 1.45,
+              ),
+              blockquotePadding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              blockquoteDecoration: BoxDecoration(
+                color: isUser
+                    ? Colors.black.withOpacity(0.18)
+                    : GamaColors.surfaceCard, // mesmo fundo do app
+                borderRadius: BorderRadius.circular(10),
+                border: Border(
+                  left: BorderSide(
+                    color: isUser
+                        ? Colors.white38
+                        : GamaColors.accent.withOpacity(0.55),
+                    width: 3,
+                  ),
                 ),
               ),
               listBullet: textStyle,
