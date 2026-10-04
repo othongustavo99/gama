@@ -5,3 +5,5 @@ pydantic
 pypdf>=5.0.0
 python-multipart>=0.0.9
 duckduckgo-search>=6.0.0
+
+Pillow>=11.0.0

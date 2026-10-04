@@ -9,6 +9,7 @@ from ..llm import llm, LLMClient
 from ..models import ChatRequest
 from ..web_search import should_search, search_web
 from ..core.memory import get_store, extract_facts_with_llm
+from ..core.image_analyzer import analyze_images
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,6 +47,18 @@ async def chat(request: ChatRequest):
 
     will_search = bool(last_user and should_search(last_user))
 
+    # Image Analyzer: faz a leitura visual eficiente antes do modelo principal.
+    # Se falhar, o fluxo multimodal antigo continua como fallback.
+    image_analysis_context = ""
+    image_analysis_ok = False
+    vision_model = None
+    if getattr(request, "images", None):
+        from ..config import settings as _settings
+        vision_model = (
+            getattr(_settings, "VISION_MODEL", None)
+            or model
+        )
+
     async def stream_with_meta():
         sources: list = []
         search_query = None
@@ -53,6 +66,31 @@ async def chat(request: ChatRequest):
         gama_messages = None
 
         try:
+            # --- fase: Image Analyzer ---
+            nonlocal image_analysis_context, image_analysis_ok
+            if getattr(request, "images", None):
+                yield json.dumps(
+                    {"gama_meta": {"phase": "image_analyzing"}},
+                    ensure_ascii=False,
+                ) + "\n"
+                img_for_analysis = [
+                    {"mime": i.mime, "data": i.data, "name": i.name}
+                    for i in request.images
+                    if i.data
+                ]
+                try:
+                    image_analysis_context = await analyze_images(
+                        images=img_for_analysis,
+                        query=last_user,
+                        llm_client=llm,
+                        model=vision_model or model,
+                    )
+                    image_analysis_ok = bool(image_analysis_context.strip())
+                except Exception as image_err:
+                    logger.warning("image analyzer: %s", image_err)
+                    image_analysis_context = ""
+                    image_analysis_ok = False
+
             # --- fase: buscando ---
             if will_search:
                 search_query = last_user.strip()[:200]
@@ -111,6 +149,14 @@ async def chat(request: ChatRequest):
                     *messages[-12:],
                 ]
 
+            if image_analysis_ok:
+                gama_messages.append(
+                    {
+                        "role": "system",
+                        "content": image_analysis_context,
+                    }
+                )
+
             if fact_saved:
                 yield json.dumps(
                     {"gama_meta": {"memory_saved": fact_saved}},
@@ -136,14 +182,16 @@ async def chat(request: ChatRequest):
             ) + "\n"
 
             img_payload = None
-            if getattr(request, "images", None):
+            if getattr(request, "images", None) and not image_analysis_ok:
                 img_payload = [
                     {"mime": i.mime, "data": i.data, "name": i.name}
                     for i in request.images
                     if i.data
                 ]
 
-            # Troca automática para modelo de visão só quando há imagem
+            # Fallback multimodal antigo: somente se o Image Analyzer não
+            # conseguiu produzir contexto. Quando ele funciona, a imagem não
+            # é reenviada ao modelo principal, economizando tokens visuais.
             active_model = model
             if img_payload:
                 from ..config import settings as _settings
@@ -158,7 +206,6 @@ async def chat(request: ChatRequest):
                         or "openai/gpt-4o-mini"
                     )
                 elif llm.provider == "groq":
-                    # Groq: modelo com suporte a visão se disponível
                     active_model = (
                         getattr(_settings, "VISION_MODEL", None)
                         or model
@@ -173,6 +220,17 @@ async def chat(request: ChatRequest):
                         "gama_meta": {
                             "phase": "thinking",
                             "vision_model": active_model,
+                            "image_analyzer_fallback": True,
+                        }
+                    },
+                    ensure_ascii=False,
+                ) + "\n"
+            elif getattr(request, "images", None):
+                yield json.dumps(
+                    {
+                        "gama_meta": {
+                            "phase": "thinking",
+                            "image_analyzer": True,
                         }
                     },
                     ensure_ascii=False,

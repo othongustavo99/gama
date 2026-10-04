@@ -1065,6 +1065,8 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Text(
                 _streamPhase == 'searching'
                     ? 'Buscando na web…'
+                    : _streamPhase == 'image_analyzing'
+                    ? 'Analisando imagem…'
                     : _streamPhase == 'thinking'
                     ? 'Pensando…'
                     : 'Gamma está respondendo…',

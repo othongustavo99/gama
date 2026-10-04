@@ -66,6 +66,7 @@ class LLMClient:
         messages: list[dict],
         *,
         timeout: float = 120.0,
+        max_tokens: int | None = None,
     ) -> str:
         model = self.resolve_model(model)
         has_mm = any(isinstance(m.get("content"), list) for m in messages)
@@ -80,6 +81,8 @@ class LLMClient:
                 "stream": False,
                 "temperature": 0.6,
             }
+            if max_tokens is not None:
+                payload["max_completion_tokens"] = max(1, int(max_tokens))
             async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.post(
                     f"{settings.GROQ_BASE_URL}/chat/completions",

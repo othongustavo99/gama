@@ -45,6 +45,7 @@ async def health():
         "multi_provider",
         "web_search",
         "project_analyzer",
+        "image_analyzer",
         "tts",
     ]
 
