@@ -57,22 +57,32 @@ class ChatStreamEvent {
 }
 
 class OllamaService {
-  Dio _createDio() {
-    return Dio(
-      BaseOptions(
-        baseUrl: SettingsService.instance.baseUrl,
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(minutes: 5),
-        sendTimeout: const Duration(seconds: 60),
-      ),
-    );
+  final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(minutes: 5),
+      sendTimeout: const Duration(seconds: 60),
+      headers: const {'Accept': 'application/json'},
+    ),
+  );
+
+  Dio _client() {
+    // Mantém uma única instância do Dio para reaproveitar conexões HTTP.
+    // A URL continua podendo ser alterada pelas configurações do app.
+    _dio.options.baseUrl = SettingsService.instance.baseUrl;
+    return _dio;
   }
 
   Future<List<String>> listModels() async {
     try {
-      final dio = _createDio();
-      final response = await dio.get('/models');
-      final data = response.data as Map<String, dynamic>;
+      final dio = _client();
+      final response = await dio.get(
+        '/models',
+        options: Options(receiveTimeout: const Duration(seconds: 15)),
+      );
+      final data = response.data is Map
+          ? Map<String, dynamic>.from(response.data as Map)
+          : <String, dynamic>{};
       final models = data['models'] as List<dynamic>? ?? [];
       return models
           .map((model) => model.toString())
@@ -87,7 +97,7 @@ class OllamaService {
 
   Future<bool> ping() async {
     try {
-      final dio = _createDio();
+      final dio = _client();
       final response = await dio.get(
         '/health',
         options: Options(
@@ -96,7 +106,9 @@ class OllamaService {
         ),
       );
       if (response.statusCode != 200) return false;
-      final data = response.data as Map<String, dynamic>;
+      final data = response.data is Map
+          ? Map<String, dynamic>.from(response.data as Map)
+          : <String, dynamic>{};
       return data['ollama'] == 'online' ||
           data['llm'] == 'online' ||
           data['status'] == 'ok';
@@ -112,7 +124,7 @@ class OllamaService {
     bool voiceMode = false,
   }) async* {
     final selectedModel = model ?? SettingsService.instance.model;
-    final dio = _createDio();
+    final dio = _client();
 
     try {
       final requestMessages = messages

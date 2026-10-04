@@ -5,7 +5,6 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'core/gama_colors.dart';
 import 'models/conversation.dart';
 import 'models/message.dart';
-import 'screens/home_screen.dart';
 import 'screens/splash_screen.dart';
 import 'services/conversation_service.dart';
 import 'services/settings_service.dart';
@@ -27,20 +26,36 @@ Future<void> main() async {
   Hive.registerAdapter(MessageAdapter());
   Hive.registerAdapter(ConversationAdapter());
 
+  Object? startupError;
+
   try {
     await SettingsService.instance.init();
     await ConversationService.instance.init();
   } catch (e, stack) {
+    // Nunca apague automaticamente as caixas do Hive em produção.
+    // Um erro transitório de abertura não deve destruir todo o histórico.
     debugPrint('Erro na inicialização: $e');
     debugPrintStack(stackTrace: stack);
+    startupError = e;
 
-    await Hive.deleteBoxFromDisk('messages');
-    await Hive.deleteBoxFromDisk('conversations');
-
-    await ConversationService.instance.init();
+    try {
+      await Hive.close();
+      await Hive.initFlutter();
+      await SettingsService.instance.init();
+      await ConversationService.instance.init();
+      startupError = null;
+    } catch (retryError, retryStack) {
+      debugPrint('Falha na segunda tentativa: $retryError');
+      debugPrintStack(stackTrace: retryStack);
+      startupError = retryError;
+    }
   }
 
-  runApp(const GamaApp());
+  runApp(
+    startupError == null
+        ? const GamaApp()
+        : GamaStartupError(error: startupError!),
+  );
 }
 
 class GamaApp extends StatelessWidget {
@@ -110,6 +125,69 @@ class GamaApp extends StatelessWidget {
         ),
       ),
       home: const SplashScreen(),
+    );
+  }
+}
+
+class GamaStartupError extends StatelessWidget {
+  final Object error;
+
+  const GamaStartupError({super.key, required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark(useMaterial3: true),
+      home: Scaffold(
+        backgroundColor: GamaColors.background,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  color: GamaColors.accent,
+                  size: 48,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Não foi possível iniciar a Gamma',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: GamaColors.textPrimary,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'O histórico não foi apagado. Feche e abra o app novamente.\n'
+                  'Se o problema persistir, faça uma cópia dos dados antes de qualquer reparo.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: GamaColors.textSecondary,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  error.toString(),
+                  textAlign: TextAlign.center,
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: GamaColors.textMuted,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

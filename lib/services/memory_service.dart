@@ -27,15 +27,17 @@ class MemoryFact {
 }
 
 class MemoryService {
+  final Dio _client = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 20),
+    ),
+  );
+
   Dio _dio() {
-    return Dio(
-      BaseOptions(
-        baseUrl: SettingsService.instance.baseUrl,
-        connectTimeout: const Duration(seconds: 8),
-        receiveTimeout: const Duration(seconds: 20),
-        headers: {'X-User-Id': IdentityService.instance.userId},
-      ),
-    );
+    _client.options.baseUrl = SettingsService.instance.baseUrl;
+    _client.options.headers['X-User-Id'] = IdentityService.instance.userId;
+    return _client;
   }
 
   Future<List<MemoryFact>> listFacts() async {

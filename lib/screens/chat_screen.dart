@@ -51,9 +51,22 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _speechReady = false;
   bool _isListening = false;
   bool _micArmed = false;
+
+  // Mantém o texto já reconhecido quando o Android encerra uma sessão
+  // automaticamente após alguns segundos de silêncio.
+  String _speechBaseText = '';
+  String _speechSessionText = '';
+  int _speechSessionId = 0;
+  bool _speechRestartScheduled = false;
   GamaMode _mode = GamaMode.programar;
   bool _speakNextReply = false;
   bool _ttsEarlyStarted = false;
+
+  // Quando a resposta foi solicitada por voz, o texto recebido fica
+  // retido até o áudio realmente começar. Depois, ele é revelado em blocos
+  // conforme cada trecho de áudio começa a tocar.
+  bool _voiceResponsePending = false;
+  String _voiceResponseBuffer = '';
   String? _textBeforeMic;
 
   @override
@@ -69,8 +82,19 @@ class _ChatScreenState extends State<ChatScreen> {
       _speechReady = await _speech.initialize(
         onStatus: (s) {
           if (!mounted) return;
-          if (_micArmed && (s == 'done' || s == 'notListening')) {
-            Future.microtask(() => _resumeListenIfArmed());
+          if (_micArmed &&
+              !_speechRestartScheduled &&
+              (s == 'done' || s == 'notListening')) {
+            _speechRestartScheduled = true;
+            // Dá tempo para o último onResult(finalResult) chegar antes
+            // de abrirmos a próxima sessão. Isso evita perder a última
+            // palavra de um trecho quando o reconhecimento fecha sozinho.
+            Future.delayed(const Duration(milliseconds: 180), () async {
+              _speechRestartScheduled = false;
+              if (_micArmed && mounted) {
+                await _resumeListenIfArmed();
+              }
+            });
           }
         },
         onError: (e) {
@@ -88,8 +112,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _resumeListenIfArmed() async {
     if (!_micArmed || !mounted || !_speechReady) return;
     try {
-      // preserva o que já foi ditado antes de reiniciar a sessão
-      _textBeforeMic = _controller.text;
+      // O texto que já está no campo é considerado confirmado.
+      // Uma nova sessão só acrescentará o próximo trecho a ele.
+      _speechBaseText = _controller.text;
+      _speechSessionText = '';
       await _startListenSession();
     } catch (e) {
       debugPrint('resume listen: $e');
@@ -97,6 +123,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _startListenSession() async {
+    final sessionId = ++_speechSessionId;
     try {
       await _speech.listen(
         localeId: 'pt_BR',
@@ -105,7 +132,7 @@ class _ChatScreenState extends State<ChatScreen> {
         listenMode: ListenMode.dictation,
         listenFor: const Duration(minutes: 15),
         pauseFor: const Duration(seconds: 45),
-        onResult: _onSpeechResult,
+        onResult: (result) => _onSpeechResult(result, sessionId),
       );
     } catch (_) {
       await _speech.listen(
@@ -114,24 +141,32 @@ class _ChatScreenState extends State<ChatScreen> {
         listenMode: ListenMode.dictation,
         listenFor: const Duration(minutes: 15),
         pauseFor: const Duration(seconds: 45),
-        onResult: _onSpeechResult,
+        onResult: (result) => _onSpeechResult(result, sessionId),
       );
     }
-    if (mounted) setState(() => _isListening = true);
+    if (mounted && _micArmed && sessionId == _speechSessionId) {
+      setState(() => _isListening = true);
+    }
   }
 
-  void _onSpeechResult(result) {
-    if (!mounted || !_micArmed) return;
-    final words = result.recognizedWords;
+  void _onSpeechResult(dynamic result, int sessionId) {
+    if (!mounted || !_micArmed || sessionId != _speechSessionId) return;
+    final words = (result.recognizedWords as String?)?.trim() ?? '';
     if (words.isEmpty) return;
-    setState(() {
-      final base = _textBeforeMic ?? '';
-      final sep = base.isEmpty || base.endsWith(' ') ? '' : ' ';
-      _controller.text = '$base$sep$words'.trimLeft();
-      _controller.selection = TextSelection.fromPosition(
-        TextPosition(offset: _controller.text.length),
-      );
-    });
+
+    // speech_to_text normalmente entrega a transcrição acumulada da sessão.
+    // Guardamos esse trecho separadamente para que uma pausa/novo ciclo nunca
+    // substitua o que já foi confirmado no campo.
+    _speechSessionText = words;
+    final base = _speechBaseText.trimRight();
+    final separator = base.isEmpty ? '' : ' ';
+    final combined = '$base$separator$_speechSessionText'.trimLeft();
+
+    _controller.value = _controller.value.copyWith(
+      text: combined,
+      selection: TextSelection.collapsed(offset: combined.length),
+      composing: TextRange.empty,
+    );
   }
 
   Future<void> _toggleListen() async {
@@ -149,6 +184,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (_micArmed || _isListening) {
       _micArmed = false;
+      _speechSessionId++; // invalida resultados tardios do reconhecimento
+      _speechRestartScheduled = false;
+      _speechSessionText = '';
+      _speechBaseText = _controller.text;
       try {
         await _speech.stop();
       } catch (_) {}
@@ -156,7 +195,9 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    _textBeforeMic = _controller.text;
+    _speechBaseText = _controller.text;
+    _speechSessionText = '';
+    _speechSessionId++; // invalida callbacks pendentes de uma sessão anterior
     _micArmed = true;
     setState(() => _isListening = true);
     try {
@@ -490,13 +531,37 @@ class _ChatScreenState extends State<ChatScreen> {
     return false;
   }
 
-  Future<void> _maybeSpeak(String text) async {
+  Future<void> _maybeSpeak(
+    String text, {
+    bool revealWhileSpeaking = false,
+  }) async {
     final want = _speakNextReply || SettingsService.instance.ttsAuto;
     _speakNextReply = false;
     if (!want) return;
     final t = text.trim();
     if (t.isEmpty) return;
-    await TtsService.instance.speak(t);
+
+    if (!revealWhileSpeaking) {
+      // Comportamento original: fala o texto inteiro, frase a frase.
+      await TtsService.instance.speakFull(t);
+      return;
+    }
+
+    // Somente para o botão "Enviar e ouvir": o texto já foi recebido,
+    // mas permanece oculto até o primeiro áudio começar a tocar.
+    await TtsService.instance.speakFull(
+      t,
+      onChunkPlaybackStart: (chunk) async {
+        if (!mounted) return;
+        setState(() {
+          if (_messages.isNotEmpty && _messages.last.isAssistant) {
+            _messages.last.content +=
+                (_messages.last.content.isEmpty ? '' : ' ') + chunk;
+          }
+        });
+        _scrollToBottom();
+      },
+    );
   }
 
   Future<void> _sendMessage() async {
@@ -505,6 +570,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (_micArmed || _isListening) {
       _micArmed = false;
+      _speechSessionId++;
+      _speechRestartScheduled = false;
+      _speechSessionText = '';
+      _speechBaseText = _controller.text;
       try {
         await _speech.stop();
       } catch (_) {}
@@ -519,6 +588,8 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
     }
+
+    final voiceRequested = _speakNextReply;
 
     final pending = List<ProcessedAttachment>.from(_attachments);
     final apiText = AttachmentService.buildMessageBody(rawText, pending);
@@ -563,6 +634,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _messages.add(assistantMessage);
+      _voiceResponsePending = voiceRequested;
+      _voiceResponseBuffer = '';
     });
 
     try {
@@ -580,12 +653,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 : m,
       ];
 
-      final wantVoice = _speakNextReply || SettingsService.instance.ttsAuto;
-
       final stream = _ollama.chatStream(
         messages: apiMessages,
         images: imagePayload.isEmpty ? null : imagePayload,
-        voiceMode: wantVoice,
       );
 
       _streamSubscription = stream.listen(
@@ -605,58 +675,87 @@ class _ChatScreenState extends State<ChatScreen> {
 
           setState(() {
             _streamPhase = 'typing';
-            if (_messages.isNotEmpty && _messages.last.isAssistant) {
+            if (_voiceResponsePending) {
+              // Mantém a resposta fora da UI enquanto a Gamma ainda está
+              // gerando. O conteúdo será revelado quando o áudio começar.
+              _voiceResponseBuffer += token;
+            } else if (_messages.isNotEmpty && _messages.last.isAssistant) {
               _messages.last.content += token;
             }
           });
-          // Voz cedo: 1ª frase, sem esperar o texto inteiro
-          if ((_speakNextReply || SettingsService.instance.ttsAuto) &&
-              !_ttsEarlyStarted &&
-              _messages.isNotEmpty &&
-              _messages.last.isAssistant) {
-            final first = TtsService.firstSentence(_messages.last.content);
-            if (first != null) {
-              _ttsEarlyStarted = true;
-              // ignore: unawaited_futures
-              TtsService.instance.speak(first).catchError((e) {
-                debugPrint('TTS early: $e');
-              });
-            }
+
+          if (!_voiceResponsePending) {
+            _scrollToBottom();
           }
-          _scrollToBottom();
         },
         onDone: () async {
+          final isVoiceReply = _voiceResponsePending;
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
-            if (_messages.last.content.trim().isEmpty) {
+            if (isVoiceReply) {
+              if (_voiceResponseBuffer.trim().isEmpty) {
+                _voiceResponseBuffer =
+                    'Não recebi resposta do servidor. Tente novamente.';
+              }
+            } else if (_messages.last.content.trim().isEmpty) {
               _messages.last.content =
                   'Não recebi resposta do servidor. Tente novamente.';
             }
-            await _service.addMessage(_messages.last);
           }
+
           if (mounted) {
             setState(() {
               _isLoading = false;
               _streamPhase = '';
               _pendingSources = [];
             });
-            if (_messages.isNotEmpty && _messages.last.isAssistant) {
-              if (!_ttsEarlyStarted) {
-                try {
-                  await _maybeSpeak(_messages.last.content);
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Voz: $e'),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  }
-                }
+          }
+
+          if (_messages.isNotEmpty && _messages.last.isAssistant) {
+            _ttsEarlyStarted = false;
+            final responseText = isVoiceReply
+                ? _voiceResponseBuffer
+                : _messages.last.content;
+            try {
+              if (isVoiceReply) {
+                await _maybeSpeak(responseText, revealWhileSpeaking: true);
               } else {
-                _speakNextReply = false;
-                _ttsEarlyStarted = false;
+                await _maybeSpeak(responseText);
               }
+
+              // Persiste a resposta completa depois da reprodução. Para o
+              // fluxo normal, isso continua ocorrendo sem alteração visual.
+              if (isVoiceReply && mounted) {
+                setState(() {
+                  if (_messages.isNotEmpty &&
+                      _messages.last.isAssistant &&
+                      _messages.last.content.trim() != responseText.trim()) {
+                    _messages.last.content = responseText;
+                  }
+                });
+              }
+              await _service.addMessage(_messages.last);
+            } catch (e) {
+              // Se o áudio falhar, ainda mostramos a resposta completa para
+              // não perder a mensagem que o servidor já gerou.
+              if (isVoiceReply && mounted) {
+                setState(() {
+                  if (_messages.isNotEmpty && _messages.last.isAssistant) {
+                    _messages.last.content = responseText;
+                  }
+                });
+              }
+              await _service.addMessage(_messages.last);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Voz: $e'),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            } finally {
+              _voiceResponsePending = false;
+              _voiceResponseBuffer = '';
             }
           }
         },
@@ -698,11 +797,17 @@ class _ChatScreenState extends State<ChatScreen> {
     _streamSubscription = null;
     if (!mounted) return;
     final lastMessage = _messages.isNotEmpty ? _messages.last : null;
-    if (lastMessage != null &&
-        lastMessage.isAssistant &&
-        lastMessage.content.isNotEmpty) {
-      await _service.addMessage(lastMessage);
+    if (lastMessage != null && lastMessage.isAssistant) {
+      if (_voiceResponsePending && _voiceResponseBuffer.isNotEmpty) {
+        lastMessage.content = _voiceResponseBuffer;
+      }
+      if (lastMessage.content.isNotEmpty) {
+        await _service.addMessage(lastMessage);
+      }
     }
+    _voiceResponsePending = false;
+    _voiceResponseBuffer = '';
+    _speakNextReply = false;
     setState(() {
       if (lastMessage != null &&
           lastMessage.isAssistant &&
