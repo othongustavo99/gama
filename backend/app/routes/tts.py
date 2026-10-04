@@ -1,4 +1,4 @@
-"""Proxy TTS → Fish Audio (S2.1 Pro / fallbacks)."""
+"""Proxy TTS → Fish Audio (baixa latência)."""
 
 from __future__ import annotations
 
@@ -38,10 +38,7 @@ def _clean_text(text: str) -> str:
 async def tts(body: TtsIn):
     key = os.getenv("FISH_AUDIO_API_KEY", "").strip()
     if not key:
-        raise HTTPException(
-            status_code=503,
-            detail="FISH_AUDIO_API_KEY não configurada no backend",
-        )
+        raise HTTPException(503, detail="FISH_AUDIO_API_KEY não configurada")
 
     text = _clean_text(body.text)
     if not text:
@@ -50,7 +47,6 @@ async def tts(body: TtsIn):
     ref = (body.reference_id or os.getenv("FISH_VOICE_ID", "")).strip()
     fmt = (body.format or "mp3").strip() or "mp3"
     model_primary = os.getenv("FISH_TTS_MODEL", "s2.1-pro").strip() or "s2.1-pro"
-    # alguns planos só liberam free / s2-pro
     models_try = []
     for m in (model_primary, "s2.1-pro", "s2.1-pro-free", "s2-pro", "s1"):
         if m and m not in models_try:
@@ -59,9 +55,15 @@ async def tts(body: TtsIn):
     last_err = "Fish Audio sem resposta"
 
     async with httpx.AsyncClient(timeout=90.0) as client:
-        # 1ª tentativa com voz; se falhar, tenta sem reference_id
         for use_ref in (True, False):
-            payload = {"text": text, "format": fmt}
+            payload = {
+                "text": text,
+                "format": fmt,
+                # Fish: balanced ≈ menor tempo até o 1º áudio
+                "latency": "balanced",
+                "chunk_length": 150,
+                "normalize": True,
+            }
             if use_ref and ref:
                 payload["reference_id"] = ref
             elif use_ref and not ref:
@@ -80,40 +82,26 @@ async def tts(body: TtsIn):
                     )
                 except Exception as e:
                     last_err = f"rede: {e}"
-                    logger.exception("fish tts network model=%s", model)
+                    logger.exception("fish tts network")
                     continue
 
                 if r.status_code < 400 and r.content and len(r.content) > 100:
                     media = "audio/mpeg" if fmt == "mp3" else "audio/wav"
-                    logger.info(
-                        "fish tts ok model=%s ref=%s bytes=%s",
-                        model,
-                        bool(payload.get("reference_id")),
-                        len(r.content),
-                    )
                     return Response(content=r.content, media_type=media)
 
                 snippet = (r.text or "")[:400]
                 last_err = f"model={model} status={r.status_code} body={snippet}"
                 logger.warning("fish tts fail %s", last_err)
-
-                # 401/403 → key inválida, não adianta tentar outros modelos
                 if r.status_code in (401, 403):
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"Fish Auth falhou ({r.status_code}): {snippet}",
-                    )
+                    raise HTTPException(502, detail=f"Fish Auth ({r.status_code}): {snippet}")
 
-    raise HTTPException(status_code=502, detail=f"Fish Audio: {last_err}")
+    raise HTTPException(502, detail=f"Fish Audio: {last_err}")
 
 
 @router.get("/tts/health")
 async def tts_health():
-    key = bool(os.getenv("FISH_AUDIO_API_KEY", "").strip())
-    voice = bool(os.getenv("FISH_VOICE_ID", "").strip())
-    model = os.getenv("FISH_TTS_MODEL", "s2.1-pro")
     return {
-        "fish_key_configured": key,
-        "fish_voice_configured": voice,
-        "fish_model": model,
+        "fish_key_configured": bool(os.getenv("FISH_AUDIO_API_KEY", "").strip()),
+        "fish_voice_configured": bool(os.getenv("FISH_VOICE_ID", "").strip()),
+        "fish_model": os.getenv("FISH_TTS_MODEL", "s2.1-pro"),
     }

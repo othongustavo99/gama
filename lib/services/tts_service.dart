@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -34,30 +35,47 @@ class TtsService {
     return t;
   }
 
+  /// Primeira frase “completa” para começar a falar cedo.
+  static String? firstSentence(String text) {
+    final t = plainForSpeech(text);
+    if (t.length < 12) return null;
+    final m = RegExp(r'^(.+?[.!?…])(\s|$)').firstMatch(t);
+    if (m != null) {
+      final s = m.group(1)!.trim();
+      if (s.length >= 12) return s;
+    }
+    // fallback: primeiros ~180 chars em espaço
+    if (t.length >= 80) {
+      final cut = t.substring(0, t.length > 180 ? 180 : t.length);
+      final sp = cut.lastIndexOf(' ');
+      return sp > 40 ? cut.substring(0, sp) : cut;
+    }
+    return null;
+  }
+
   Future<void> speak(String text) async {
     final clean = plainForSpeech(text);
-    if (clean.isEmpty) {
-      debugPrint('TTS: texto vazio');
-      return;
-    }
+    if (clean.isEmpty) return;
     if (_busy) await stop();
     _busy = true;
     try {
-      final snippet = clean.length > 1200
-          ? '${clean.substring(0, 1200)}…'
-          : clean;
+      final snippet =
+          clean.length > 900 ? '${clean.substring(0, 900)}…' : clean;
 
       final dio = Dio(
         BaseOptions(
           baseUrl: SettingsService.instance.baseUrl,
-          connectTimeout: const Duration(seconds: 20),
-          receiveTimeout: const Duration(seconds: 90),
+          connectTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 60),
           responseType: ResponseType.bytes,
           validateStatus: (_) => true,
         ),
       );
 
-      final body = <String, dynamic>{'text': snippet, 'format': 'mp3'};
+      final body = <String, dynamic>{
+        'text': snippet,
+        'format': 'mp3',
+      };
       final voice = SettingsService.instance.fishVoiceId;
       if (voice.isNotEmpty) body['reference_id'] = voice;
 
@@ -70,12 +88,10 @@ class TtsService {
           final raw = res.data is Uint8List
               ? utf8.decode(res.data as Uint8List, allowMalformed: true)
               : res.data is List
-              ? utf8.decode(
-                  List<int>.from(res.data as List),
-                  allowMalformed: true,
-                )
-              : '${res.data}';
-          detail = raw.length > 300 ? raw.substring(0, 300) : raw;
+                  ? utf8.decode(List<int>.from(res.data as List),
+                      allowMalformed: true)
+                  : '${res.data}';
+          detail = raw.length > 280 ? raw.substring(0, 280) : raw;
         } catch (_) {}
         throw Exception(detail);
       }
@@ -89,11 +105,8 @@ class TtsService {
       }
 
       await _player.stop();
+      // play retorna quando começa — não espera o áudio inteiro baixar de novo
       await _player.play(BytesSource(bytes, mimeType: 'audio/mpeg'));
-      await _player.onPlayerComplete.first.timeout(
-        const Duration(minutes: 3),
-        onTimeout: () {},
-      );
     } catch (e, st) {
       debugPrint('TTS erro: $e');
       debugPrintStack(stackTrace: st);

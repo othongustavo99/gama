@@ -53,6 +53,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _micArmed = false;
   GamaMode _mode = GamaMode.programar;
   bool _speakNextReply = false;
+  bool _ttsEarlyStarted = false;
   String? _textBeforeMic;
 
   @override
@@ -605,6 +606,20 @@ class _ChatScreenState extends State<ChatScreen> {
               _messages.last.content += token;
             }
           });
+          // Voz cedo: 1ª frase, sem esperar o texto inteiro
+          if ((_speakNextReply || SettingsService.instance.ttsAuto) &&
+              !_ttsEarlyStarted &&
+              _messages.isNotEmpty &&
+              _messages.last.isAssistant) {
+            final first = TtsService.firstSentence(_messages.last.content);
+            if (first != null) {
+              _ttsEarlyStarted = true;
+              // ignore: unawaited_futures
+              TtsService.instance.speak(first).catchError((e) {
+                debugPrint('TTS early: $e');
+              });
+            }
+          }
           _scrollToBottom();
         },
         onDone: () async {
@@ -622,17 +637,22 @@ class _ChatScreenState extends State<ChatScreen> {
               _pendingSources = [];
             });
             if (_messages.isNotEmpty && _messages.last.isAssistant) {
-              try {
-                await _maybeSpeak(_messages.last.content);
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Voz: $e'),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
+              if (!_ttsEarlyStarted) {
+                try {
+                  await _maybeSpeak(_messages.last.content);
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Voz: $e'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
                 }
+              } else {
+                _speakNextReply = false;
+                _ttsEarlyStarted = false;
               }
             }
           }
