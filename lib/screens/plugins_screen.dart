@@ -1,41 +1,17 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
 
-class PluginsScreen extends StatefulWidget {
+class PluginsScreen extends StatelessWidget {
   const PluginsScreen({super.key});
 
-  @override
-  State<PluginsScreen> createState() => _PluginsScreenState();
-}
-
-class _PluginsScreenState extends State<PluginsScreen> {
-  bool _memory = true;
-  bool _attachments = true;
-  bool _autoSummary = true;
-  bool _slashCommands = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _memory = prefs.getBool('plugin_memory') ?? true;
-      _attachments = prefs.getBool('plugin_attachments') ?? true;
-      _autoSummary = prefs.getBool('plugin_auto_summary') ?? true;
-      _slashCommands = prefs.getBool('plugin_slash') ?? true;
-    });
-  }
-
-  Future<void> _set(String key, bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(key, value);
-  }
+  static const _items = [
+    ('Busca na web', 'Respostas com fontes quando necessário', true),
+    ('Memória por usuário', 'Fatos salvos e sincronizados no servidor', true),
+    ('Anexos', 'Imagens, PDF, ZIP e código no chat', true),
+    ('Visão', 'Análise de imagem quando você anexa foto', true),
+    ('Agendamentos', 'Lembretes automáticos', false),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -45,85 +21,72 @@ class _PluginsScreenState extends State<PluginsScreen> {
         backgroundColor: GamaColors.surface,
         title: const Text('Plugins'),
       ),
-      body: ListView(
+      body: ListView.separated(
         padding: const EdgeInsets.all(16),
-        children: [
-          const Text(
-            'Recursos da Gamma. Desligar aqui é preferência local '
-            '(nem todos os toggles alteram o backend ainda).',
-            style: TextStyle(
-              color: GamaColors.textMuted,
-              fontSize: 13,
-              height: 1.4,
+        itemCount: _items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 8),
+        itemBuilder: (_, i) {
+          final (title, subtitle, on) = _items[i];
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: GamaColors.surfaceCard,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: GamaColors.border),
             ),
-          ),
-          const SizedBox(height: 16),
-          _tile(
-            title: 'Memória de longo prazo',
-            subtitle: 'Grava fatos e injeta no system prompt',
-            value: _memory,
-            onChanged: (v) {
-              setState(() => _memory = v);
-              _set('plugin_memory', v);
-            },
-          ),
-          _tile(
-            title: 'Anexos (código, ZIP, PDF…)',
-            subtitle: 'Clipe no chat e extração de conteúdo',
-            value: _attachments,
-            onChanged: (v) {
-              setState(() => _attachments = v);
-              _set('plugin_attachments', v);
-            },
-          ),
-          _tile(
-            title: 'Resumo automático de contexto',
-            subtitle: 'Conversas longas resumidas pelo modelo',
-            value: _autoSummary,
-            onChanged: (v) {
-              setState(() => _autoSummary = v);
-              _set('plugin_auto_summary', v);
-            },
-          ),
-          _tile(
-            title: 'Comandos /memoria',
-            subtitle: 'Atalhos no chat',
-            value: _slashCommands,
-            onChanged: (v) {
-              setState(() => _slashCommands = v);
-              _set('plugin_slash', v);
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _tile({
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: GamaColors.surfaceCard,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: GamaColors.border),
-      ),
-      child: SwitchListTile(
-        title: Text(
-          title,
-          style: const TextStyle(color: GamaColors.textPrimary),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(color: GamaColors.textMuted, fontSize: 12),
-        ),
-        value: value,
-        activeTrackColor: GamaColors.accent,
-        onChanged: onChanged,
+            child: Row(
+              children: [
+                Icon(
+                  on ? Icons.extension_rounded : Icons.extension_outlined,
+                  color: on ? GamaColors.accent : GamaColors.textMuted,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: GamaColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: GamaColors.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: on
+                        ? GamaColors.accentSoft
+                        : GamaColors.surfaceElevated,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    on ? 'Ativo' : 'Em breve',
+                    style: TextStyle(
+                      color: on ? GamaColors.accent : GamaColors.textMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }

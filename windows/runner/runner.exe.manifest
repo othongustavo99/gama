@@ -11,4 +11,7 @@
       <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
     </application>
   </compatibility>
+  <!-- Microfone: apps empacotados (MSIX) leem DeviceCapability no AppxManifest.
+       Para debug (exe solto), o Windows pede permissão na 1ª gravação.
+       Mantenha também Configurações → Privacidade → Microfone → permitir o app. -->
 </assembly>

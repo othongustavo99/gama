@@ -87,12 +87,26 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 alignment: Alignment.center,
-                child: const Text(
-                  'G',
-                  style: TextStyle(
-                    color: GamaColors.accent,
-                    fontSize: 36,
-                    fontWeight: FontWeight.w800,
+                clipBehavior: Clip.antiAlias,
+                child: ColorFiltered(
+                  // força aparência clara/branca no logo
+                  colorFilter: const ColorFilter.mode(
+                    Colors.white,
+                    BlendMode.srcIn,
+                  ),
+                  child: Image.asset(
+                    'assets/images/image3.png',
+                    width: 44,
+                    height: 44,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Text(
+                      'G',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 36,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
                 ),
               ),

@@ -59,21 +59,21 @@ class LibraryScreen extends StatefulWidget {
     await prefs.setString('gama_library', jsonEncode(trimmed));
   }
 
-  /// Abre arquivo/imagem da biblioteca.
+  /// Abre arquivo/imagem da biblioteca (foto no app; PDF/ZIP no visualizador do SO).
   static Future<void> openEntry(
     BuildContext context,
     Map<String, dynamic> it,
   ) async {
     final path = it['path']?.toString();
     final name = it['name']?.toString() ?? 'arquivo';
-    final kind = it['kind']?.toString() ?? '';
+    final kind = (it['kind']?.toString() ?? '').toLowerCase();
 
     if (path == null || path.isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Arquivo antigo sem caminho salvo. Anexe de novo para poder abrir.',
+              'Arquivo sem caminho salvo. Anexe de novo para poder abrir.',
             ),
           ),
         );
@@ -91,80 +91,100 @@ class LibraryScreen extends StatefulWidget {
       return;
     }
 
-    if (kind == 'image') {
+    final isImage =
+        kind == 'image' ||
+        path.toLowerCase().endsWith('.png') ||
+        path.toLowerCase().endsWith('.jpg') ||
+        path.toLowerCase().endsWith('.jpeg') ||
+        path.toLowerCase().endsWith('.gif') ||
+        path.toLowerCase().endsWith('.webp') ||
+        path.toLowerCase().endsWith('.bmp');
+
+    if (isImage) {
       if (!context.mounted) return;
       await showDialog<void>(
         context: context,
         builder: (ctx) => Dialog(
           backgroundColor: GamaColors.surface,
-          insetPadding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        name,
-                        style: const TextStyle(
-                          color: GamaColors.textPrimary,
-                          fontWeight: FontWeight.w600,
+          insetPadding: const EdgeInsets.all(12),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(ctx).size.width * 0.95,
+              maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          name,
+                          style: const TextStyle(
+                            color: GamaColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.close,
-                        color: GamaColors.textMuted,
+                      IconButton(
+                        icon: const Icon(
+                          Icons.close,
+                          color: GamaColors.textMuted,
+                        ),
+                        onPressed: () => Navigator.pop(ctx),
                       ),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              Flexible(
-                child: InteractiveViewer(
-                  child: Image.file(
-                    file,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text(
-                        'Não foi possível carregar a imagem',
-                        style: TextStyle(color: GamaColors.textMuted),
+                Flexible(
+                  child: InteractiveViewer(
+                    minScale: 0.5,
+                    maxScale: 4,
+                    child: Image.file(
+                      file,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Text(
+                          'Não foi possível carregar a imagem',
+                          style: TextStyle(color: GamaColors.textMuted),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              TextButton.icon(
-                onPressed: () async {
-                  await OpenFilex.open(path);
-                },
-                icon: const Icon(Icons.open_in_new, color: GamaColors.accent),
-                label: const Text(
-                  'Abrir com app externo',
-                  style: TextStyle(color: GamaColors.accent),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
+                const SizedBox(height: 12),
+              ],
+            ),
           ),
         ),
       );
       return;
     }
 
-    final result = await OpenFilex.open(path);
-    if (result.type != ResultType.done && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Não abriu: ${result.message}')));
+    // PDF, ZIP, código, áudio → app nativo do sistema
+    try {
+      final result = await OpenFilex.open(path);
+      if (result.type != ResultType.done && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result.message.isNotEmpty
+                  ? result.message
+                  : 'Não foi possível abrir $name',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Erro ao abrir: $e')));
+      }
     }
   }
 

@@ -4,6 +4,11 @@ import '../core/gama_colors.dart';
 import '../services/conversation_service.dart';
 import '../widgets/app_drawer.dart';
 import 'chat_screen.dart';
+import 'images_screen.dart';
+import 'library_screen.dart';
+import 'plugins_screen.dart';
+import 'projects_screen.dart';
+import 'scheduled_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -14,6 +19,25 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _service = ConversationService.instance;
+  bool _booted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _openFreshConversation();
+  }
+
+  /// Toda vez que o app entra na home (após splash/login), abre conversa nova.
+  Future<void> _openFreshConversation() async {
+    if (_booted) return;
+    _booted = true;
+    await _service.createConversation(title: 'Nova conversa');
+    if (mounted) setState(() {});
+  }
+
+  void _push(Widget page) {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -32,6 +56,26 @@ class _HomeScreenState extends State<HomeScreen> {
             onSelectConversation: (id) async {
               await _service.selectConversation(id);
               if (mounted) Navigator.pop(context);
+            },
+            onOpenImages: () {
+              Navigator.pop(context);
+              _push(const ImagesScreen());
+            },
+            onOpenLibrary: () {
+              Navigator.pop(context);
+              _push(const LibraryScreen());
+            },
+            onOpenProjects: () {
+              Navigator.pop(context);
+              _push(const ProjectsScreen());
+            },
+            onOpenScheduled: () {
+              Navigator.pop(context);
+              _push(const ScheduledScreen());
+            },
+            onOpenPlugins: () {
+              Navigator.pop(context);
+              _push(const PluginsScreen());
             },
           ),
           body: currentId == null

@@ -16,6 +16,7 @@ class ImagesScreen extends StatefulWidget {
 
 class _ImagesScreenState extends State<ImagesScreen> {
   List<Map<String, dynamic>> _items = [];
+  bool _loading = true;
 
   @override
   void initState() {
@@ -29,12 +30,14 @@ class _ImagesScreenState extends State<ImagesScreen> {
     final list = (jsonDecode(raw) as List)
         .map((e) => Map<String, dynamic>.from(e as Map))
         .toList();
+    if (!mounted) return;
     setState(() {
       _items = list
-          .where((e) => e['kind'] == 'image')
+          .where((e) => (e['kind']?.toString() ?? '') == 'image')
           .toList()
           .reversed
           .toList();
+      _loading = false;
     });
   }
 
@@ -46,7 +49,11 @@ class _ImagesScreenState extends State<ImagesScreen> {
         backgroundColor: GamaColors.surface,
         title: const Text('Imagens'),
       ),
-      body: _items.isEmpty
+      body: _loading
+          ? const Center(
+              child: CircularProgressIndicator(color: GamaColors.accent),
+            )
+          : _items.isEmpty
           ? const Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
@@ -71,6 +78,8 @@ class _ImagesScreenState extends State<ImagesScreen> {
                 final it = _items[i];
                 final path = it['path']?.toString();
                 final name = it['name']?.toString() ?? '';
+                final hasFile =
+                    path != null && path.isNotEmpty && File(path).existsSync();
 
                 return Material(
                   color: GamaColors.surfaceCard,
@@ -78,53 +87,46 @@ class _ImagesScreenState extends State<ImagesScreen> {
                   child: InkWell(
                     borderRadius: BorderRadius.circular(14),
                     onTap: () => LibraryScreen.openEntry(context, it),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: GamaColors.border),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(
-                            child:
-                                path != null &&
-                                    path.isNotEmpty &&
-                                    File(path).existsSync()
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(14),
+                            ),
+                            child: hasFile
                                 ? Image.file(
-                                    File(path),
+                                    File(path!),
                                     fit: BoxFit.cover,
                                     errorBuilder: (_, __, ___) => const Center(
                                       child: Icon(
                                         Icons.broken_image_outlined,
                                         color: GamaColors.textMuted,
-                                        size: 36,
                                       ),
                                     ),
                                   )
                                 : const Center(
                                     child: Icon(
-                                      Icons.image_outlined,
-                                      color: GamaColors.accent,
-                                      size: 36,
+                                      Icons.image_not_supported_outlined,
+                                      color: GamaColors.textMuted,
                                     ),
                                   ),
                           ),
-                          Padding(
-                            padding: const EdgeInsets.all(10),
-                            child: Text(
-                              name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: GamaColors.textSecondary,
-                                fontSize: 12,
-                              ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: GamaColors.textSecondary,
+                              fontSize: 12,
                             ),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 );
