@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../models/message.dart';
+import 'identity_service.dart';
 import 'settings_service.dart';
 
 class WebSource {
@@ -11,11 +12,7 @@ class WebSource {
   final String url;
   final String snippet;
 
-  const WebSource({
-    required this.title,
-    required this.url,
-    this.snippet = '',
-  });
+  const WebSource({required this.title, required this.url, this.snippet = ''});
 
   factory WebSource.fromJson(Map<String, dynamic> j) {
     return WebSource(
@@ -51,13 +48,12 @@ class ChatStreamEvent {
     String? webSearchQuery,
     List<WebSource>? sources,
     String? memorySaved,
-  }) =>
-      ChatStreamEvent._(
-        phase: phase,
-        webSearchQuery: webSearchQuery,
-        sources: sources,
-        memorySaved: memorySaved,
-      );
+  }) => ChatStreamEvent._(
+    phase: phase,
+    webSearchQuery: webSearchQuery,
+    sources: sources,
+    memorySaved: memorySaved,
+  );
 }
 
 class OllamaService {
@@ -112,15 +108,16 @@ class OllamaService {
   Stream<ChatStreamEvent> chatStream({
     required List<Message> messages,
     String? model,
-    List<dynamic>? images,
+    List<Map<String, String>>? images,
     bool voiceMode = false,
   }) async* {
     final selectedModel = model ?? SettingsService.instance.model;
     final dio = _createDio();
 
     try {
-      final requestMessages =
-          messages.map((message) => message.toJson()).toList();
+      final requestMessages = messages
+          .map((message) => message.toJson())
+          .toList();
 
       final response = await dio.post(
         '/chat',
@@ -128,11 +125,16 @@ class OllamaService {
           'model': selectedModel,
           'messages': requestMessages,
           if (images != null && images.isNotEmpty) 'images': images,
+          'user_id': IdentityService.instance.userId,
+          'auto_memory': true,
           'voice_mode': voiceMode,
         },
         options: Options(
           responseType: ResponseType.stream,
-          headers: {'Accept': 'application/x-ndjson'},
+          headers: {
+            'Accept': 'application/x-ndjson',
+            'X-User-Id': IdentityService.instance.userId,
+          },
         ),
       );
 

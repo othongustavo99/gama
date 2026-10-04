@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 
@@ -14,28 +13,6 @@ from ..core.memory import get_store, extract_facts_with_llm
 logger = logging.getLogger(__name__)
 router = APIRouter()
 gama = GamaCore()
-
-# Mantém referência das tarefas em background para o GC não cancelá-las.
-_bg_tasks: set[asyncio.Task] = set()
-
-
-async def _save_memory_bg(
-    user_id: str, user_text: str, assistant_text: str, model: str
-) -> None:
-    """Extrai e salva fatos DEPOIS que a resposta já foi entregue ao app."""
-    try:
-        store = get_store(user_id)
-        existing = [f.get("text", "") for f in store.list_facts()]
-        new_facts = await extract_facts_with_llm(
-            user_text=user_text,
-            assistant_text=assistant_text,
-            model=model,
-            llm_client=llm,
-            existing_facts=existing,
-        )
-        store.add_facts(new_facts, source="auto")
-    except Exception as mem_err:
-        logger.warning("auto memory: %s", mem_err)
 
 
 @router.get("/models")
@@ -122,6 +99,7 @@ async def chat(request: ChatRequest):
                     prefetched_query=search_query,
                     user_id=uid,
                     auto_memory=getattr(request, "auto_memory", True),
+                    voice_mode=bool(getattr(request, "voice_mode", False)),
                 )
             except Exception as e:
                 logger.exception("build_messages: %s", e)
@@ -133,6 +111,11 @@ async def chat(request: ChatRequest):
                     *messages[-12:],
                 ]
 
+            if fact_saved:
+                yield json.dumps(
+                    {"gama_meta": {"memory_saved": fact_saved}},
+                    ensure_ascii=False,
+                ) + "\n"
 
             if sources and not will_search:
                 yield json.dumps(
@@ -164,15 +147,22 @@ async def chat(request: ChatRequest):
             active_model = model
             if img_payload:
                 from ..config import settings as _settings
-                vision = (getattr(_settings, "VISION_MODEL", None) or "").strip()
-                # Modelo de visão SÓ quando há imagem anexada.
-                if vision:
-                    active_model = vision
-                elif llm.provider == "ollama":
-                    active_model = "llava"
-                else:
-                    # fallback Groq multimodal conhecido
-                    active_model = "qwen/qwen3.8-27b"
+                if llm.provider == "ollama":
+                    active_model = (
+                        getattr(_settings, "VISION_MODEL", None)
+                        or "qwen2-vl"
+                    )
+                elif llm.provider == "openrouter":
+                    active_model = (
+                        getattr(_settings, "VISION_MODEL", None)
+                        or "openai/gpt-4o-mini"
+                    )
+                elif llm.provider == "groq":
+                    # Groq: modelo com suporte a visão se disponível
+                    active_model = (
+                        getattr(_settings, "VISION_MODEL", None)
+                        or model
+                    )
                 gama_messages = LLMClient.inject_images(
                     gama_messages,
                     img_payload,
@@ -204,16 +194,34 @@ async def chat(request: ChatRequest):
                     pass
                 yield chunk
 
-            # Memória automática pós-turno: roda em background para a
-            # conexão fechar logo após o último token (antes, o app ficava
-            # "digitando" até a chamada extra ao LLM terminar).
-            if getattr(request, "auto_memory", True) and last_user.strip():
-                u = (getattr(request, "user_id", None) or "default").strip() or "default"
-                task = asyncio.create_task(
-                    _save_memory_bg(u, last_user, "".join(assistant_acc), model)
-                )
-                _bg_tasks.add(task)
-                task.add_done_callback(_bg_tasks.discard)
+            # Memória automática pós-turno
+            if getattr(request, "auto_memory", True):
+                try:
+                    u = (getattr(request, "user_id", None) or "default")
+                    user_txt = last_user if isinstance(last_user, str) else ""
+                    if user_txt.strip():
+                        store = get_store(u)
+                        existing = [f.get("text", "") for f in store.list_facts()]
+                        new_facts = await extract_facts_with_llm(
+                            user_text=user_txt,
+                            assistant_text="".join(assistant_acc),
+                            model=model,
+                            llm_client=llm,
+                            existing_facts=existing,
+                        )
+                        saved = store.add_facts(new_facts, source="auto")
+                        if saved:
+                            yield json.dumps(
+                                {
+                                    "gama_meta": {
+                                        "memory_saved": saved[0]["text"],
+                                        "memory_auto_count": len(saved),
+                                    }
+                                },
+                                ensure_ascii=False,
+                            ) + ""
+                except Exception as mem_err:
+                    logger.warning("auto memory: %s", mem_err)
 
         except Exception as e:
             logger.exception("chat stream: %s", e)

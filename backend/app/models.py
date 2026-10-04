@@ -22,3 +22,5 @@ class ChatRequest(BaseModel):
     images: Optional[List[ChatImage]] = Field(default=None)
     user_id: Optional[str] = Field(default=None)
     auto_memory: bool = True
+    # True quando o app pede resposta para ser falada (TTS)
+    voice_mode: bool = False
