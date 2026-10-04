@@ -18,6 +18,9 @@ import '../services/ollama_service.dart';
 import 'library_screen.dart';
 import 'settings_screen.dart';
 import '../widgets/message_content.dart';
+import '../widgets/chat_composer.dart';
+import '../services/settings_service.dart';
+import '../services/tts_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
@@ -48,11 +51,13 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _speechReady = false;
   bool _isListening = false;
   bool _micArmed = false;
+  GamaMode _mode = GamaMode.programar;
   String? _textBeforeMic;
 
   @override
   void initState() {
     super.initState();
+    _mode = SettingsService.instance.mode;
     _loadMessages();
     _initSpeech();
   }
@@ -481,6 +486,17 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return false;
+  }
+
+  Future<void> _maybeSpeak(String text) async {
+    if (!SettingsService.instance.ttsAuto) return;
+    final t = text.trim();
+    if (t.isEmpty) return;
+    try {
+      await TtsService.instance.speak(t);
+    } catch (e) {
+      debugPrint('tts: $e');
+    }
   }
 
   Future<void> _sendMessage() async {
@@ -1092,7 +1108,7 @@ class _EmptyState extends StatelessWidget {
 
   static const _suggestions = [
     'Anexe ZIP/PDF/código e peça uma análise',
-    'Lembre que eu programo em Flutter',
+    'Vamos iniciar um Projeto',
     '/memoria listar',
   ];
 
@@ -1112,13 +1128,20 @@ class _EmptyState extends StatelessWidget {
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(color: GamaColors.accent.withOpacity(0.3)),
               ),
+              clipBehavior: Clip.antiAlias,
               alignment: Alignment.center,
-              child: const Text(
-                'G',
-                style: TextStyle(
-                  color: GamaColors.accent,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w700,
+              child: Image.asset(
+                'assets/images/image3.jpeg',
+                width: 40,
+                height: 40,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Text(
+                  'G',
+                  style: TextStyle(
+                    color: GamaColors.accent,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),

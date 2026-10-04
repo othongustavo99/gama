@@ -23,28 +23,27 @@ class AuthService {
   AuthService._();
   static final AuthService instance = AuthService._();
 
-  static const String? serverClientId = String.fromEnvironment(
+  static const String serverClientId = String.fromEnvironment(
     'GOOGLE_SERVER_CLIENT_ID',
-    defaultValue: '',
+    defaultValue: '', // Android: Web client ID, se usar
   );
 
-  static const String? desktopClientId = String.fromEnvironment(
+  static const String desktopClientId = String.fromEnvironment(
     'GOOGLE_DESKTOP_CLIENT_ID',
     defaultValue: '',
   );
 
-  static const String? desktopClientSecret = String.fromEnvironment(
+  static const String desktopClientSecret = String.fromEnvironment(
     'GOOGLE_DESKTOP_CLIENT_SECRET',
     defaultValue: '',
   );
 
   GoogleSignIn get _google => GoogleSignIn(
-        scopes: const ['email', 'profile'],
-        serverClientId:
-            (serverClientId != null && serverClientId!.isNotEmpty)
-                ? serverClientId
-                : null,
-      );
+    scopes: const ['email', 'profile'],
+    serverClientId: (serverClientId != null && serverClientId!.isNotEmpty)
+        ? serverClientId
+        : null,
+  );
 
   bool get isDesktop =>
       !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
@@ -179,7 +178,9 @@ class AuthService {
       body: body,
     );
     if (tokenRes.statusCode != 200) {
-      throw StateError('Token Google (${tokenRes.statusCode}): ${tokenRes.body}');
+      throw StateError(
+        'Token Google (${tokenRes.statusCode}): ${tokenRes.body}',
+      );
     }
 
     final tokenJson = jsonDecode(tokenRes.body) as Map<String, dynamic>;
@@ -237,7 +238,9 @@ class AuthService {
     const chars =
         'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
     final rnd = Random.secure();
-    return List.generate(length, (_) => chars[rnd.nextInt(chars.length)])
-        .join();
+    return List.generate(
+      length,
+      (_) => chars[rnd.nextInt(chars.length)],
+    ).join();
   }
 }

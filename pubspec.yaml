@@ -55,6 +55,7 @@ dependencies:
   crypto: ^3.0.6  # se ainda não tiver
   speech_to_text: ^7.3.0
   speech_to_text_windows: ^1.0.1
+  audioplayers: ^6.1.0
   
 
 dev_dependencies:
