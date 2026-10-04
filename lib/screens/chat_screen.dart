@@ -52,6 +52,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isListening = false;
   bool _micArmed = false;
   GamaMode _mode = GamaMode.programar;
+  bool _speakNextReply = false;
   String? _textBeforeMic;
 
   @override
@@ -489,14 +490,12 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _maybeSpeak(String text) async {
-    if (!SettingsService.instance.ttsAuto) return;
+    final want = _speakNextReply || SettingsService.instance.ttsAuto;
+    _speakNextReply = false;
+    if (!want) return;
     final t = text.trim();
     if (t.isEmpty) return;
-    try {
-      await TtsService.instance.speak(t);
-    } catch (e) {
-      debugPrint('tts: $e');
-    }
+    await TtsService.instance.speak(t);
   }
 
   Future<void> _sendMessage() async {
@@ -622,6 +621,20 @@ class _ChatScreenState extends State<ChatScreen> {
               _streamPhase = '';
               _pendingSources = [];
             });
+            if (_messages.isNotEmpty && _messages.last.isAssistant) {
+              try {
+                await _maybeSpeak(_messages.last.content);
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Voz: $e'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              }
+            }
           }
         },
         onError: (e) async {
@@ -993,108 +1006,22 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
 
         // Input
-        Container(
-          padding: const EdgeInsets.fromLTRB(6, 12, 10, 12),
-          decoration: BoxDecoration(
-            color: GamaColors.surface,
-            border: const Border(top: BorderSide(color: GamaColors.divider)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.35),
-                blurRadius: 16,
-                offset: const Offset(0, -4),
-              ),
-            ],
-          ),
-          child: SafeArea(
-            top: false,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                IconButton(
-                  onPressed: _isLoading ? null : _toggleListen,
-                  tooltip: _isListening ? 'Parar gravação' : 'Falar',
-                  icon: Icon(
-                    _isListening ? Icons.mic : Icons.mic_none_rounded,
-                    color: _isListening
-                        ? GamaColors.accent
-                        : GamaColors.textSecondary,
-                  ),
-                ),
-                IconButton(
-                  onPressed: _isLoading ? null : _showAttachMenu,
-                  tooltip: 'Anexar (câmera, galeria, arquivos)',
-                  icon: const Icon(
-                    Icons.attach_file_rounded,
-                    color: GamaColors.textSecondary,
-                  ),
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    style: const TextStyle(
-                      color: GamaColors.textPrimary,
-                      fontSize: 15,
-                    ),
-                    maxLines: 5,
-                    minLines: 1,
-                    textInputAction: TextInputAction.newline,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: InputDecoration(
-                      hintText: 'Digite sua mensagem...',
-                      hintStyle: const TextStyle(
-                        color: GamaColors.textMuted,
-                        fontSize: 14,
-                      ),
-                      filled: true,
-                      fillColor: GamaColors.surfaceCard,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(22),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(22),
-                        borderSide: const BorderSide(color: GamaColors.border),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(22),
-                        borderSide: BorderSide(
-                          color: GamaColors.accent.withOpacity(0.5),
-                        ),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                    ),
-                    onSubmitted: (_) {
-                      if (!_isLoading) _sendMessage();
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Material(
-                  color: _isLoading
-                      ? GamaColors.surfaceCard
-                      : GamaColors.accent,
-                  shape: const CircleBorder(),
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: _isLoading ? null : _sendMessage,
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: Icon(
-                        Icons.arrow_upward_rounded,
-                        color: _isLoading ? GamaColors.textMuted : Colors.white,
-                        size: 22,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
+        ChatComposer(
+          controller: _controller,
+          isLoading: _isLoading,
+          isListening: _isListening,
+          mode: _mode,
+          onAttach: _showAttachMenu,
+          onToggleListen: _toggleListen,
+          onSend: _sendMessage,
+          onSpeakSend: () {
+            _speakNextReply = true;
+            _sendMessage();
+          },
+          onModeChanged: (m) async {
+            setState(() => _mode = m);
+            await SettingsService.instance.setMode(m);
+          },
         ),
       ],
     );

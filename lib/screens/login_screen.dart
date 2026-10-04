@@ -95,7 +95,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     BlendMode.srcIn,
                   ),
                   child: Image.asset(
-                    'assets/images/image3.jpeg',
+                    'assets/images/image2.png',
                     width: 44,
                     height: 44,
                     fit: BoxFit.contain,
