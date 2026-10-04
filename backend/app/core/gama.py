@@ -4,6 +4,8 @@ import logging
 from .context import ContextManager
 from .memory import get_store, try_extract_memory
 from .url_fetch import build_url_context
+from .project_analyzer import build_query_context
+import re as _re
 from .prompts import build_system_prompt
 from ..config import settings
 from ..web_search import should_search, search_web, _format_results
@@ -95,5 +97,20 @@ class GamaCore:
             prepared.append({"role": "system", "content": web_block})
         if url_block:
             prepared.append({"role": "system", "content": url_block})
+
+        # Project Analyzer: marker [project_id:xxxx] no texto do usuário
+        try:
+            pid = None
+            if last_user and isinstance(last_user, str):
+                m = _re.search(r"\[project_id:([a-zA-Z0-9_\-]{6,32})\]", last_user)
+                if m:
+                    pid = m.group(1)
+            if pid:
+                # limpa marker da última user msg no contexto se possível
+                proj_ctx = build_query_context(pid, last_user, max_tokens=4500)
+                prepared.append({"role": "system", "content": proj_ctx})
+        except Exception as e:
+            logger.warning("project_analyzer: %s", e)
+
         prepared.extend(context)
         return prepared, fact_saved, search_query, sources

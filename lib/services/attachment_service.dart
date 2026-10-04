@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:path/path.dart' as p;
 
 import 'settings_service.dart';
+import 'identity_service.dart';
 
 enum AttachmentKind { text, zip, pdf, image, audio, other }
 
@@ -139,15 +140,48 @@ class AttachmentService {
         );
 
       case AttachmentKind.zip:
+        // Project Analyzer: indexa no backend (não despeja o ZIP inteiro no modelo)
         final data = await file.readAsBytes();
-        return ProcessedAttachment(
-          name: name,
-          ext: ext,
-          kind: kind,
-          contentForModel: _extractZipText(data, name),
-          label: '$name (ZIP)',
-          bytes: bytes,
-        );
+        try {
+          final summary = await _ingestProjectZip(path, name);
+          final id = summary['project_id']?.toString() ?? '';
+          final fw = summary['frameworks'];
+          final langs = summary['languages'];
+          final count = summary['file_count'];
+          final samples =
+              (summary['sample_paths'] as List?)?.take(12).join('\n- ') ?? '';
+          final body = StringBuffer()
+            ..writeln('[project_id:$id]')
+            ..writeln('Projeto ZIP anexado: $name')
+            ..writeln('Arquivos indexados: $count')
+            ..writeln('Frameworks: $fw')
+            ..writeln('Linguagens: $langs')
+            ..writeln('Paths (amostra):')
+            ..writeln('- $samples')
+            ..writeln()
+            ..writeln(
+              'Use o Project Analyzer: investigue com base no índice. '
+              'Não peça o ZIP de novo. Se faltar arquivo, cite o path.',
+            );
+          return ProcessedAttachment(
+            name: name,
+            ext: ext,
+            kind: kind,
+            contentForModel: body.toString(),
+            label: '$name (projeto)',
+            bytes: bytes,
+          );
+        } catch (e) {
+          // fallback: extrato local limitado (comportamento antigo)
+          return ProcessedAttachment(
+            name: name,
+            ext: ext,
+            kind: kind,
+            contentForModel: _extractZipText(data, name),
+            label: '$name (ZIP)',
+            bytes: bytes,
+          );
+        }
 
       case AttachmentKind.pdf:
         final text = await _extractViaApi(path, name);
@@ -252,6 +286,30 @@ class AttachmentService {
       buf.writeln('\nNenhum texto legível no ZIP.');
     }
     return buf.toString();
+  }
+
+  Future<Map<String, dynamic>> _ingestProjectZip(
+    String path,
+    String name,
+  ) async {
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: SettingsService.instance.baseUrl,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 180),
+      ),
+    );
+    final form = FormData.fromMap({
+      'file': await MultipartFile.fromFile(path, filename: name),
+    });
+    final res = await dio.post(
+      '/project/ingest',
+      data: form,
+      options: Options(headers: {'X-User-Id': IdentityService.instance.userId}),
+    );
+    final data = res.data;
+    if (data is Map<String, dynamic>) return data;
+    return Map<String, dynamic>.from(data as Map);
   }
 
   Future<String> _extractViaApi(String path, String name) async {

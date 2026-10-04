@@ -7,6 +7,7 @@ from .routes.chat import router as chat_router
 from .routes.extract import router as extract_router
 from .routes.memory import router as memory_router
 from .routes.search import router as search_router
+from .routes.project import router as project_router
 
 
 app = FastAPI(
@@ -26,6 +27,7 @@ app.include_router(chat_router)
 app.include_router(memory_router)
 app.include_router(extract_router)
 app.include_router(search_router)
+app.include_router(project_router)
 
 
 @app.get("/health")
@@ -40,6 +42,7 @@ async def health():
         "extract",
         "multi_provider",
         "web_search",
+        "project_analyzer",
     ]
 
     return {
