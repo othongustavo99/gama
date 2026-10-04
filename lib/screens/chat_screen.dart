@@ -61,6 +61,7 @@ class _ChatScreenState extends State<ChatScreen> {
   GamaMode _mode = GamaMode.programar;
   bool _speakNextReply = false;
   bool _ttsEarlyStarted = false;
+  bool _isSpeaking = false;
 
   // Quando a resposta foi solicitada por voz, o texto recebido fica
   // retido até o áudio realmente começar. Depois, ele é revelado em blocos
@@ -538,30 +539,42 @@ class _ChatScreenState extends State<ChatScreen> {
     final want = _speakNextReply || SettingsService.instance.ttsAuto;
     _speakNextReply = false;
     if (!want) return;
+
     final t = text.trim();
-    if (t.isEmpty) return;
+    if (t.isEmpty || !mounted) return;
 
-    if (!revealWhileSpeaking) {
-      // Comportamento original: fala o texto inteiro, frase a frase.
-      await TtsService.instance.speakFull(t);
-      return;
+    // A geração do texto terminou, mas a Gama ainda está entregando
+    // a resposta em áudio. O indicador permanece no mesmo lugar do
+    // "Pensando..." até a reprodução terminar de verdade.
+    setState(() => _isSpeaking = true);
+
+    try {
+      if (!revealWhileSpeaking) {
+        // Comportamento original: fala o texto inteiro, frase a frase.
+        await TtsService.instance.speakFull(t);
+        return;
+      }
+
+      // Somente para o botão "Enviar e ouvir": o texto já foi recebido,
+      // mas permanece oculto até o primeiro áudio começar a tocar.
+      await TtsService.instance.speakFull(
+        t,
+        onChunkPlaybackStart: (chunk) async {
+          if (!mounted) return;
+          setState(() {
+            if (_messages.isNotEmpty && _messages.last.isAssistant) {
+              _messages.last.content +=
+                  (_messages.last.content.isEmpty ? '' : ' ') + chunk;
+            }
+          });
+          _scrollToBottom();
+        },
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSpeaking = false);
+      }
     }
-
-    // Somente para o botão "Enviar e ouvir": o texto já foi recebido,
-    // mas permanece oculto até o primeiro áudio começar a tocar.
-    await TtsService.instance.speakFull(
-      t,
-      onChunkPlaybackStart: (chunk) async {
-        if (!mounted) return;
-        setState(() {
-          if (_messages.isNotEmpty && _messages.last.isAssistant) {
-            _messages.last.content +=
-                (_messages.last.content.isEmpty ? '' : ' ') + chunk;
-          }
-        });
-        _scrollToBottom();
-      },
-    );
   }
 
   Future<void> _sendMessage() async {
@@ -795,6 +808,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _stopGeneration() async {
     await _streamSubscription?.cancel();
     _streamSubscription = null;
+    await TtsService.instance.stop();
+    _isSpeaking = false;
     if (!mounted) return;
     final lastMessage = _messages.isNotEmpty ? _messages.last : null;
     if (lastMessage != null && lastMessage.isAssistant) {
@@ -808,6 +823,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _voiceResponsePending = false;
     _voiceResponseBuffer = '';
     _speakNextReply = false;
+    _isSpeaking = false;
     setState(() {
       if (lastMessage != null &&
           lastMessage.isAssistant &&
@@ -912,7 +928,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                   ),
-                  if (_isLoading)
+                  if (_isLoading || _isSpeaking)
                     IconButton(
                       icon: const Icon(
                         Icons.stop_circle_outlined,
@@ -1057,16 +1073,16 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
 
-        if (_isLoading)
+        if (_isLoading || _isSpeaking)
           Padding(
             padding: const EdgeInsets.only(left: 20, bottom: 6),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                _streamPhase == 'searching'
+                _isSpeaking
+                    ? 'Gamma está respondendo em áudio…'
+                    : _streamPhase == 'searching'
                     ? 'Buscando na web…'
-                    : _streamPhase == 'image_analyzing'
-                    ? 'Analisando imagem…'
                     : _streamPhase == 'thinking'
                     ? 'Pensando…'
                     : 'Gamma está respondendo…',

@@ -17,6 +17,12 @@ router = APIRouter(tags=["tts"])
 
 FISH_URL = "https://api.fish.audio/v1/tts"
 
+# Reutiliza conexões HTTPS com o Fish Audio entre chamadas de TTS.
+# Isso evita o custo de abrir uma nova conexão para cada frase.
+_fish_client = httpx.AsyncClient(
+    timeout=httpx.Timeout(90.0, connect=10.0),
+)
+
 
 class TtsIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
@@ -54,8 +60,8 @@ async def tts(body: TtsIn):
 
     last_err = "Fish Audio sem resposta"
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        for use_ref in (True, False):
+    client = _fish_client
+    for use_ref in (True, False):
             payload = {
                 "text": text,
                 "format": fmt,
