@@ -99,56 +99,6 @@ class _ChatScreenState extends State<ChatScreen> {
     return value.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
-  String _polishSpeechText(String value) {
-    var text = _normalizeSpeechText(value);
-    if (text.isEmpty) return '';
-
-    // Pontuação falada, sem tentar corrigir palavras que o reconhecimento já
-    // entregou. Isso deixa a transcrição mais natural sem reescrever o sentido.
-    text = text.replaceAllMapped(
-      RegExp(r'\s+(?:vírgula|virgula)(?=\s|$)', caseSensitive: false),
-      (_) => ', ',
-    );
-    text = text.replaceAllMapped(
-      RegExp(r'\s+(?:ponto final|ponto)(?=\s|$)', caseSensitive: false),
-      (_) => '. ',
-    );
-    text = text.replaceAllMapped(
-      RegExp(
-        r'\s+(?:ponto de interrogação|interrogação)(?=\s|$)',
-        caseSensitive: false,
-      ),
-      (_) => '? ',
-    );
-    text = text.replaceAllMapped(
-      RegExp(
-        r'\s+(?:ponto de exclamação|exclamação)(?=\s|$)',
-        caseSensitive: false,
-      ),
-      (_) => '! ',
-    );
-    text = text.replaceAllMapped(
-      RegExp(r'\s+(?:dois pontos)(?=\s|$)', caseSensitive: false),
-      (_) => ': ',
-    );
-    text = text.replaceAllMapped(
-      RegExp(
-        r'\s+(?:nova linha|quebra de linha)(?=\s|$)',
-        caseSensitive: false,
-      ),
-      (_) => '\n',
-    );
-
-    text = text.replaceAll(RegExp(r'\s+([,.;:!?])'), r'$1');
-    text = text.replaceAll(RegExp(r'([,.;:!?])(?!\s|$)'), r'$1 ');
-    text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-
-    if (text.isNotEmpty) {
-      text = text[0].toUpperCase() + text.substring(1);
-    }
-    return text;
-  }
-
   /// Só acrescenta um resultado que ainda não foi confirmado.
   /// Não faz "overlap" de palavras: palavras repetidas pelo usuário são
   /// válidas e não devem ser removidas pelo algoritmo.
@@ -160,6 +110,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (confirmed.isEmpty) {
       _speechConfirmed = text;
     } else {
+      // Evita duplicar o mesmo trecho se a plataforma reenviar o final.
+      if (confirmed.toLowerCase().endsWith(text.toLowerCase())) return;
       _speechConfirmed = '$confirmed $text';
     }
   }
@@ -175,6 +127,27 @@ class _ChatScreenState extends State<ChatScreen> {
     _applySpeechToField();
   }
 
+  /// Detecta se o novo texto da plataforma é uma continuação do parcial
+  /// anterior ou um *reset* do buffer (comum em iOS/Android após pausa
+  /// curta, mesmo com finalResult == false).
+  ///
+  /// Continuação: o novo texto começa com o parcial antigo, ou o parcial
+  /// antigo começa com o novo (correção/backtrack do reconhecedor).
+  /// Reset: textos disjuntos → o parcial antigo deve ser promovido.
+  bool _isSpeechContinuation(String previous, String next) {
+    if (previous.isEmpty || next.isEmpty) return true;
+    final prev = previous.toLowerCase();
+    final curr = next.toLowerCase();
+    if (curr.startsWith(prev) || prev.startsWith(curr)) return true;
+    // Tolerância a pequenas correções no final (ex.: "vai" → "vão").
+    final minLen = prev.length < curr.length ? prev.length : curr.length;
+    if (minLen >= 8) {
+      final prefixLen = (minLen * 0.6).floor();
+      if (curr.startsWith(prev.substring(0, prefixLen))) return true;
+    }
+    return false;
+  }
+
   Future<void> _initSpeech() async {
     try {
       _speechReady = await _speech.initialize(
@@ -183,9 +156,9 @@ class _ChatScreenState extends State<ChatScreen> {
           debugPrint('speech status: $status (armed=$_micArmed)');
           if (!_micArmed) return;
 
-          // O Android pode encerrar a sessão interna depois de ~1–3 s sem
-          // fala. Isso NÃO significa que o usuário desligou o microfone.
-          // O botão continua armado e abrimos outra sessão automaticamente.
+          // O Android/iOS pode encerrar a sessão interna depois de ~1–3 s
+          // sem fala. Isso NÃO desliga o microfone do usuário: o botão
+          // continua armado e abrimos outra sessão automaticamente.
           if (status == 'done' || status == 'notListening') {
             _scheduleSpeechRestart();
           }
@@ -193,14 +166,9 @@ class _ChatScreenState extends State<ChatScreen> {
         onError: (error) {
           debugPrint('speech error: $error');
           if (!_micArmed || !mounted) return;
-          if (error.permanent == true) {
-            _micArmed = false;
-            if (mounted) setState(() => _isListening = false);
-            return;
-          }
 
-          // Timeout/erro de silêncio também é tratado como troca de sessão,
-          // nunca como desligamento do microfone pelo usuário.
+          // Timeout/erro de silêncio também é troca de sessão, nunca
+          // desligamento do microfone pelo usuário.
           _scheduleSpeechRestart();
         },
         debugLogging: kDebugMode,
@@ -216,19 +184,27 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_micArmed || !mounted || _speechRestartScheduled) return;
     _speechRestartScheduled = true;
 
-    Future.delayed(const Duration(milliseconds: 550), () async {
+    // Espera um pouco para a plataforma entregar o finalResult (se houver)
+    // antes de promover o parcial e reabrir a sessão.
+    Future.delayed(const Duration(milliseconds: 400), () async {
       if (!mounted || !_micArmed) {
         _speechRestartScheduled = false;
         return;
       }
 
-      // Damos tempo para o speech_to_text entregar o finalResult depois do
-      // evento "done". Só o que realmente ficou sem finalResult é promovido.
       _flushSpeechPartial();
 
       try {
         await _speech.stop();
       } catch (_) {}
+
+      if (!_micArmed || !mounted) {
+        _speechRestartScheduled = false;
+        return;
+      }
+
+      // Pequena folga evita error_busy ao reiniciar imediatamente.
+      await Future.delayed(const Duration(milliseconds: 200));
 
       if (!_micArmed || !mounted) {
         _speechRestartScheduled = false;
@@ -270,33 +246,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
     Future<void> listen() async {
       await _speech.listen(
-        listenOptions: SpeechListenOptions(
-          localeId: 'pt_BR',
-          partialResults: true,
-          cancelOnError: false,
-          onDevice: false,
-          listenMode: ListenMode.dictation,
-          autoPunctuation: true,
-          listenFor: const Duration(minutes: 1),
-          pauseFor: const Duration(seconds: 6),
-          contextualPhrases: const [
-            'Gama',
-            'Frequência40',
-            'Flutter',
-            'Dart',
-            'Python',
-            'Android',
-            'iOS',
-            'TTS',
-            'STT',
-            'API',
-            'Groq',
-            'Fish Audio',
-            'Ollama',
-            'Project Analyzer',
-            'Image Analyzer',
-          ],
-        ),
+        localeId: 'pt_BR',
+        partialResults: true,
+        cancelOnError: false,
+        listenMode: ListenMode.dictation,
+        listenFor: const Duration(minutes: 30),
+        // Valor alto: o SO ainda pode cortar antes. O onStatus reinicia
+        // enquanto _micArmed == true. pauseFor baixo fazia o texto sumir
+        // em pausas naturais de ditado.
+        pauseFor: const Duration(seconds: 8),
         onResult: (result) => _onSpeechResult(result, sessionId),
       );
     }
@@ -307,6 +265,7 @@ class _ChatScreenState extends State<ChatScreen> {
       try {
         await _speech.stop();
       } catch (_) {}
+      await Future.delayed(const Duration(milliseconds: 250));
       try {
         await listen();
       } catch (e) {
@@ -326,37 +285,52 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onSpeechResult(dynamic result, int sessionId) {
     if (!mounted || !_micArmed || sessionId != _speechSessionId) return;
 
-    final words = _polishSpeechText((result.recognizedWords as String?) ?? '');
+    final words = _normalizeSpeechText(
+      (result.recognizedWords as String?) ?? '',
+    );
     final isFinal = result.finalResult == true;
 
     if (words.isEmpty) {
       if (isFinal) {
-        // Ao ficar em silêncio o Android costuma entregar um finalResult
-        // VAZIO. Antes o parcial era zerado aqui e o texto ainda não
-        // confirmado sumia do campo. Agora ele é promovido a confirmado.
+        // Silêncio: Android/iOS costumam mandar finalResult vazio.
+        // Promove o que ainda estava só no parcial para não perder texto.
         _flushSpeechPartial();
       }
       return;
     }
 
     if (isFinal) {
-      // O final substitui o parcial da mesma sessão. Portanto nunca
-      // adicionamos parcial + final, o que era uma das fontes de duplicação.
+      // O final da sessão substitui o parcial (mesmo conteúdo).
+      // Só acrescenta se ainda não foi confirmado nesta sessão.
       if (words.toLowerCase() != _speechLastFinalText.toLowerCase()) {
         _speechLastFinalText = words;
-        _appendSpeechConfirmed(words);
+        // Se o parcial já continha este texto (ou era continuação),
+        // o flush abaixo evita duplicar; senão append direto.
+        if (_speechPartial.isNotEmpty &&
+            _isSpeechContinuation(_speechPartial, words)) {
+          _speechPartial = '';
+          _appendSpeechConfirmed(words);
+        } else {
+          _flushSpeechPartial();
+          _appendSpeechConfirmed(words);
+        }
+      } else {
+        _speechPartial = '';
       }
-      _speechPartial = '';
     } else {
-      // partialResults é cumulativo dentro da sessão. Apenas substituímos
-      // o parcial visual; o texto confirmado permanece intacto.
+      // Parcial: a plataforma às vezes ZERA o buffer após uma pausa curta
+      // (mesmo com a sessão ainda ativa e finalResult == false).
+      // Se o novo texto não for continuação do parcial anterior, promove
+      // o antigo para confirmado antes de trocar — isso evita o "reset
+      // do zero" que o usuário via ao parar de falar por alguns segundos.
+      if (_speechPartial.isNotEmpty &&
+          !_isSpeechContinuation(_speechPartial, words)) {
+        _appendSpeechConfirmed(_speechPartial);
+      }
       _speechPartial = words;
     }
 
     _applySpeechToField();
-
-    // Se o Android marcou a sessão como final enquanto o botão ainda está
-    // ligado, o próximo status fará a troca automática sem desligar o mic.
   }
 
   Future<void> _toggleListen() async {
@@ -819,8 +793,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final voiceRequested = _speakNextReply;
-    final voiceOutputRequested =
-        _speakNextReply || SettingsService.instance.ttsAuto;
 
     final pending = List<ProcessedAttachment>.from(_attachments);
     final apiText = AttachmentService.buildMessageBody(rawText, pending);
@@ -890,7 +862,6 @@ class _ChatScreenState extends State<ChatScreen> {
       final stream = _ollama.chatStream(
         messages: apiMessages,
         images: imagePayload.isEmpty ? null : imagePayload,
-        voiceMode: voiceOutputRequested,
       );
 
       _streamSubscription = stream.listen(
