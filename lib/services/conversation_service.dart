@@ -20,6 +20,9 @@ class ConversationService extends ChangeNotifier {
     _conversationsBox = await Hive.openBox<Conversation>('conversations');
     _messagesBox = await Hive.openBox<Message>('messages');
 
+    // Remove conversas vazias antigas (exceto a mais recente, que pode ser o rascunho)
+    await purgeEmptyConversations();
+
     // Se não existir nenhuma conversa, cria a primeira
     if (_conversationsBox.isEmpty) {
       await createConversation(title: 'Nova conversa');
@@ -34,16 +37,36 @@ class ConversationService extends ChangeNotifier {
 
   // ==================== CONVERSAS ====================
 
+  /// True se a conversa já tem pelo menos uma mensagem persistida.
+  bool conversationHasMessages(String id) {
+    return _messagesBox.values.any((m) => m.conversationId == id);
+  }
+
+  /// Remove conversas sem mensagens. [exceptId] é preservada (rascunho atual).
+  Future<void> purgeEmptyConversations({String? exceptId}) async {
+    final keep = exceptId ?? _currentConversationId;
+    final empties = _conversationsBox.values
+        .where((c) => c.id != keep && !conversationHasMessages(c.id))
+        .toList();
+    if (empties.isEmpty) return;
+    for (final c in empties) {
+      await _conversationsBox.delete(c.id);
+    }
+    notifyListeners();
+  }
+
   List<Conversation> get pinnedConversations {
+    // Só lista conversas que já receberam mensagem (não mostra rascunhos vazios)
     return _conversationsBox.values
-        .where((c) => c.isPinned)
+        .where((c) => c.isPinned && conversationHasMessages(c.id))
         .toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
 
   List<Conversation> get recentConversations {
+    // Só lista conversas que já receberam mensagem (não mostra rascunhos vazios)
     return _conversationsBox.values
-        .where((c) => !c.isPinned)
+        .where((c) => !c.isPinned && conversationHasMessages(c.id))
         .toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
@@ -53,12 +76,11 @@ class ConversationService extends ChangeNotifier {
     return _conversationsBox.get(_currentConversationId);
   }
 
-  Future<Conversation> createConversation({String title = 'Nova conversa'}) async {
+  Future<Conversation> createConversation({
+    String title = 'Nova conversa',
+  }) async {
     final id = const Uuid().v4();
-    final conversation = Conversation(
-      id: id,
-      title: title,
-    );
+    final conversation = Conversation(id: id, title: title);
 
     await _conversationsBox.put(id, conversation);
     _currentConversationId = id;
@@ -66,8 +88,30 @@ class ConversationService extends ChangeNotifier {
     return conversation;
   }
 
+  /// Cria nova conversa apenas se a atual já tiver mensagens.
+  /// Se a atual estiver vazia, reutiliza o rascunho (não gera outra vazia).
+  Future<Conversation> createConversationIfNeeded({
+    String title = 'Nova conversa',
+  }) async {
+    final currentId = _currentConversationId;
+    if (currentId != null && !conversationHasMessages(currentId)) {
+      final existing = _conversationsBox.get(currentId);
+      if (existing != null) return existing;
+    }
+    // Sai de um rascunho vazio anterior (se houver outro) e cria a nova
+    await purgeEmptyConversations(exceptId: null);
+    return createConversation(title: title);
+  }
+
   Future<void> selectConversation(String id) async {
+    final previousId = _currentConversationId;
     _currentConversationId = id;
+    // Se saiu de um rascunho vazio, apaga para não acumular na lista
+    if (previousId != null &&
+        previousId != id &&
+        !conversationHasMessages(previousId)) {
+      await _conversationsBox.delete(previousId);
+    }
     notifyListeners();
   }
 

@@ -113,9 +113,19 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _resumeListenIfArmed() async {
     if (!_micArmed || !mounted || !_speechReady) return;
     try {
-      // O texto que já está no campo é considerado confirmado.
-      // Uma nova sessão só acrescentará o próximo trecho a ele.
-      _speechBaseText = _controller.text;
+      // O texto já confirmado (base + últimos finais) permanece no campo.
+      // A nova sessão só acrescenta o próximo trecho — nunca substitui o anterior.
+      // Prioriza o que já foi promovido a base; o controller é o fallback.
+      if (_speechBaseText.trim().isEmpty) {
+        _speechBaseText = _controller.text;
+      } else {
+        // Garante que o campo e a base estejam alinhados após o fechamento
+        // automático da sessão anterior (silêncio ~2s no Android).
+        final current = _controller.text.trimRight();
+        if (current.length > _speechBaseText.trimRight().length) {
+          _speechBaseText = current;
+        }
+      }
       _speechSessionText = '';
       await _startListenSession();
     } catch (e) {
@@ -132,7 +142,9 @@ class _ChatScreenState extends State<ChatScreen> {
         cancelOnError: false,
         listenMode: ListenMode.dictation,
         listenFor: const Duration(minutes: 15),
-        pauseFor: const Duration(seconds: 45),
+        // pauseFor alto: o Android ainda pode encerrar ~2s de silêncio;
+        // o onStatus + _resumeListenIfArmed reabre a sessão sem perder texto.
+        pauseFor: const Duration(seconds: 30),
         onResult: (result) => _onSpeechResult(result, sessionId),
       );
     } catch (_) {
@@ -141,7 +153,7 @@ class _ChatScreenState extends State<ChatScreen> {
         cancelOnError: false,
         listenMode: ListenMode.dictation,
         listenFor: const Duration(minutes: 15),
-        pauseFor: const Duration(seconds: 45),
+        pauseFor: const Duration(seconds: 30),
         onResult: (result) => _onSpeechResult(result, sessionId),
       );
     }
@@ -153,14 +165,30 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onSpeechResult(dynamic result, int sessionId) {
     if (!mounted || !_micArmed || sessionId != _speechSessionId) return;
     final words = (result.recognizedWords as String?)?.trim() ?? '';
-    if (words.isEmpty) return;
+    final isFinal = result.finalResult == true;
 
-    // speech_to_text normalmente entrega a transcrição acumulada da sessão.
-    // Guardamos esse trecho separadamente para que uma pausa/novo ciclo nunca
-    // substitua o que já foi confirmado no campo.
-    _speechSessionText = words;
+    // Resultado vazio: em parcial ignora; em final apenas limpa o trecho da
+    // sessão atual (não apaga o que já foi confirmado na base).
+    if (words.isEmpty) {
+      if (isFinal) _speechSessionText = '';
+      return;
+    }
+
+    // speech_to_text entrega a transcrição acumulada da sessão atual.
+    // Quando o resultado é final (fim de frase / silêncio), promovemos o trecho
+    // para a base permanente. Assim, ao reiniciar a sessão após ~2s de silêncio,
+    // o texto anterior não é perdido nem resetado.
+    if (isFinal) {
+      final base = _speechBaseText.trimRight();
+      final separator = base.isEmpty ? '' : ' ';
+      _speechBaseText = '$base$separator$words'.trimLeft();
+      _speechSessionText = '';
+    } else {
+      _speechSessionText = words;
+    }
+
     final base = _speechBaseText.trimRight();
-    final separator = base.isEmpty ? '' : ' ';
+    final separator = base.isEmpty || _speechSessionText.isEmpty ? '' : ' ';
     final combined = '$base$separator$_speechSessionText'.trimLeft();
 
     _controller.value = _controller.value.copyWith(
@@ -543,6 +571,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final t = text.trim();
     if (t.isEmpty || !mounted) return;
 
+    // Garante que qualquer fala anterior seja interrompida antes de iniciar
+    // a nova (ex.: usuário enviou outra mensagem enquanto a Gama falava).
+    if (TtsService.instance.isBusy) {
+      await TtsService.instance.stop();
+    }
+
     // A geração do texto terminou, mas a Gama ainda está entregando
     // a resposta em áudio. O indicador permanece no mesmo lugar do
     // "Pensando..." até a reprodução terminar de verdade.
@@ -580,6 +614,13 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _sendMessage() async {
     final rawText = _controller.text.trim();
     if ((rawText.isEmpty && _attachments.isEmpty) || _isLoading) return;
+
+    // Se a Gamma ainda estiver falando a resposta anterior, interrompe
+    // imediatamente e começa a tratar a mensagem atual.
+    if (_isSpeaking || TtsService.instance.isBusy) {
+      await TtsService.instance.stop();
+      if (mounted) setState(() => _isSpeaking = false);
+    }
 
     if (_micArmed || _isListening) {
       _micArmed = false;
@@ -1204,7 +1245,7 @@ class _EmptyState extends StatelessWidget {
               clipBehavior: Clip.antiAlias,
               alignment: Alignment.center,
               child: Image.asset(
-                'assets/images/image3.jpeg',
+                'assets/images/image2.peng',
                 width: 40,
                 height: 40,
                 fit: BoxFit.contain,
