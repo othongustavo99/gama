@@ -1080,7 +1080,7 @@ class _ChatScreenState extends State<ChatScreen> {
               alignment: Alignment.centerLeft,
               child: Text(
                 _isSpeaking
-                    ? 'Gamma está respondendo em áudio…'
+                    ? 'Gamma ainda está respondendo...'
                     : _streamPhase == 'searching'
                     ? 'Buscando na web…'
                     : _streamPhase == 'thinking'

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
@@ -157,79 +158,11 @@ class MessageContentView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (parsed.text.isNotEmpty)
-          MarkdownBody(
-            data: _linkifyBareUrls(parsed.text),
-            selectable: true,
-            onTapLink: (text, href, title) {
-              if (onTapLink != null) {
-                onTapLink!(href);
-              } else if (href != null) {
-                launchUrl(
-                  Uri.parse(href),
-                  mode: LaunchMode.externalApplication,
-                );
-              }
-            },
-            builders: {'table': _HScrollTableBuilder(isUser: isUser)},
-            styleSheet: MarkdownStyleSheet(
-              p: textStyle,
-              a: textStyle.copyWith(
-                color: isUser ? Colors.white : GamaColors.accent,
-                decoration: TextDecoration.underline,
-                decorationColor: isUser ? Colors.white70 : GamaColors.accent,
-              ),
-              code: textStyle.copyWith(fontSize: 13, fontFamily: 'monospace'),
-              codeblockDecoration: BoxDecoration(
-                color: isUser
-                    ? Colors.black.withOpacity(0.22)
-                    : const Color(0xFF0E0E10),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: isUser
-                      ? Colors.white.withOpacity(0.12)
-                      : GamaColors.border,
-                ),
-              ),
-              blockquote: textStyle.copyWith(
-                color: isUser
-                    ? Colors.white.withOpacity(0.9)
-                    : GamaColors.textSecondary,
-                fontSize: 14,
-                height: 1.45,
-              ),
-              blockquotePadding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              blockquoteDecoration: BoxDecoration(
-                color: isUser
-                    ? Colors.black.withOpacity(0.18)
-                    : GamaColors.surfaceCard, // mesmo fundo do app
-                borderRadius: BorderRadius.circular(10),
-                border: Border(
-                  left: BorderSide(
-                    color: isUser
-                        ? Colors.white38
-                        : GamaColors.accent.withOpacity(0.55),
-                    width: 3,
-                  ),
-                ),
-              ),
-              listBullet: textStyle,
-              h1: textStyle.copyWith(fontSize: 18, fontWeight: FontWeight.w700),
-              h2: textStyle.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
-              h3: textStyle.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
-              tableHead: textStyle.copyWith(fontWeight: FontWeight.w700),
-              tableBody: textStyle.copyWith(fontSize: 13),
-              tableBorder: TableBorder.all(
-                color: isUser
-                    ? Colors.white.withOpacity(0.25)
-                    : GamaColors.border,
-                width: 1,
-              ),
-              tableCellsPadding: const EdgeInsets.symmetric(
-                horizontal: 10,
-                vertical: 6,
-              ),
-              tableColumnWidth: const IntrinsicColumnWidth(),
-            ),
+          _MarkdownMessage(
+            text: parsed.text,
+            isUser: isUser,
+            textStyle: textStyle,
+            onTapLink: onTapLink,
           ),
         if (parsed.attachments.isNotEmpty) ...[
           if (parsed.text.isNotEmpty) const SizedBox(height: 10),
@@ -258,7 +191,294 @@ class MessageContentView extends StatelessWidget {
   }
 }
 
-/// Renderiza tabelas Markdown com scroll horizontal.
+/// Renderiza Markdown normalmente, mas separa blocos cercados por ``` em
+/// caixas próprias. Isso permite colocar o botão de copiar sem interferir
+/// no restante do Markdown já usado pela Gama.
+class _MarkdownMessage extends StatelessWidget {
+  final String text;
+  final bool isUser;
+  final TextStyle textStyle;
+  final void Function(String? href)? onTapLink;
+
+  const _MarkdownMessage({
+    required this.text,
+    required this.isUser,
+    required this.textStyle,
+    required this.onTapLink,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = _splitCodeBlocks(text);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final part in parts)
+          if (part.isCode)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _CopyableCodeBlock(
+                code: part.content,
+                language: part.language,
+                isUser: isUser,
+                textStyle: textStyle,
+              ),
+            )
+          else if (part.content.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: MarkdownBody(
+                data: MessageContentView._linkifyBareUrls(part.content),
+                selectable: true,
+                onTapLink: (linkText, href, title) {
+                  if (onTapLink != null) {
+                    onTapLink!(href);
+                  } else if (href != null) {
+                    launchUrl(
+                      Uri.parse(href),
+                      mode: LaunchMode.externalApplication,
+                    );
+                  }
+                },
+                builders: {'table': _HScrollTableBuilder(isUser: isUser)},
+                styleSheet: _markdownStyleSheet(isUser, textStyle),
+              ),
+            ),
+      ],
+    );
+  }
+
+  static MarkdownStyleSheet _markdownStyleSheet(
+    bool isUser,
+    TextStyle textStyle,
+  ) {
+    return MarkdownStyleSheet(
+      p: textStyle,
+      a: textStyle.copyWith(
+        color: isUser ? Colors.white : GamaColors.accent,
+        decoration: TextDecoration.underline,
+        decorationColor: isUser ? Colors.white70 : GamaColors.accent,
+      ),
+      code: textStyle.copyWith(fontSize: 13, fontFamily: 'monospace'),
+      codeblockDecoration: BoxDecoration(
+        color: isUser
+            ? Colors.black.withOpacity(0.22)
+            : const Color(0xFF0E0E10),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isUser
+              ? Colors.white.withOpacity(0.12)
+              : GamaColors.border,
+        ),
+      ),
+      blockquote: textStyle.copyWith(
+        color: isUser
+            ? Colors.white.withOpacity(0.9)
+            : GamaColors.textSecondary,
+        fontSize: 14,
+        height: 1.45,
+      ),
+      blockquotePadding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      blockquoteDecoration: BoxDecoration(
+        color: isUser ? Colors.black.withOpacity(0.18) : GamaColors.surfaceCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border(
+          left: BorderSide(
+            color: isUser
+                ? Colors.white38
+                : GamaColors.accent.withOpacity(0.55),
+            width: 3,
+          ),
+        ),
+      ),
+      listBullet: textStyle,
+      h1: textStyle.copyWith(fontSize: 18, fontWeight: FontWeight.w700),
+      h2: textStyle.copyWith(fontSize: 16, fontWeight: FontWeight.w600),
+      h3: textStyle.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
+      tableHead: textStyle.copyWith(fontWeight: FontWeight.w700),
+      tableBody: textStyle.copyWith(fontSize: 13),
+      tableBorder: TableBorder.all(
+        color: isUser ? Colors.white.withOpacity(0.25) : GamaColors.border,
+        width: 1,
+      ),
+      tableCellsPadding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 6,
+      ),
+      tableColumnWidth: const IntrinsicColumnWidth(),
+    );
+  }
+}
+
+class _CodePart {
+  final bool isCode;
+  final String content;
+  final String language;
+
+  const _CodePart({
+    required this.isCode,
+    required this.content,
+    this.language = '',
+  });
+}
+
+List<_CodePart> _splitCodeBlocks(String text) {
+  final parts = <_CodePart>[];
+  final fence = RegExp(r'```([^\r\n]*)\r?\n([\s\S]*?)```');
+  var cursor = 0;
+
+  for (final match in fence.allMatches(text)) {
+    if (match.start > cursor) {
+      parts.add(
+        _CodePart(
+          isCode: false,
+          content: text.substring(cursor, match.start),
+        ),
+      );
+    }
+
+    final language = (match.group(1) ?? '').trim();
+    var code = match.group(2) ?? '';
+    if (code.endsWith('\r\n')) {
+      code = code.substring(0, code.length - 2);
+    } else if (code.endsWith('\n')) {
+      code = code.substring(0, code.length - 1);
+    }
+
+    parts.add(
+      _CodePart(
+        isCode: true,
+        content: code,
+        language: language,
+      ),
+    );
+    cursor = match.end;
+  }
+
+  if (cursor < text.length) {
+    parts.add(
+      _CodePart(
+        isCode: false,
+        content: text.substring(cursor),
+      ),
+    );
+  }
+
+  if (parts.isEmpty) {
+    parts.add(const _CodePart(isCode: false, content: ''));
+  }
+
+  return parts;
+}
+
+class _CopyableCodeBlock extends StatelessWidget {
+  final String code;
+  final String language;
+  final bool isUser;
+  final TextStyle textStyle;
+
+  const _CopyableCodeBlock({
+    required this.code,
+    required this.language,
+    required this.isUser,
+    required this.textStyle,
+  });
+
+  Future<void> _copy(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Código copiado'),
+        duration: Duration(milliseconds: 1200),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final background = isUser
+        ? Colors.black.withOpacity(0.22)
+        : const Color(0xFF0E0E10);
+    final border = isUser
+        ? Colors.white.withOpacity(0.12)
+        : GamaColors.border;
+    final foreground = isUser ? Colors.white : GamaColors.textPrimary;
+    final muted = isUser ? Colors.white70 : GamaColors.textMuted;
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            height: 38,
+            padding: const EdgeInsets.only(left: 12, right: 6),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(isUser ? 0.10 : 0.18),
+              border: Border(bottom: BorderSide(color: border)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.code_rounded, size: 16, color: muted),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    language.isEmpty ? 'Código' : language,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () => _copy(context),
+                  style: TextButton.styleFrom(
+                    foregroundColor: foreground,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 32),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  icon: const Icon(Icons.copy_rounded, size: 15),
+                  label: const Text(
+                    'Copiar',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+            child: SelectableText(
+              code,
+              style: textStyle.copyWith(
+                color: foreground,
+                fontSize: 13,
+                height: 1.5,
+                fontFamily: 'monospace',
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _HScrollTableBuilder extends MarkdownElementBuilder {
   final bool isUser;
 
@@ -320,173 +540,83 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
 }
 
 /// Card compacto tipo “chip de arquivo” (estilo moderno).
-class _AttachmentChip extends StatefulWidget {
+class _AttachmentChip extends StatelessWidget {
   final AttachmentPreview preview;
   final bool isUser;
 
   const _AttachmentChip({required this.preview, required this.isUser});
 
   @override
-  State<_AttachmentChip> createState() => _AttachmentChipState();
-}
+  Widget build(BuildContext context) {
+    final label = preview.kindLabel.toUpperCase();
+    final size = _fmtBytes(preview.bytes);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: isUser
+            ? Colors.white.withOpacity(0.10)
+            : GamaColors.surfaceCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isUser
+              ? Colors.white.withOpacity(0.12)
+              : GamaColors.border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _iconForKind(preview.kindLabel),
+            color: isUser ? Colors.white : GamaColors.accent,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  preview.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isUser ? Colors.white : GamaColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  size.isEmpty ? label : '$label • $size',
+                  style: TextStyle(
+                    color: isUser ? Colors.white70 : GamaColors.textMuted,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-class _AttachmentChipState extends State<_AttachmentChip> {
-  bool _expanded = false;
-
-  IconData get _icon {
-    switch (widget.preview.kindLabel.toLowerCase()) {
+  IconData _iconForKind(String kind) {
+    switch (kind.toLowerCase()) {
       case 'zip':
-        return Icons.folder_zip_rounded;
+        return Icons.folder_zip_outlined;
       case 'pdf':
-        return Icons.picture_as_pdf_rounded;
+        return Icons.picture_as_pdf_outlined;
       case 'imagem':
-        return Icons.image_rounded;
+        return Icons.image_outlined;
       case 'áudio':
       case 'audio':
-        return Icons.audiotrack_rounded;
+        return Icons.audiotrack_outlined;
       case 'código':
       case 'codigo':
         return Icons.code_rounded;
       default:
-        return Icons.insert_drive_file_rounded;
+        return Icons.insert_drive_file_outlined;
     }
-  }
-
-  Color get _iconBg {
-    switch (widget.preview.kindLabel.toLowerCase()) {
-      case 'zip':
-        return const Color(0xFF3D2E1A);
-      case 'pdf':
-        return const Color(0xFF3A1F1F);
-      case 'imagem':
-        return const Color(0xFF1A2E2A);
-      case 'código':
-      case 'codigo':
-        return const Color(0xFF1A2433);
-      default:
-        return const Color(0xFF252528);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isUser = widget.isUser;
-    final hasBody = widget.preview.body.trim().isNotEmpty;
-    final size = _fmtBytes(widget.preview.bytes);
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: hasBody ? () => setState(() => _expanded = !_expanded) : null,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: isUser
-                ? Colors.black.withOpacity(0.22)
-                : GamaColors.surfaceInput,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: isUser
-                  ? Colors.white.withOpacity(0.18)
-                  : GamaColors.border,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: isUser ? Colors.white.withOpacity(0.12) : _iconBg,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(
-                      _icon,
-                      size: 20,
-                      color: isUser ? Colors.white : GamaColors.accent,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.preview.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: isUser
-                                ? Colors.white
-                                : GamaColors.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13.5,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          [
-                            widget.preview.kindLabel.toUpperCase(),
-                            if (size.isNotEmpty) size,
-                          ].join('  ·  '),
-                          style: TextStyle(
-                            color: isUser
-                                ? Colors.white.withOpacity(0.65)
-                                : GamaColors.textMuted,
-                            fontSize: 11,
-                            letterSpacing: 0.3,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (hasBody)
-                    Icon(
-                      _expanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      color: isUser
-                          ? Colors.white.withOpacity(0.7)
-                          : GamaColors.textMuted,
-                      size: 22,
-                    ),
-                ],
-              ),
-              if (_expanded && hasBody) ...[
-                const SizedBox(height: 10),
-                Container(
-                  constraints: const BoxConstraints(maxHeight: 160),
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.28),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: SingleChildScrollView(
-                    child: SelectableText(
-                      widget.preview.body,
-                      style: TextStyle(
-                        color: isUser
-                            ? Colors.white.withOpacity(0.75)
-                            : GamaColors.textSecondary,
-                        fontSize: 11,
-                        fontFamily: 'monospace',
-                        height: 1.35,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
