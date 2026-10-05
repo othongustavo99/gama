@@ -122,6 +122,8 @@ class OllamaService {
     String? model,
     List<Map<String, String>>? images,
     bool voiceMode = false,
+    /// 'conversar' | 'programar' — estilo da resposta no backend.
+    String? chatMode,
   }) async* {
     final selectedModel = model ?? SettingsService.instance.model;
     final dio = _client();
@@ -130,6 +132,30 @@ class OllamaService {
       final requestMessages = messages
           .map((message) => message.toJson())
           .toList();
+
+      // Em modo fala / conversar: reforça no pedido para a resposta ser
+      // apenas frases naturais, sem listas, código, tabelas ou símbolos.
+      if (voiceMode) {
+        requestMessages.insert(0, {
+          'role': 'system',
+          'content':
+              'Responda SOMENTE com frases curtas e naturais em português, '
+              'como se estivesse falando em voz alta. '
+              'PROIBIDO: listas, marcadores, numeração, código, tabelas, '
+              'markdown, símbolos especiais (cifrão, barra, asterisco), '
+              'abreviações (ex., etc., seg) e jargão técnico empilhado. '
+              'Escreva as palavras por extenso. Se precisar citar tecnologia, '
+              'fale em uma frase corrida, sem enumerar.',
+        });
+      } else if (chatMode == 'conversar') {
+        requestMessages.insert(0, {
+          'role': 'system',
+          'content':
+              'Modo conversa: responda de forma simples e natural, em frases '
+              'completas. Evite código, tabelas, listas longas e abreviações. '
+              'Prefira texto corrido fácil de ler em voz alta.',
+        });
+      }
 
       final response = await dio.post(
         '/chat',
@@ -140,6 +166,7 @@ class OllamaService {
           'user_id': IdentityService.instance.userId,
           'auto_memory': true,
           'voice_mode': voiceMode,
+          if (chatMode != null) 'chat_mode': chatMode,
         },
         options: Options(
           responseType: ResponseType.stream,

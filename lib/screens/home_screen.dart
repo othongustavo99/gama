@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../core/gama_colors.dart';
 import '../services/conversation_service.dart';
+import '../services/conversation_sync_service.dart';
 import '../widgets/app_drawer.dart';
 import 'chat_screen.dart';
 import 'images_screen.dart';
@@ -32,11 +33,17 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Sempre inicia o app em uma NOVA conversa em branco.
   /// Rascunhos vazios da sessão anterior são apagados (não ficam salvos).
   /// Conversas que já receberam mensagem permanecem na lista.
+  /// Depois sincroniza com o Railway (mesmo user_id = mesmo histórico).
   Future<void> _bootConversations() async {
     if (_booted) return;
     _booted = true;
     await _service.openFreshConversation();
     if (mounted) setState(() {});
+    // Sync em background: puxa conversas do celular/PC e envia as locais.
+    // ignore: unawaited_futures
+    ConversationSyncService.instance.syncAll().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _push(Widget page) {

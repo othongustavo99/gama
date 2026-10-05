@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/conversation.dart';
 import '../models/message.dart';
+import 'conversation_sync_service.dart';
 
 class ConversationService extends ChangeNotifier {
   ConversationService._();
@@ -76,12 +77,53 @@ class ConversationService extends ChangeNotifier {
     return _conversationsBox.get(_currentConversationId);
   }
 
-  Future<Conversation> createConversation({String title = 'Nova conversa'}) async {
+  Conversation? conversationById(String id) => _conversationsBox.get(id);
+
+  /// Aplica conversa vinda do Railway (merge remoto → local).
+  Future<void> applyRemoteConversation({
+    required String id,
+    required String title,
+    required bool isPinned,
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    required List<Message> messages,
+  }) async {
+    final existing = _conversationsBox.get(id);
+    if (existing == null) {
+      final conv = Conversation(
+        id: id,
+        title: title,
+        isPinned: isPinned,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+      );
+      await _conversationsBox.put(id, conv);
+    } else {
+      existing.title = title;
+      existing.isPinned = isPinned;
+      existing.updatedAt = updatedAt;
+      await existing.save();
+    }
+
+    // Substitui mensagens locais desta conversa pelas do remoto
+    final old = _messagesBox.values
+        .where((m) => m.conversationId == id)
+        .toList();
+    for (final m in old) {
+      await m.delete();
+    }
+    for (final m in messages) {
+      if (m.id.isEmpty || m.content.trim().isEmpty) continue;
+      await _messagesBox.add(m);
+    }
+    notifyListeners();
+  }
+
+  Future<Conversation> createConversation({
+    String title = 'Nova conversa',
+  }) async {
     final id = const Uuid().v4();
-    final conversation = Conversation(
-      id: id,
-      title: title,
-    );
+    final conversation = Conversation(id: id, title: title);
 
     await _conversationsBox.put(id, conversation);
     _currentConversationId = id;
@@ -130,6 +172,8 @@ class ConversationService extends ChangeNotifier {
     conv.updatedAt = DateTime.now();
     await conv.save();
     notifyListeners();
+    // ignore: unawaited_futures
+    ConversationSyncService.instance.pushConversation(id);
   }
 
   Future<void> togglePin(String id) async {
@@ -139,6 +183,8 @@ class ConversationService extends ChangeNotifier {
     conv.updatedAt = DateTime.now();
     await conv.save();
     notifyListeners();
+    // ignore: unawaited_futures
+    ConversationSyncService.instance.pushConversation(id);
   }
 
   Future<void> deleteConversation(String id) async {
@@ -167,6 +213,8 @@ class ConversationService extends ChangeNotifier {
     }
 
     notifyListeners();
+    // ignore: unawaited_futures
+    ConversationSyncService.instance.deleteRemote(id);
   }
 
   Future<void> touchConversation(String id) async {
@@ -190,12 +238,16 @@ class ConversationService extends ChangeNotifier {
     await _messagesBox.add(message);
     await touchConversation(message.conversationId);
     notifyListeners();
+    // ignore: unawaited_futures
+    ConversationSyncService.instance.pushConversation(message.conversationId);
   }
 
   Future<void> updateMessageContent(Message message, String newContent) async {
     message.content = newContent;
     await message.save();
     notifyListeners();
+    // ignore: unawaited_futures
+    ConversationSyncService.instance.pushConversation(message.conversationId);
   }
 }
 

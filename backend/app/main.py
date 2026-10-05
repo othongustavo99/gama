@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .llm import llm
 from .routes.chat import router as chat_router
+from .routes.conversations import router as conversations_router
 from .routes.extract import router as extract_router
 from .routes.memory import router as memory_router
 from .routes.search import router as search_router
@@ -13,7 +14,7 @@ from .routes.tts import router as tts_router
 
 app = FastAPI(
     title="Frequência40 API",
-    version="0.7.0",
+    version="0.8.0",
 )
 
 app.add_middleware(
@@ -26,6 +27,7 @@ app.add_middleware(
 
 app.include_router(chat_router)
 app.include_router(memory_router)
+app.include_router(conversations_router)
 app.include_router(extract_router)
 app.include_router(search_router)
 app.include_router(project_router)
@@ -38,6 +40,7 @@ async def health():
     features = [
         "chat",
         "memory",
+        "conversations",
         "context_summary",
         "model_summary",
         "memory_meta",
@@ -52,7 +55,7 @@ async def health():
     return {
         "status": "ok" if ok else "degraded",
         "service": "frequencia40",
-        "version": "0.7.0",
+        "version": "0.8.0",
         "provider": settings.PROVIDER,
         "web_search": settings.WEB_SEARCH_ENABLED,
         "llm": "online" if ok else "offline",

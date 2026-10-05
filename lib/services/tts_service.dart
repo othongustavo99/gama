@@ -35,86 +35,220 @@ class TtsService {
     _busy = false;
   }
 
+  /// Prepara o texto para fala natural em português:
+  /// remove código, tabelas, listas, marcadores ($1, $10), markdown;
+  /// expande abreviações e unidades. Resultado = só frases corridas.
   static String plainForSpeech(String text) {
     var t = text;
 
-    // Nunca envia código ou formatação de programação para o TTS.
+    // --- Blocos de código (fenced e indentados) ---
     t = t.replaceAll(RegExp(r'```[\s\S]*?```'), ' ');
+    t = t.replaceAll(RegExp(r'~~~[\s\S]*?~~~'), ' ');
+    t = t.replaceAll(
+      RegExp(
+        r'^[\t ]{2,}(import |from |def |class |function |const |let |var |public |private |return |if \(|for \(|while \(|#include|package |using ).*$',
+        multiLine: true,
+      ),
+      ' ',
+    );
+
+    // Código inline
     t = t.replaceAll(RegExp(r'`[^`]+`'), ' ');
 
-    // Remove tabelas Markdown inteiras. Linhas com barras verticais são
-    // conteúdo visual e não fazem sentido em uma resposta falada.
-    final lines = t.split(RegExp(r'\r?\n'));
-    final spokenLines = <String>[];
-    for (final line in lines) {
-      final trimmed = line.trim();
-      if (trimmed.contains('|')) continue;
-      if (RegExp(r'^[-:|\s]+$').hasMatch(trimmed) && trimmed.contains('-')) {
-        continue;
-      }
-      spokenLines.add(line);
-    }
-    t = spokenLines.join(' ');
+    // --- Artefatos de lista / placeholders do modelo ($1, $10, $2…) ---
+    t = t.replaceAll(RegExp(r'\$\d+'), ' ');
+    // Marcadores de lista no início de linha: - * • 1. 2)
+    t = t.replaceAll(RegExp(r'^[\s]*[-*•]+\s+', multiLine: true), ' ');
+    t = t.replaceAll(RegExp(r'^[\s]*\d+[.)]\s+', multiLine: true), ' ');
+    // " - " no meio usado como separador de itens → vira ponto
+    t = t.replaceAll(RegExp(r'\s+[-–—]\s+'), '. ');
 
-    // Markdown que ainda possa ter sobrado.
+    // --- Tabelas markdown ---
+    t = t.replaceAll(RegExp(r'^\|.*\|$', multiLine: true), ' ');
+    t = t.replaceAll(
+      RegExp(r'^\s*\|?[\s:-]+\|[\s|:-]*$', multiLine: true),
+      ' ',
+    );
+
+    // --- Imagens e links markdown ---
     t = t.replaceAll(RegExp(r'!\[[^\]]*\]\([^)]*\)'), ' ');
     t = t.replaceAll(RegExp(r'\[([^\]]+)\]\([^)]*\)'), r'$1');
-    t = t.replaceAll(RegExp(r'^\s{0,3}#{1,6}\s*', multiLine: true), '');
-    t = t.replaceAll(RegExp(r'(^|\s)[>*]+\s*'), r'$1');
-    t = t.replaceAll(RegExp(r'(^|\s)[-•]\s+'), r'$1');
-    t = t.replaceAll(RegExp(r'[*_~]+'), ' ');
 
-    // URLs e caminhos muito longos não devem ser lidos literalmente.
-    t = t.replaceAll(RegExp(r'https?://\S+'), ' ');
-    t = t.replaceAll(RegExp(r'www\.\S+'), ' ');
+    // URLs soltas
+    t = t.replaceAll(RegExp(r'https?://[^\s)]+', caseSensitive: false), ' ');
+    t = t.replaceAll(RegExp(r'www\.[^\s)]+', caseSensitive: false), ' ');
 
-    // Abreviações comuns em respostas escritas.
-    final replacements = <RegExp, String>{
-      RegExp(r'\bp\.\s*ex\.(?=\s|$)', caseSensitive: false): 'por exemplo',
-      RegExp(r'\bex\.(?=\s|$)', caseSensitive: false): 'por exemplo',
-      RegExp(r'\betc\.(?=\s|$)', caseSensitive: false): 'e assim por diante',
-      RegExp(r'\bobs\.(?=\s|$)', caseSensitive: false): 'observação',
-      RegExp(r'\baprox\.(?=\s|$)', caseSensitive: false): 'aproximadamente',
-      RegExp(r'\bvs\.(?=\s|$)', caseSensitive: false): 'versus',
-      RegExp(r'\bqdo\.(?=\s|$)', caseSensitive: false): 'quando',
-      RegExp(r'\bmsg\.(?=\s|$)', caseSensitive: false): 'mensagem',
-      RegExp(r'\bconfig\.(?=\s|$)', caseSensitive: false): 'configuração',
-      RegExp(r'\binfo\.(?=\s|$)', caseSensitive: false): 'informação',
-    };
-    replacements.forEach((pattern, replacement) {
-      t = t.replaceAll(pattern, replacement);
-    });
+    // --- Markdown / símbolos residuais ---
+    t = t.replaceAll(RegExp(r'[#>*_~|{}[\]\\]'), ' ');
+    t = t.replaceAll(RegExp(r'-{2,}'), ' ');
+    t = t.replaceAll(RegExp(r'/{2,}'), ' ');
+    // (mysql2), (gpt-4) etc. — trechos técnicos curtos entre parênteses
+    t = t.replaceAll(RegExp(r'\(([a-zA-Z0-9_./+-]{1,24})\)'), ' ');
 
-    // Unidades abreviadas viram palavras completas para a voz.
+    // --- Abreviações comuns em português ---
+    t = _expandAbbreviations(t);
+
+    // --- Unidades e medidas (1s, 2 min, 3h, 5ms, 10%) ---
+    t = _expandUnits(t);
+
+    // Símbolos que o TTS lê mal
+    t = t.replaceAll('&', ' e ');
+    t = t.replaceAll('@', ' arroba ');
+    t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    // Remove trechos que ainda parecem código / lista técnica
+    t = _dropCodeySentences(t);
+
+    return t.trim();
+  }
+
+  static String _expandAbbreviations(String t) {
+    // Ordem importa: formas mais longas primeiro.
+    final pairs = <List<String>>[
+      [r'\bpor\s+ex\.?\b', 'por exemplo'],
+      [r'\bex\.?(?=\s|:|,|$)', 'exemplo'],
+      [r'\betc\.?\b', 'etcétera'],
+      [r'\bvs\.?\b', 'versus'],
+      [r'\bsr\.?\b', 'senhor'],
+      [r'\bsra\.?\b', 'senhora'],
+      [r'\bdr\.?\b', 'doutor'],
+      [r'\bdra\.?\b', 'doutora'],
+      [r'\bprof\.?\b', 'professor'],
+      [r'\bpág\.?\b', 'página'],
+      [r'\bpags?\.?\b', 'páginas'],
+      [r'\bn[º°\.]\s*', 'número '],
+      [r'\bobs\.?\b', 'observação'],
+      [r'\baprox\.?\b', 'aproximadamente'],
+      [r'\bmáx\.?\b', 'máximo'],
+      [r'\bmín\.?\b', 'mínimo'],
+      [r'\bref\.?\b', 'referência'],
+      [r'\binfo\.?\b', 'informação'],
+      [r'\bconfig\.?\b', 'configuração'],
+      [r'\bdoc\.?\b', 'documento'],
+      [r'\bfigs?\.?\b', 'figura'],
+      [r'\bcap\.?\b', 'capítulo'],
+      [r'\bvol\.?\b', 'volume'],
+      [r'\bed\.?\b', 'edição'],
+      [r'\bi\.?\s*e\.?\b', 'isto é'],
+      [r'\bp\.?\s*ex\.?\b', 'por exemplo'],
+      [r'\ba\.?\s*C\.?\b', 'antes de Cristo'],
+      [r'\bd\.?\s*C\.?\b', 'depois de Cristo'],
+      [r'\bkm/h\b', 'quilômetros por hora'],
+      [r'\bm/s\b', 'metros por segundo'],
+      [r'\bQtd\.?\b', 'quantidade'],
+      [r'\bqtd\.?\b', 'quantidade'],
+    ];
+
+    for (final p in pairs) {
+      t = t.replaceAllMapped(
+        RegExp(p[0], caseSensitive: false),
+        (_) => p[1],
+      );
+    }
+    return t;
+  }
+
+  static String _expandUnits(String t) {
+    // 1s / 1 s / 1seg / 1 seg / 1segs → N segundo(s)
     t = t.replaceAllMapped(
       RegExp(
-        r'(?<!\w)(\d+(?:[.,]\d+)?)\s*(ms|msec|msecs|s|seg|segs|min|mins|m|h|hr|hrs)(?!\w)',
+        r'\b(\d+(?:[.,]\d+)?)\s*(segs?|segundos?|s)\b',
         caseSensitive: false,
       ),
       (m) {
-        final number = m.group(1)!;
-        final unit = m.group(2)!.toLowerCase();
-        final value = double.tryParse(number.replaceAll(',', '.'));
-        final singular = value != null && value == 1;
-        if (unit == 'ms' || unit == 'msec' || unit == 'msecs') {
-          return '$number ${singular ? 'milissegundo' : 'milissegundos'}';
+        final n = m.group(1)!;
+        final unit = (m.group(2) ?? '').toLowerCase();
+        // Evita confundir com "s" de outras palavras isoladas só quando
+        // claramente unidade de tempo (seg/segs/segundo ou número + s).
+        if (unit == 's' || unit.startsWith('seg')) {
+          return _pluralUnit(n, 'segundo', 'segundos');
         }
-        if (unit == 's' || unit == 'seg' || unit == 'segs') {
-          return '$number ${singular ? 'segundo' : 'segundos'}';
-        }
-        if (unit == 'min' || unit == 'mins' || unit == 'm') {
-          return '$number ${singular ? 'minuto' : 'minutos'}';
-        }
-        return '$number ${singular ? 'hora' : 'horas'}';
+        return m.group(0)!;
       },
     );
 
-    // Alguns símbolos têm leitura ruim no TTS.
-    t = t.replaceAll('&', ' e ');
-    t = t.replaceAll(RegExp(r'\s*[|{}\[\]<>]+\s*'), ' ');
-    t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
+    // 2min / 2 min / 2mins
+    t = t.replaceAllMapped(
+      RegExp(
+        r'\b(\d+(?:[.,]\d+)?)\s*(mins?|minutos?)\b',
+        caseSensitive: false,
+      ),
+      (m) => _pluralUnit(m.group(1)!, 'minuto', 'minutos'),
+    );
+
+    // 3h / 3 hr / 3 hrs / 3 horas
+    t = t.replaceAllMapped(
+      RegExp(
+        r'\b(\d+(?:[.,]\d+)?)\s*(hrs?|horas?)\b',
+        caseSensitive: false,
+      ),
+      (m) => _pluralUnit(m.group(1)!, 'hora', 'horas'),
+    );
+
+    // 5ms / 5 ms
+    t = t.replaceAllMapped(
+      RegExp(
+        r'\b(\d+(?:[.,]\d+)?)\s*(ms|milissegundos?)\b',
+        caseSensitive: false,
+      ),
+      (m) => _pluralUnit(m.group(1)!, 'milissegundo', 'milissegundos'),
+    );
+
+    // 10% → 10 por cento
+    t = t.replaceAllMapped(
+      RegExp(r'(\d+(?:[.,]\d+)?)\s*%'),
+      (m) => '${m.group(1)} por cento',
+    );
+
+    // 2kb / 5MB / 1GB (leitura aproximada)
+    t = t.replaceAllMapped(
+      RegExp(
+        r'\b(\d+(?:[.,]\d+)?)\s*(kb|mb|gb|tb)\b',
+        caseSensitive: false,
+      ),
+      (m) {
+        final n = m.group(1)!;
+        switch (m.group(2)!.toLowerCase()) {
+          case 'kb':
+            return '$n quilobytes';
+          case 'mb':
+            return '$n megabytes';
+          case 'gb':
+            return '$n gigabytes';
+          case 'tb':
+            return '$n terabytes';
+          default:
+            return m.group(0)!;
+        }
+      },
+    );
 
     return t;
+  }
+
+  static String _pluralUnit(String number, String singular, String plural) {
+    final normalized = number.replaceAll(',', '.');
+    final value = double.tryParse(normalized);
+    if (value == null) return '$number $plural';
+    if (value == 1) return '$number $singular';
+    return '$number $plural';
+  }
+
+  /// Descarta frases que ainda parecem código (muitos símbolos técnicos).
+  static String _dropCodeySentences(String t) {
+    final parts = t.split(RegExp(r'(?<=[.!?…])\s+'));
+    final kept = <String>[];
+    for (final p in parts) {
+      final s = p.trim();
+      if (s.isEmpty) continue;
+      final symbols = RegExp(r'[{}\[\]<>;=\\/]').allMatches(s).length;
+      final letters = RegExp(r'[A-Za-zÀ-ÿ]').allMatches(s).length;
+      if (letters == 0) continue;
+      // Se há muitos símbolos em relação às letras, provavelmente é código.
+      if (symbols > 3 && symbols * 2 >= letters) continue;
+      kept.add(s);
+    }
+    return kept.join(' ');
   }
 
   static List<String> sentencesForSpeech(String text) {
