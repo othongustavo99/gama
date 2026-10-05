@@ -31,11 +31,77 @@ class TtsIn(BaseModel):
 
 
 def _clean_text(text: str) -> str:
+    """Prepara texto para voz: sem código, tabelas, URLs ou abreviações ruins."""
     t = text.strip()
+
+    # Código Markdown não deve ser narrado.
     t = re.sub(r"```[\s\S]*?```", " ", t)
     t = re.sub(r"`[^`]+`", " ", t)
+
+    # Tabelas Markdown são visuais e não têm leitura natural.
+    lines = []
+    for line in re.split(r"\r?\n", t):
+        stripped = line.strip()
+        if "|" in stripped:
+            continue
+        if re.fullmatch(r"[-:|\s]+", stripped or "") and "-" in stripped:
+            continue
+        lines.append(line)
+    t = " ".join(lines)
+
+    # Markdown residual.
+    t = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", t)
     t = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", t)
-    t = re.sub(r"[#>*_~]{1,}", " ", t)
+    t = re.sub(r"^\s{0,3}#{1,6}\s*", "", t, flags=re.MULTILINE)
+    t = re.sub(r"(^|\s)[>*]+\s*", r"\1", t)
+    t = re.sub(r"(^|\s)[-•]\s+", r"\1", t)
+    t = re.sub(r"[*_~]+", " ", t)
+
+    # URLs não são uma fala natural.
+    t = re.sub(r"https?://\S+", " ", t)
+    t = re.sub(r"www\.\S+", " ", t)
+
+    # Abreviações frequentes.
+    replacements = [
+        (r"\bp\.\s*ex\.(?=\s|$)", "por exemplo"),
+        (r"\bex\.(?=\s|$)", "por exemplo"),
+        (r"\betc\.(?=\s|$)", "e assim por diante"),
+        (r"\bobs\.(?=\s|$)", "observação"),
+        (r"\baprox\.(?=\s|$)", "aproximadamente"),
+        (r"\bvs\.(?=\s|$)", "versus"),
+        (r"\bqdo\.(?=\s|$)", "quando"),
+        (r"\bmsg\.(?=\s|$)", "mensagem"),
+        (r"\bconfig\.(?=\s|$)", "configuração"),
+        (r"\binfo\.(?=\s|$)", "informação"),
+    ]
+    for pattern, replacement in replacements:
+        t = re.sub(pattern, replacement, t, flags=re.IGNORECASE)
+
+    def expand_unit(match: re.Match[str]) -> str:
+        number = match.group(1)
+        unit = match.group(2).lower()
+        try:
+            value = float(number.replace(",", "."))
+            singular = value == 1
+        except ValueError:
+            singular = False
+        if unit in {"ms", "msec", "msecs"}:
+            return f"{number} {'milissegundo' if singular else 'milissegundos'}"
+        if unit in {"s", "seg", "segs"}:
+            return f"{number} {'segundo' if singular else 'segundos'}"
+        if unit in {"min", "mins", "m"}:
+            return f"{number} {'minuto' if singular else 'minutos'}"
+        return f"{number} {'hora' if singular else 'horas'}"
+
+    t = re.sub(
+        r"(?<!\w)(\d+(?:[.,]\d+)?)\s*(ms|msec|msecs|s|seg|segs|min|mins|m|h|hr|hrs)(?!\w)",
+        expand_unit,
+        t,
+        flags=re.IGNORECASE,
+    )
+
+    t = t.replace("&", " e ")
+    t = re.sub(r"\s*[|{}\[\]<>]+\s*", " ", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t[:1500] if len(t) > 1500 else t
 

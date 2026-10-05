@@ -29,22 +29,13 @@ class _HomeScreenState extends State<HomeScreen> {
     _bootConversations();
   }
 
-  /// Ao abrir o app: limpa rascunhos vazios antigos e garante uma conversa
-  /// atual. NÃO cria uma nova conversa a cada abertura (isso gerava várias
-  /// "Nova conversa" vazias na lista).
+  /// Sempre inicia o app em uma NOVA conversa em branco.
+  /// Rascunhos vazios da sessão anterior são apagados (não ficam salvos).
+  /// Conversas que já receberam mensagem permanecem na lista.
   Future<void> _bootConversations() async {
     if (_booted) return;
     _booted = true;
-
-    // Mantém no máximo um rascunho vazio (o atual, se existir).
-    await _service.purgeEmptyConversations(
-      exceptId: _service.currentConversationId,
-    );
-
-    if (_service.currentConversationId == null) {
-      await _service.createConversation(title: 'Nova conversa');
-    }
-
+    await _service.openFreshConversation();
     if (mounted) setState(() {});
   }
 
@@ -154,3 +145,4 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+  

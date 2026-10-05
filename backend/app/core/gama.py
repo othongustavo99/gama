@@ -72,10 +72,13 @@ class GamaCore:
         except Exception:
             memory_block = ""
 
+        conversational_mode = "20b" in (model or "").lower()
+
         system_prompt = build_system_prompt(
             memory_block=memory_block,
             web_enabled=web_on,
             voice_mode=voice_mode,
+            conversational_mode=conversational_mode,
         )
 
         # Resume localmente: chamar o modelo de novo aqui pode bloquear o turno por até 60 s.

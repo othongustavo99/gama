@@ -37,12 +37,83 @@ class TtsService {
 
   static String plainForSpeech(String text) {
     var t = text;
+
+    // Nunca envia código ou formatação de programação para o TTS.
     t = t.replaceAll(RegExp(r'```[\s\S]*?```'), ' ');
     t = t.replaceAll(RegExp(r'`[^`]+`'), ' ');
+
+    // Remove tabelas Markdown inteiras. Linhas com barras verticais são
+    // conteúdo visual e não fazem sentido em uma resposta falada.
+    final lines = t.split(RegExp(r'\r?\n'));
+    final spokenLines = <String>[];
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (trimmed.contains('|')) continue;
+      if (RegExp(r'^[-:|\s]+$').hasMatch(trimmed) && trimmed.contains('-')) {
+        continue;
+      }
+      spokenLines.add(line);
+    }
+    t = spokenLines.join(' ');
+
+    // Markdown que ainda possa ter sobrado.
     t = t.replaceAll(RegExp(r'!\[[^\]]*\]\([^)]*\)'), ' ');
     t = t.replaceAll(RegExp(r'\[([^\]]+)\]\([^)]*\)'), r'$1');
-    t = t.replaceAll(RegExp(r'[#>*_~\-|]'), ' ');
+    t = t.replaceAll(RegExp(r'^\s{0,3}#{1,6}\s*', multiLine: true), '');
+    t = t.replaceAll(RegExp(r'(^|\s)[>*]+\s*'), r'$1');
+    t = t.replaceAll(RegExp(r'(^|\s)[-•]\s+'), r'$1');
+    t = t.replaceAll(RegExp(r'[*_~]+'), ' ');
+
+    // URLs e caminhos muito longos não devem ser lidos literalmente.
+    t = t.replaceAll(RegExp(r'https?://\S+'), ' ');
+    t = t.replaceAll(RegExp(r'www\.\S+'), ' ');
+
+    // Abreviações comuns em respostas escritas.
+    final replacements = <RegExp, String>{
+      RegExp(r'\bp\.\s*ex\.(?=\s|$)', caseSensitive: false): 'por exemplo',
+      RegExp(r'\bex\.(?=\s|$)', caseSensitive: false): 'por exemplo',
+      RegExp(r'\betc\.(?=\s|$)', caseSensitive: false): 'e assim por diante',
+      RegExp(r'\bobs\.(?=\s|$)', caseSensitive: false): 'observação',
+      RegExp(r'\baprox\.(?=\s|$)', caseSensitive: false): 'aproximadamente',
+      RegExp(r'\bvs\.(?=\s|$)', caseSensitive: false): 'versus',
+      RegExp(r'\bqdo\.(?=\s|$)', caseSensitive: false): 'quando',
+      RegExp(r'\bmsg\.(?=\s|$)', caseSensitive: false): 'mensagem',
+      RegExp(r'\bconfig\.(?=\s|$)', caseSensitive: false): 'configuração',
+      RegExp(r'\binfo\.(?=\s|$)', caseSensitive: false): 'informação',
+    };
+    replacements.forEach((pattern, replacement) {
+      t = t.replaceAll(pattern, replacement);
+    });
+
+    // Unidades abreviadas viram palavras completas para a voz.
+    t = t.replaceAllMapped(
+      RegExp(
+        r'(?<!\w)(\d+(?:[.,]\d+)?)\s*(ms|msec|msecs|s|seg|segs|min|mins|m|h|hr|hrs)(?!\w)',
+        caseSensitive: false,
+      ),
+      (m) {
+        final number = m.group(1)!;
+        final unit = m.group(2)!.toLowerCase();
+        final value = double.tryParse(number.replaceAll(',', '.'));
+        final singular = value != null && value == 1;
+        if (unit == 'ms' || unit == 'msec' || unit == 'msecs') {
+          return '$number ${singular ? 'milissegundo' : 'milissegundos'}';
+        }
+        if (unit == 's' || unit == 'seg' || unit == 'segs') {
+          return '$number ${singular ? 'segundo' : 'segundos'}';
+        }
+        if (unit == 'min' || unit == 'mins' || unit == 'm') {
+          return '$number ${singular ? 'minuto' : 'minutos'}';
+        }
+        return '$number ${singular ? 'hora' : 'horas'}';
+      },
+    );
+
+    // Alguns símbolos têm leitura ruim no TTS.
+    t = t.replaceAll('&', ' e ');
+    t = t.replaceAll(RegExp(r'\s*[|{}\[\]<>]+\s*'), ' ');
     t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
+
     return t;
   }
 

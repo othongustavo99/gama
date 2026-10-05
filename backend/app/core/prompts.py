@@ -27,6 +27,7 @@ def build_system_prompt(
     *,
     web_enabled: bool = True,
     voice_mode: bool = False,
+    conversational_mode: bool = False,
 ) -> str:
     base = GAMMA_PERSONALITY.strip()
 
@@ -77,6 +78,18 @@ ASSISTÊNCIA TÉCNICA
 
 - Flutter, Dart, Python, APIs: priorize código completo e arquitetura existente no modo texto.
 - Se faltar informação crítica, faça 1–3 perguntas objetivas — sem enrolar.
+"""
+
+    if conversational_mode:
+        extra += """
+
+MODO CONVERSA
+
+Este é o modelo de conversa. Priorize respostas naturais, simples e fáceis de compreender.
+- Evite blocos de código, tabelas, dumps, JSON, comandos e estruturas técnicas extensas, salvo quando o usuário pedir explicitamente esse formato.
+- Prefira frases completas, curtas e naturais.
+- Evite abreviações como "ex.", "etc.", "1 s", "1 seg" e semelhantes; escreva "por exemplo", "e assim por diante", "1 segundo" e assim por diante.
+- Quando uma explicação técnica for necessária, explique em linguagem humana e deixe código ou tabelas para o modo Programar, salvo pedido explícito.
 """
 
     if not web_enabled:

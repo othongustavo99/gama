@@ -20,18 +20,13 @@ class ConversationService extends ChangeNotifier {
     _conversationsBox = await Hive.openBox<Conversation>('conversations');
     _messagesBox = await Hive.openBox<Message>('messages');
 
-    // Remove conversas vazias antigas (exceto a mais recente, que pode ser o rascunho)
-    await purgeEmptyConversations();
+    // Remove TODOS os rascunhos vazios de sessões anteriores.
+    await purgeEmptyConversations(exceptId: '');
 
-    // Se não existir nenhuma conversa, cria a primeira
+    // Não seleciona conversa antiga aqui: o Home sempre abre uma nova.
+    // Só cria se a box estiver totalmente vazia (primeiro uso).
     if (_conversationsBox.isEmpty) {
       await createConversation(title: 'Nova conversa');
-    } else {
-      _currentConversationId = _conversationsBox.values
-          .toList()
-          .sortedByUpdated
-          .first
-          .id;
     }
   }
 
@@ -42,15 +37,20 @@ class ConversationService extends ChangeNotifier {
     return _messagesBox.values.any((m) => m.conversationId == id);
   }
 
-  /// Remove conversas sem mensagens. [exceptId] é preservada (rascunho atual).
+  /// Remove conversas sem mensagens.
+  /// [exceptId] preservada (passe string vazia ou null para apagar todas as vazias).
   Future<void> purgeEmptyConversations({String? exceptId}) async {
-    final keep = exceptId ?? _currentConversationId;
     final empties = _conversationsBox.values
-        .where((c) => c.id != keep && !conversationHasMessages(c.id))
+        .where((c) => c.id != exceptId && !conversationHasMessages(c.id))
         .toList();
     if (empties.isEmpty) return;
     for (final c in empties) {
       await _conversationsBox.delete(c.id);
+    }
+    // Se a conversa atual era vazia e foi apagada, limpa o ponteiro.
+    if (_currentConversationId != null &&
+        !_conversationsBox.containsKey(_currentConversationId)) {
+      _currentConversationId = null;
     }
     notifyListeners();
   }
@@ -76,11 +76,12 @@ class ConversationService extends ChangeNotifier {
     return _conversationsBox.get(_currentConversationId);
   }
 
-  Future<Conversation> createConversation({
-    String title = 'Nova conversa',
-  }) async {
+  Future<Conversation> createConversation({String title = 'Nova conversa'}) async {
     final id = const Uuid().v4();
-    final conversation = Conversation(id: id, title: title);
+    final conversation = Conversation(
+      id: id,
+      title: title,
+    );
 
     await _conversationsBox.put(id, conversation);
     _currentConversationId = id;
@@ -98,15 +99,22 @@ class ConversationService extends ChangeNotifier {
       final existing = _conversationsBox.get(currentId);
       if (existing != null) return existing;
     }
-    // Sai de um rascunho vazio anterior (se houver outro) e cria a nova
-    await purgeEmptyConversations(exceptId: null);
+    // Apaga outros rascunhos vazios e cria a nova
+    await purgeEmptyConversations(exceptId: currentId);
     return createConversation(title: title);
+  }
+
+  /// Abre sempre uma conversa nova em branco (usado no boot do app).
+  /// Rascunhos vazios anteriores são apagados; conversas com mensagem ficam.
+  Future<Conversation> openFreshConversation() async {
+    await purgeEmptyConversations(exceptId: '');
+    return createConversation(title: 'Nova conversa');
   }
 
   Future<void> selectConversation(String id) async {
     final previousId = _currentConversationId;
     _currentConversationId = id;
-    // Se saiu de um rascunho vazio, apaga para não acumular na lista
+    // Se saiu de um rascunho vazio, apaga para não acumular
     if (previousId != null &&
         previousId != id &&
         !conversationHasMessages(previousId)) {
