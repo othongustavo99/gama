@@ -30,7 +30,6 @@ class Settings:
         "OPENROUTER_BASE_URL",
         "https://openrouter.ai/api/v1",
     ).strip().rstrip("/")
-    # Headers opcionais recomendados pelo OpenRouter
     OPENROUTER_HTTP_REFERER = os.getenv(
         "OPENROUTER_HTTP_REFERER",
         os.getenv("APP_URL", "https://gama.app"),
@@ -40,39 +39,23 @@ class Settings:
         os.getenv("APP_NAME", "Frequencia40-Gamma"),
     ).strip()
 
-    # Modelos padrão (equilibrio qualidade × custo no OpenRouter)
-    # Conversa: rápido, barato, bom em PT — Gemini 2.5 Flash Lite
-    # Programar: forte em código — DeepSeek Chat
-    # Visão: multimodal confiável — Gemini 2.5 Flash
+    # Modelo único padrão (GPT-5.4 Mini via OpenRouter)
+    _DEFAULT_MODEL = "openai/gpt-5.4-mini"
+
     OPENROUTER_DEFAULT_MODEL = os.getenv(
         "OPENROUTER_DEFAULT_MODEL",
-        "openai/gpt-5.4-mini",
+        _DEFAULT_MODEL,
     ).strip()
 
+    # Uma única string no 2º arg do getenv (várias strings com vírgula quebravam)
     OPENROUTER_MODELS = [
         m.strip()
-        for m in os.getenv(
-            "OPENROUTER_MODELS",
-            "deepseek/deepseek-chat,"
-            "google/gemini-2.5-flash-lite,"
-            "google/gemini-2.5-flash,"
-            "qwen/qwen2.5-vl-72b-instruct",
-            "openai/gpt-5.4-mini"
-        ).split(",")
+        for m in os.getenv("OPENROUTER_MODELS", _DEFAULT_MODEL).split(",")
         if m.strip()
     ]
 
-    # Modelo de conversa (Talk / chat casual / voz)
-    CONVERSATION_MODEL = os.getenv(
-        "CONVERSATION_MODEL",
-        "openai/gpt-5.4-mini",
-    ).strip()
-
-    # Modelo de programação (padrão do app quando modo Programar)
-    CODING_MODEL = os.getenv(
-        "CODING_MODEL",
-        "openai/gpt-5.4-mini",
-    ).strip()
+    CONVERSATION_MODEL = os.getenv("CONVERSATION_MODEL", _DEFAULT_MODEL).strip()
+    CODING_MODEL = os.getenv("CODING_MODEL", _DEFAULT_MODEL).strip()
 
     # ── Ollama (opcional / legado / local) ────────────────────────────
     OLLAMA_URL = os.getenv(
@@ -88,7 +71,6 @@ class Settings:
     ]
 
     if PROVIDER == "openrouter" and not OPENROUTER_API_KEY:
-        # não quebra o boot; health fica offline até configurar a chave
         pass
 
     DATA_DIR = os.getenv("DATA_DIR", "/data")
@@ -103,11 +85,10 @@ class Settings:
     SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 
-    # Visão (Image Analyzer / anexos de imagem)
-    VISION_MODEL = os.getenv(
-        "VISION_MODEL",
-        "openai/gpt-5.4-mini",
-    ).strip()
+    VISION_MODEL = os.getenv("VISION_MODEL", _DEFAULT_MODEL).strip()
+
+    # Limite de tokens de SAÍDA (evita OpenRouter 402 reservando 65k)
+    MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 
     @property
     def default_model(self) -> str:
@@ -119,7 +100,6 @@ class Settings:
     def allowed_models(self) -> list[str]:
         if self.PROVIDER == "openrouter":
             models = list(self.OPENROUTER_MODELS)
-            # garante conversation / coding / vision na lista
             for extra in (
                 self.CONVERSATION_MODEL,
                 self.CODING_MODEL,
