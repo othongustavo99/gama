@@ -1069,7 +1069,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   const Expanded(
                     child: Center(
                       child: Text(
-                        'Gamma 1.0',
+                        'Gamma 2.0',
                         style: TextStyle(
                           color: GamaColors.textPrimary,
                           fontSize: 16,

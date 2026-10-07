@@ -14,6 +14,15 @@ from .code_analyzer.source_detector import (
     detect_level,
 )
 from .talk_skill import build_talk_layer
+from .conversation_session import (
+    session_key,
+    load_session,
+    save_session,
+    update_from_user_message,
+    set_active_project,
+    add_action,
+    as_prompt_block,
+)
 from .prompts import build_system_prompt
 from ..config import settings
 from ..web_search import should_search, search_web, _format_results
@@ -23,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 class GamaCore:
     def __init__(self, max_context_messages: int = 24):
-        self.context_manager = ContextManager(max_messages=max_context_messages)
+        self.context_manager = ContextManager(max_messages=max(max_context_messages, 48))
 
     async def build_messages(
         self,
@@ -37,6 +46,7 @@ class GamaCore:
         prefetched_query: Optional[str] = None,
         user_id: Optional[str] = None,
         voice_mode: bool = False,
+        conversation_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, str]], Optional[str], Optional[str], List[Dict[str, str]]]:
         """
         Returns: prepared, fact_saved, search_query, sources
@@ -52,6 +62,12 @@ class GamaCore:
             last = messages[-1]
             if last.get("role") == "user":
                 last_user = last.get("content") or ""
+
+        # ── Sessão desta conversa (projeto, links, arquivos, ações) ──
+        skey = session_key(user_id, conversation_id, messages)
+        session = load_session(skey)
+        if last_user:
+            session = update_from_user_message(session, last_user)
 
         if auto_memory and last_user:
             extracted = try_extract_memory(last_user)
@@ -144,44 +160,83 @@ class GamaCore:
         # ── Code Analyzer ────────────────────────────────────────────────
         try:
             code_ctx = await self._code_analyzer_block(
-                last_user, user_id=user_id or "default"
+                last_user, user_id=user_id or "default", session=session
             )
             if code_ctx:
                 prepared.append({"role": "system", "content": code_ctx})
+                if session.get("active_project_id"):
+                    add_action(
+                        session,
+                        f"Contexto de código injetado (project_id={session['active_project_id']})",
+                    )
         except Exception as e:
             logger.warning("code_analyzer: %s", e)
+
+        # Estado da conversa (projeto, arquivos, ações) — sempre no system
+        try:
+            sess_block = as_prompt_block(session)
+            if sess_block:
+                prepared.append({"role": "system", "content": sess_block})
+            save_session(session)
+        except Exception as e:
+            logger.warning("conversation_session: %s", e)
 
         prepared.extend(context)
         return prepared, fact_saved, search_query, sources
 
     async def _code_analyzer_block(
-        self, last_user: str, *, user_id: str = "default"
+        self,
+        last_user: str,
+        *,
+        user_id: str = "default",
+        session: Optional[dict] = None,
     ) -> str:
         """Prepara contexto de código sem mandar o projeto inteiro ao LLM."""
         if not last_user or not isinstance(last_user, str):
-            return ""
+            # ainda pode haver projeto ativo na sessão
+            if not (session and session.get("active_project_id")):
+                return ""
+            last_user = last_user or ""
 
-        level = detect_level(last_user)
+        level = detect_level(last_user or "analise o projeto")
         max_tokens = {"quick": 2500, "targeted": 4500, "deep": 8000}.get(level, 4500)
 
-        # 1) project_id / pdf_id já ingeridos
+        # 1) project_id / pdf_id na mensagem OU projeto ativo da conversa
         pid = extract_project_id(last_user) or extract_pdf_id(last_user)
+        if not pid and session and session.get("active_project_id"):
+            pid = session["active_project_id"]
         if pid:
+            if session is not None and not session.get("active_project_id"):
+                set_active_project(session, project_id=pid, source="marker")
             try:
                 return await build_query_context_async(
-                    pid, last_user, max_tokens=max_tokens, level=level
+                    pid, last_user or "contexto do projeto", max_tokens=max_tokens, level=level
                 )
             except Exception:
                 return build_query_context(
-                    pid, last_user, max_tokens=max_tokens, level=level
+                    pid, last_user or "contexto do projeto", max_tokens=max_tokens, level=level
                 )
 
-        # 2) URL GitHub na mensagem → ingest + contexto
+        # 2) URL GitHub na mensagem OU salva na sessão desta conversa
         gh = parse_github_url(last_user)
+        if not gh and session and session.get("github_url"):
+            gh = parse_github_url(session["github_url"])
+            # reforça a pergunta com o url para o ranking de arquivos
+            if gh and last_user and session["github_url"] not in last_user:
+                last_user = f"{last_user}\n{session['github_url']}"
         if gh:
             summary = await detect_and_prepare(last_user, user_id=user_id)
             if summary and summary.get("project_id"):
                 pid = summary["project_id"]
+                if session is not None:
+                    set_active_project(
+                        session,
+                        project_id=pid,
+                        name=summary.get("name"),
+                        source=summary.get("source") or "github",
+                    )
+                    if summary.get("name"):
+                        add_action(session, f"Indexou GitHub {summary.get('name')}")
                 ctx = await build_query_context_async(
                     pid, last_user, max_tokens=max_tokens, level=level
                 )

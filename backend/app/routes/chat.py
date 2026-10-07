@@ -138,6 +138,7 @@ async def chat(request: ChatRequest):
                     user_id=uid,
                     auto_memory=getattr(request, "auto_memory", True),
                     voice_mode=bool(getattr(request, "voice_mode", False)),
+                    conversation_id=getattr(request, "conversation_id", None),
                 )
             except Exception as e:
                 logger.exception("build_messages: %s", e)

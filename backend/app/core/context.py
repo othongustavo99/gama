@@ -13,7 +13,7 @@ class ContextManager:
       e mantém as mensagens mais recentes
     """
 
-    def __init__(self, max_messages: int = 24, summary_max_chars: int = 1500):
+    def __init__(self, max_messages: int = 48, summary_max_chars: int = 3500):
         self.max_messages = max_messages
         self.summary_max_chars = summary_max_chars
 
@@ -38,7 +38,7 @@ class ContextManager:
         if len(normalized) <= self.max_messages:
             return normalized
 
-        keep = max(self.max_messages - 1, 8)
+        keep = max(self.max_messages - 2, 24)
         older = normalized[:-keep]
         recent = normalized[-keep:]
 
