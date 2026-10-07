@@ -15,7 +15,7 @@ from .routes.artifacts import router as artifacts_router
 
 app = FastAPI(
     title="Frequência40 API",
-    version="0.10.0",
+    version="0.11.0",
 )
 
 app.add_middleware(
@@ -52,6 +52,7 @@ async def health():
         "project_analyzer",
         "code_analyzer",
         "document_builder",
+        "talk_skill",
         "image_analyzer",
         "tts",
     ]
@@ -59,7 +60,7 @@ async def health():
     return {
         "status": "ok" if ok else "degraded",
         "service": "frequencia40",
-        "version": "0.10.0",
+        "version": "0.11.0",
         "provider": settings.PROVIDER,
         "web_search": settings.WEB_SEARCH_ENABLED,
         "llm": "online" if ok else "offline",

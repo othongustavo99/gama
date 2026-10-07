@@ -13,7 +13,7 @@ from .code_analyzer.source_detector import (
     parse_github_url,
     detect_level,
 )
-import re as _re
+from .talk_skill import build_talk_layer
 from .prompts import build_system_prompt
 from ..config import settings
 from ..web_search import should_search, search_web, _format_results
@@ -82,11 +82,34 @@ class GamaCore:
 
         conversational_mode = "20b" in (model or "").lower()
 
+        # Sinais para a Talk Skill (antes de montar o system prompt)
+        has_project = bool(
+            extract_project_id(last_user) or extract_pdf_id(last_user)
+        )
+        has_code_hint = bool(
+            has_project
+            or parse_github_url(last_user)
+            or extract_inline_code(last_user)
+        )
+
+        talk_mode, talk_layer = build_talk_layer(
+            last_user,
+            messages=messages,
+            voice_mode=voice_mode,
+            has_code_context=has_code_hint,
+            has_project_context=has_project,
+            has_web_block=bool(web_block),
+            # modelo leve (20b) favorece conversational se não houver tarefa técnica
+            force_mode=("conversational" if conversational_mode and not has_code_hint else None),
+        )
+
         system_prompt = build_system_prompt(
             memory_block=memory_block,
             web_enabled=web_on,
             voice_mode=voice_mode,
             conversational_mode=conversational_mode,
+            talk_layer=talk_layer,
+            talk_mode=talk_mode,
         )
 
         # Resume localmente: chamar o modelo de novo aqui pode bloquear o turno por até 60 s.
@@ -144,7 +167,6 @@ class GamaCore:
         # 1) project_id / pdf_id já ingeridos
         pid = extract_project_id(last_user) or extract_pdf_id(last_user)
         if pid:
-            # GitHub lazy → async fetch dos blobs relevantes
             try:
                 return await build_query_context_async(
                     pid, last_user, max_tokens=max_tokens, level=level

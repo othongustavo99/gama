@@ -1,5 +1,6 @@
 from .personality import GAMMA_PERSONALITY
 
+# Mantido por compatibilidade; a Talk Skill injeta VOICE_LAYER quando voice_mode=True.
 VOICE_REPLY_RULES = """
 MODO RESPOSTA POR VOZ (ativo nesta mensagem)
 
@@ -28,7 +29,17 @@ def build_system_prompt(
     web_enabled: bool = True,
     voice_mode: bool = False,
     conversational_mode: bool = False,
+    talk_layer: str = "",
+    talk_mode: str = "",
 ) -> str:
+    """Monta o system prompt.
+
+    Hierarquia de estilo:
+      personalidade (identidade) → capacidades/skills → Talk Skill → voz → memória
+
+    talk_layer: texto gerado por talk_skill.build_talk_layer (opcional).
+    Se vazio e voice_mode, usa VOICE_REPLY_RULES legado.
+    """
     base = GAMMA_PERSONALITY.strip()
 
     extra = """
@@ -49,7 +60,7 @@ QUALIDADE DA RESPOSTA
 - Quando houver resultados de busca, use-os de verdade (não ignore).
 - Combine conhecimento estável com as fontes recentes.
 - Se o tema for factual, técnico ou puder estar desatualizado, priorize as fontes.
-- Estruture bem (passos, listas, código completo quando fizer sentido) — EXCETO no modo voz, onde as regras de voz prevalecem.
+- Estruture bem (passos, listas, código completo quando fizer sentido) — EXCETO quando a Talk Skill / modo voz pedirem prosa falável.
 - Não invente URLs, versões ou fatos. Se não souber, diga e explique o que dá para afirmar.
 - Em programação: código utilizável, caminhos de arquivo e cuidados práticos (no modo texto normal).
 - Não seja preguiçosa nem genérica demais quando o usuário pediu algo específico.
@@ -78,7 +89,6 @@ BUSCA NA WEB
 - Priorize os resultados fornecidos. No modo texto, links markdown ajudam; no modo voz, só o nome da fonte.
 - Se as fontes forem fracas, avise e ainda assim entregue o melhor que puder.
 
-
 DOCUMENT & ARCHIVE BUILDER
 
 - O backend consegue criar ZIP e PDF de forma determinística (sem o modelo "escrever bytes").
@@ -97,7 +107,8 @@ ASSISTÊNCIA TÉCNICA
 - Se faltar informação crítica, faça 1–3 perguntas objetivas — sem enrolar.
 """
 
-    if conversational_mode:
+    # conversational_mode legado (modelo 20b etc.) — reforço leve se Talk não veio
+    if conversational_mode and not talk_layer:
         extra += """
 
 MODO CONVERSA
@@ -117,7 +128,13 @@ NOTA: a busca na web está desligada neste ambiente (WEB_SEARCH_ENABLED=0).
 
     parts = [base, extra.strip()]
 
-    if voice_mode:
+    # Talk Skill (camada de estilo — depois das skills, antes da memória)
+    if talk_layer and talk_layer.strip():
+        header = "TALK SKILL ATIVA"
+        if talk_mode:
+            header += f" (modo: {talk_mode})"
+        parts.append(f"{header}\n\n{talk_layer.strip()}")
+    elif voice_mode:
         parts.append(VOICE_REPLY_RULES)
 
     if memory_block and memory_block.strip():
