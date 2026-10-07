@@ -10,11 +10,12 @@ from .routes.memory import router as memory_router
 from .routes.search import router as search_router
 from .routes.project import router as project_router
 from .routes.tts import router as tts_router
+from .routes.artifacts import router as artifacts_router
 
 
 app = FastAPI(
     title="Frequência40 API",
-    version="0.9.0",
+    version="0.10.0",
 )
 
 app.add_middleware(
@@ -32,6 +33,7 @@ app.include_router(extract_router)
 app.include_router(search_router)
 app.include_router(project_router)
 app.include_router(tts_router)
+app.include_router(artifacts_router)
 
 
 @app.get("/health")
@@ -49,6 +51,7 @@ async def health():
         "web_search",
         "project_analyzer",
         "code_analyzer",
+        "document_builder",
         "image_analyzer",
         "tts",
     ]
@@ -56,7 +59,7 @@ async def health():
     return {
         "status": "ok" if ok else "degraded",
         "service": "frequencia40",
-        "version": "0.9.0",
+        "version": "0.10.0",
         "provider": settings.PROVIDER,
         "web_search": settings.WEB_SEARCH_ENABLED,
         "llm": "online" if ok else "offline",
