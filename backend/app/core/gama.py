@@ -14,15 +14,37 @@ from .code_analyzer.source_detector import (
     detect_level,
 )
 from .talk_skill import build_talk_layer
-from .conversation_session import (
-    session_key,
-    load_session,
-    save_session,
-    update_from_user_message,
-    set_active_project,
-    add_action,
-    as_prompt_block,
-)
+try:
+    from .conversation_session import (
+        session_key,
+        load_session,
+        save_session,
+        update_from_user_message,
+        set_active_project,
+        add_action,
+        as_prompt_block,
+    )
+except ImportError:  # arquivo ainda não no deploy — app sobe sem sessão
+    def session_key(user_id=None, conversation_id=None, messages=None):
+        return "noop"
+
+    def load_session(key):
+        return {}
+
+    def save_session(data):
+        return None
+
+    def update_from_user_message(session, text):
+        return session or {}
+
+    def set_active_project(session, **kwargs):
+        return session or {}
+
+    def add_action(session, action):
+        return session or {}
+
+    def as_prompt_block(session):
+        return ""
 from .prompts import build_system_prompt
 from ..config import settings
 from ..web_search import should_search, search_web, _format_results
