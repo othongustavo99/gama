@@ -1,243 +1,226 @@
-"""Sessão por conversa — o que foi enviado e o que a Gama já fez neste chat.
+"""
+Conversas sincronizadas por usuário (Android / Windows / etc.).
 
-Não é memória global do usuário (isso continua em memory.py).
-É estado da conversa atual: projeto ativo, links, arquivos, ações, artefatos.
+Arquivo: data/conversations/{user_id}.json
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
 import threading
-import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
+
+
+def _data_dir() -> Path:
+    env = os.getenv("DATA_DIR", "").strip()
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parents[2] / "data"
+
 
 _lock = threading.Lock()
-_TTL_SEC = 48 * 3600  # 48h
 
 
-def _root() -> Path:
-    env = os.getenv("DATA_DIR", "").strip()
-    base = Path(env) if env else Path(__file__).resolve().parents[2] / "data"
-    p = base / "conversation_sessions"
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def _safe(s: str, n: int = 64) -> str:
-    return re.sub(r"[^\w\-\.]+", "_", (s or "default").strip())[:n] or "default"
+def _safe_user_id(user_id: Optional[str]) -> str:
+    uid = (user_id or "default").strip() or "default"
+    uid = re.sub(r"[^\w\-\.@]+", "_", uid)[:120]
+    return uid or "default"
 
 
-def session_key(user_id: Optional[str], conversation_id: Optional[str], messages: list | None = None) -> str:
-    """Chave estável da conversa.
-
-    Prioridade: conversation_id do cliente → fingerprint do início do histórico.
-    """
-    uid = _safe(user_id or "default", 80)
-    cid = (conversation_id or "").strip()
-    if cid:
-        return f"{uid}__{_safe(cid, 80)}"
-
-    # fallback: hash das primeiras mensagens (mesmo chat sem id explícito)
-    parts: list[str] = []
-    for m in (messages or [])[:4]:
-        role = m.get("role") or ""
-        content = m.get("content") or ""
-        if isinstance(content, list):
-            content = " ".join(
-                str(p.get("text") or "") for p in content if isinstance(p, dict)
-            )
-        parts.append(f"{role}:{str(content)[:200]}")
-    digest = hashlib.sha1("\n".join(parts).encode("utf-8", errors="replace")).hexdigest()[:16]
-    return f"{uid}__auto_{digest}"
-
-
-def _path(key: str) -> Path:
-    return _root() / f"{_safe(key, 120)}.json"
-
-
-def load_session(key: str) -> dict[str, Any]:
-    path = _path(key)
-    if not path.exists():
-        return _empty(key)
+def _parse_ts(value: Any) -> datetime:
+    if value is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if isinstance(value, (int, float)):
+        # epoch ms or s
+        ts = float(value)
+        if ts > 1e12:
+            ts = ts / 1000.0
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+    s = str(value).strip()
+    if not s:
+        return datetime.min.replace(tzinfo=timezone.utc)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if time.time() - float(data.get("updated_at", 0)) > _TTL_SEC:
-            return _empty(key)
-        data.setdefault("key", key)
-        return data
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except Exception:
-        return _empty(key)
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
-def _empty(key: str) -> dict[str, Any]:
-    return {
-        "key": key,
-        "updated_at": time.time(),
-        "active_project_id": None,
-        "project_name": None,
-        "project_source": None,  # zip | github | pdf | direct
-        "github_url": None,
-        "urls": [],
-        "files_mentioned": [],
-        "artifacts": [],  # {id, kind, filename}
-        "actions": [],  # strings curtas do que foi feito
-        "notes": [],  # fatos/decisões desta conversa
-    }
+class ConversationStore:
+    MAX_CONVERSATIONS = 200
+    MAX_MESSAGES_PER_CONV = 500
+
+    def __init__(self, user_id: Optional[str] = None):
+        self.user_id = _safe_user_id(user_id)
+        self.path = _data_dir() / "conversations" / f"{self.user_id}.json"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self._write({"user_id": self.user_id, "conversations": {}})
+
+    def _read(self) -> dict:
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return {"user_id": self.user_id, "conversations": {}}
+            data.setdefault("conversations", {})
+            if not isinstance(data["conversations"], dict):
+                data["conversations"] = {}
+            data["user_id"] = self.user_id
+            return data
+        except Exception:
+            return {"user_id": self.user_id, "conversations": {}}
+
+    def _write(self, data: dict) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        data["user_id"] = self.user_id
+        data["updated_at"] = _utc_now()
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def list_conversations(self, include_messages: bool = True) -> List[dict]:
+        with _lock:
+            convs = self._read().get("conversations", {})
+            items = list(convs.values())
+            items.sort(
+                key=lambda c: _parse_ts(c.get("updatedAt") or c.get("updated_at")),
+                reverse=True,
+            )
+            if not include_messages:
+                out = []
+                for c in items:
+                    copy = dict(c)
+                    msgs = copy.get("messages") or []
+                    copy["messageCount"] = len(msgs)
+                    copy.pop("messages", None)
+                    out.append(copy)
+                return out
+            return items
+
+    def get(self, conversation_id: str) -> Optional[dict]:
+        with _lock:
+            return self._read().get("conversations", {}).get(conversation_id)
+
+    def upsert(self, payload: dict) -> dict:
+        """
+        Cria ou atualiza uma conversa com mensagens.
+        payload: id, title, isPinned, createdAt, updatedAt, messages[]
+        """
+        cid = str(payload.get("id") or "").strip()
+        if not cid:
+            raise ValueError("id obrigatório")
+
+        title = (payload.get("title") or "Nova conversa").strip() or "Nova conversa"
+        is_pinned = bool(payload.get("isPinned", payload.get("is_pinned", False)))
+        created_at = payload.get("createdAt") or payload.get("created_at") or _utc_now()
+        updated_at = payload.get("updatedAt") or payload.get("updated_at") or _utc_now()
+
+        raw_msgs = payload.get("messages") or []
+        messages: List[dict] = []
+        if isinstance(raw_msgs, list):
+            for m in raw_msgs[-self.MAX_MESSAGES_PER_CONV :]:
+                if not isinstance(m, dict):
+                    continue
+                mid = str(m.get("id") or "").strip()
+                role = str(m.get("role") or "").strip()
+                content = str(m.get("content") or "")
+                if not mid or role not in {"user", "assistant", "system"}:
+                    continue
+                if not content.strip():
+                    continue
+                messages.append(
+                    {
+                        "id": mid,
+                        "role": role,
+                        "content": content,
+                        "conversationId": cid,
+                        "timestamp": m.get("timestamp")
+                        or m.get("createdAt")
+                        or _utc_now(),
+                    }
+                )
+
+        item = {
+            "id": cid,
+            "title": title[:200],
+            "isPinned": is_pinned,
+            "createdAt": created_at
+            if isinstance(created_at, str)
+            else _utc_now(),
+            "updatedAt": updated_at
+            if isinstance(updated_at, str)
+            else _utc_now(),
+            "messages": messages,
+        }
+
+        with _lock:
+            data = self._read()
+            convs: Dict[str, Any] = data.get("conversations", {})
+            existing = convs.get(cid)
+            if existing:
+                # Mantém o updatedAt mais recente se o cliente mandar antigo
+                if _parse_ts(existing.get("updatedAt")) > _parse_ts(
+                    item.get("updatedAt")
+                ):
+                    # Cliente desatualizado: não sobrescreve com dados mais velhos,
+                    # mas ainda aceita se tiver mais mensagens (merge simples).
+                    if len(messages) <= len(existing.get("messages") or []):
+                        return existing
+
+            convs[cid] = item
+
+            # Limita quantidade de conversas (remove as mais antigas sem pin)
+            if len(convs) > self.MAX_CONVERSATIONS:
+                ordered = sorted(
+                    convs.values(),
+                    key=lambda c: (
+                        1 if c.get("isPinned") else 0,
+                        _parse_ts(c.get("updatedAt")),
+                    ),
+                )
+                while len(ordered) > self.MAX_CONVERSATIONS:
+                    drop = ordered.pop(0)
+                    convs.pop(drop["id"], None)
+
+            data["conversations"] = convs
+            self._write(data)
+            return item
+
+    def delete(self, conversation_id: str) -> bool:
+        with _lock:
+            data = self._read()
+            convs = data.get("conversations", {})
+            if conversation_id not in convs:
+                return False
+            del convs[conversation_id]
+            data["conversations"] = convs
+            self._write(data)
+            return True
+
+    def clear(self) -> None:
+        with _lock:
+            self._write({"user_id": self.user_id, "conversations": {}})
 
 
-def save_session(data: dict[str, Any]) -> None:
-    key = data.get("key") or "default"
-    data["updated_at"] = time.time()
-    # limita listas
-    data["urls"] = list(dict.fromkeys(data.get("urls") or []))[:30]
-    data["files_mentioned"] = list(dict.fromkeys(data.get("files_mentioned") or []))[:40]
-    data["artifacts"] = (data.get("artifacts") or [])[-20:]
-    data["actions"] = (data.get("actions") or [])[-40:]
-    data["notes"] = (data.get("notes") or [])[-40:]
-    with _lock:
-        _path(key).write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+_stores: Dict[str, ConversationStore] = {}
+_stores_lock = threading.Lock()
 
 
-def update_from_user_message(session: dict[str, Any], text: str) -> dict[str, Any]:
-    """Extrai sinais da mensagem do usuário e atualiza a sessão."""
-    if not text:
-        return session
-
-    # GitHub
-    m = re.search(
-        r"https?://(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)",
-        text,
-        re.I,
-    )
-    if m:
-        url = m.group(0).rstrip(".,;:!?)/")
-        session["github_url"] = url
-        if url not in (session.get("urls") or []):
-            session.setdefault("urls", []).append(url)
-
-    # project_id marker
-    m = re.search(r"\[project_id:([a-zA-Z0-9_\-]{6,32})\]", text)
-    if m:
-        session["active_project_id"] = m.group(1)
-
-    # paths de arquivo mencionados
-    for path in re.findall(
-        r"(?:^|[\s`\"'(])((?:lib|app|src|backend|ios|android|test|tests)/[\w./\-]+\.\w{1,10})",
-        text,
-        re.M,
-    ):
-        if path not in (session.get("files_mentioned") or []):
-            session.setdefault("files_mentioned", []).append(path)
-
-    for path in re.findall(r"\b([\w\-]+/[\w./\-]+\.(?:dart|py|ts|js|yaml|json|md))\b", text):
-        if path not in (session.get("files_mentioned") or []):
-            session.setdefault("files_mentioned", []).append(path)
-
-    # urls genéricas
-    for u in re.findall(r"https?://[^\s\)\]\>\"']+", text):
-        u = u.rstrip(".,;:!?")
-        if u not in (session.get("urls") or []):
-            session.setdefault("urls", []).append(u)
-
-    return session
-
-
-def set_active_project(
-    session: dict[str, Any],
-    *,
-    project_id: str,
-    name: Optional[str] = None,
-    source: Optional[str] = None,
-) -> dict[str, Any]:
-    session["active_project_id"] = project_id
-    if name:
-        session["project_name"] = name
-    if source:
-        session["project_source"] = source
-    session.setdefault("actions", []).append(
-        f"Projeto ativo: {name or project_id} ({source or 'unknown'})"
-    )
-    return session
-
-
-def add_action(session: dict[str, Any], action: str) -> dict[str, Any]:
-    if action and action not in (session.get("actions") or [])[-5:]:
-        session.setdefault("actions", []).append(action[:240])
-    return session
-
-
-def add_artifact(
-    session: dict[str, Any],
-    *,
-    artifact_id: str,
-    kind: str,
-    filename: str,
-) -> dict[str, Any]:
-    session.setdefault("artifacts", []).append(
-        {"id": artifact_id, "kind": kind, "filename": filename}
-    )
-    session.setdefault("actions", []).append(f"Artefato gerado: {filename} ({kind})")
-    return session
-
-
-def as_prompt_block(session: dict[str, Any]) -> str:
-    """Bloco injetado no system prompt — estado desta conversa."""
-    if not session:
-        return ""
-
-    lines = [
-        "[ESTADO DESTA CONVERSA — use sempre; não peça de novo o que já está aqui]",
-    ]
-
-    pid = session.get("active_project_id")
-    if pid:
-        lines.append(
-            f"Projeto ativo: project_id={pid}"
-            + (f" nome={session.get('project_name')}" if session.get("project_name") else "")
-            + (f" origem={session.get('project_source')}" if session.get("project_source") else "")
-        )
-        lines.append(
-            "Se o usuário falar em 'esse repo', 'o projeto', 'main.dart', etc., "
-            "use este project_id / Code Analyzer — não diga que não tem o arquivo "
-            "sem tentar o contexto do projeto ativo."
-        )
-
-    if session.get("github_url"):
-        lines.append(f"GitHub desta conversa: {session['github_url']}")
-
-    files = session.get("files_mentioned") or []
-    if files:
-        lines.append("Arquivos já mencionados: " + ", ".join(files[:20]))
-
-    urls = [u for u in (session.get("urls") or []) if u != session.get("github_url")]
-    if urls:
-        lines.append("Links já enviados: " + ", ".join(urls[:10]))
-
-    arts = session.get("artifacts") or []
-    if arts:
-        lines.append(
-            "Artefatos já gerados nesta conversa: "
-            + ", ".join(f"{a.get('filename')}({a.get('id')})" for a in arts[-8:])
-        )
-
-    actions = session.get("actions") or []
-    if actions:
-        lines.append("O que já foi feito neste chat:")
-        for a in actions[-12:]:
-            lines.append(f"- {a}")
-
-    notes = session.get("notes") or []
-    if notes:
-        lines.append("Notas desta conversa:")
-        for n in notes[-8:]:
-            lines.append(f"- {n}")
-
-    if len(lines) <= 1:
-        return ""
-    return "\n".join(lines)
+def get_conversation_store(user_id: Optional[str] = None) -> ConversationStore:
+    uid = _safe_user_id(user_id)
+    with _stores_lock:
+        if uid not in _stores:
+            _stores[uid] = ConversationStore(uid)
+        return _stores[uid]
