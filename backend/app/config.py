@@ -1,50 +1,79 @@
+"""Configuração do backend Gama — provedor: OpenRouter (padrão) ou Ollama (legado/local)."""
+
+from __future__ import annotations
+
 import os
 
 
 def env_bool(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
+    v = os.getenv(name)
+    if v is None:
         return default
-    return value.strip().lower() not in {"0", "false", "no", "off"}
+    return v.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class Settings:
     HOST = os.getenv("FREQUENCIA40_HOST", "0.0.0.0")
     PORT = int(os.getenv("PORT", os.getenv("FREQUENCIA40_PORT", "8000")))
 
-    # Produção: Groq (rápido). Ollama só se LLM_PROVIDER=ollama.
-    PROVIDER = os.getenv("LLM_PROVIDER", "groq").strip().lower()
+    # Produção: OpenRouter. Ollama só se LLM_PROVIDER=ollama.
+    PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
 
-    if PROVIDER not in {"groq", "ollama"}:
+    if PROVIDER not in {"openrouter", "ollama"}:
         raise ValueError(
-            f"LLM_PROVIDER inválido: {PROVIDER!r}. Use groq ou ollama."
+            f"LLM_PROVIDER inválido: {PROVIDER!r}. Use openrouter ou ollama."
         )
 
-    # ── Groq (OpenAI-compatible) ─────────────────────────────────────
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-    GROQ_BASE_URL = os.getenv(
-        "GROQ_BASE_URL",
-        "https://api.groq.com/openai/v1",
+    # ── OpenRouter (OpenAI-compatible) ────────────────────────────────
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+    OPENROUTER_BASE_URL = os.getenv(
+        "OPENROUTER_BASE_URL",
+        "https://openrouter.ai/api/v1",
     ).strip().rstrip("/")
-
-    # llama-3.3-70b: forte em código e ainda rápido no Groq
-    # llama-3.1-8b-instant: máximo de velocidade
-    GROQ_DEFAULT_MODEL = os.getenv(
-        "GROQ_DEFAULT_MODEL",
-        "llama-3.3-70b-versatile",
+    # Headers opcionais recomendados pelo OpenRouter
+    OPENROUTER_HTTP_REFERER = os.getenv(
+        "OPENROUTER_HTTP_REFERER",
+        os.getenv("APP_URL", "https://gama.app"),
+    ).strip()
+    OPENROUTER_APP_TITLE = os.getenv(
+        "OPENROUTER_APP_TITLE",
+        os.getenv("APP_NAME", "Frequencia40-Gamma"),
     ).strip()
 
-    GROQ_MODELS = [
+    # Modelos padrão (equilibrio qualidade × custo no OpenRouter)
+    # Conversa: rápido, barato, bom em PT — Gemini 2.5 Flash Lite
+    # Programar: forte em código — DeepSeek Chat
+    # Visão: multimodal confiável — Gemini 2.5 Flash
+    OPENROUTER_DEFAULT_MODEL = os.getenv(
+        "OPENROUTER_DEFAULT_MODEL",
+        "deepseek/deepseek-chat",
+    ).strip()
+
+    OPENROUTER_MODELS = [
         m.strip()
         for m in os.getenv(
-            "GROQ_MODELS",
-            "openai/gpt-oss-120b,openai/gpt-oss-20b,"
-            "llama-3.3-70b-versatile,llama-3.1-8b-instant",
+            "OPENROUTER_MODELS",
+            "deepseek/deepseek-chat,"
+            "google/gemini-2.5-flash-lite,"
+            "google/gemini-2.5-flash,"
+            "qwen/qwen2.5-vl-72b-instruct",
         ).split(",")
         if m.strip()
     ]
 
-    # ── Ollama (opcional / legado) ───────────────────────────────────
+    # Modelo de conversa (Talk / chat casual / voz)
+    CONVERSATION_MODEL = os.getenv(
+        "CONVERSATION_MODEL",
+        "google/gemini-2.5-flash-lite",
+    ).strip()
+
+    # Modelo de programação (padrão do app quando modo Programar)
+    CODING_MODEL = os.getenv(
+        "CODING_MODEL",
+        "deepseek/deepseek-chat",
+    ).strip()
+
+    # ── Ollama (opcional / legado / local) ────────────────────────────
     OLLAMA_URL = os.getenv(
         "OLLAMA_URL",
         "http://127.0.0.1:11434",
@@ -57,7 +86,7 @@ class Settings:
         if m.strip()
     ]
 
-    if PROVIDER == "groq" and not GROQ_API_KEY:
+    if PROVIDER == "openrouter" and not OPENROUTER_API_KEY:
         # não quebra o boot; health fica offline até configurar a chave
         pass
 
@@ -67,27 +96,38 @@ class Settings:
 
     WEB_SEARCH_ENABLED = env_bool("WEB_SEARCH_ENABLED", True)
     WEB_SEARCH_TIMEOUT = float(os.getenv("WEB_SEARCH_TIMEOUT", "12"))
-    WEB_SEARCH_MODE = os.getenv("WEB_SEARCH_MODE", "balanced").strip().lower()  # balanced|explicit|aggressive
+    WEB_SEARCH_MODE = os.getenv("WEB_SEARCH_MODE", "balanced").strip().lower()
 
     BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "").strip()
     SERPER_API_KEY = os.getenv("SERPER_API_KEY", "").strip()
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 
+    # Visão (Image Analyzer / anexos de imagem)
     VISION_MODEL = os.getenv(
         "VISION_MODEL",
-        "qwen/qwen3.8-27b",
-    ).strip()  # só quando há imagem; override no Railway se o ID mudar
+        "google/gemini-2.5-flash",
+    ).strip()
 
     @property
     def default_model(self) -> str:
-        if self.PROVIDER == "groq":
-            return self.GROQ_DEFAULT_MODEL
+        if self.PROVIDER == "openrouter":
+            return self.OPENROUTER_DEFAULT_MODEL
         return self.OLLAMA_DEFAULT_MODEL
 
     @property
     def allowed_models(self) -> list[str]:
-        if self.PROVIDER == "groq":
-            return list(self.GROQ_MODELS)
+        if self.PROVIDER == "openrouter":
+            models = list(self.OPENROUTER_MODELS)
+            # garante conversation / coding / vision na lista
+            for extra in (
+                self.CONVERSATION_MODEL,
+                self.CODING_MODEL,
+                self.VISION_MODEL,
+                self.OPENROUTER_DEFAULT_MODEL,
+            ):
+                if extra and extra not in models:
+                    models.append(extra)
+            return models
         return list(self.OLLAMA_MODELS)
 
 

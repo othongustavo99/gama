@@ -1,4 +1,4 @@
-"""Cliente LLM do Gama — Groq (padrão) ou Ollama.
+"""Cliente LLM do Gama — OpenRouter (padrão) ou Ollama (legado).
 
 Streaming sempre no formato Ollama NDJSON para o app Flutter:
   {"message":{"role":"assistant","content":"..."},"done":false}
@@ -21,14 +21,14 @@ class LLMClient:
     provider = settings.PROVIDER
 
     async def health(self) -> bool:
-        if settings.PROVIDER == "groq":
-            if not settings.GROQ_API_KEY:
+        if settings.PROVIDER == "openrouter":
+            if not settings.OPENROUTER_API_KEY:
                 return False
             try:
-                async with httpx.AsyncClient(timeout=8.0) as client:
+                async with httpx.AsyncClient(timeout=10.0) as client:
                     r = await client.get(
-                        f"{settings.GROQ_BASE_URL}/models",
-                        headers=self._groq_headers(),
+                        f"{settings.OPENROUTER_BASE_URL}/models",
+                        headers=self._openrouter_headers(),
                     )
                     return r.is_success
             except Exception:
@@ -49,16 +49,22 @@ class LLMClient:
             return settings.default_model
         allowed = set(settings.allowed_models)
         vision = (getattr(settings, "VISION_MODEL", None) or "").strip()
-        # Modelo de visão pode estar fora da lista de chat
         if model in allowed or (vision and model == vision):
             return model
         return settings.default_model
 
-    def _groq_headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+    def _openrouter_headers(self) -> dict[str, str]:
+        h = {
+            "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
             "Content-Type": "application/json",
         }
+        referer = (getattr(settings, "OPENROUTER_HTTP_REFERER", None) or "").strip()
+        title = (getattr(settings, "OPENROUTER_APP_TITLE", None) or "").strip()
+        if referer:
+            h["HTTP-Referer"] = referer
+        if title:
+            h["X-Title"] = title
+        return h
 
     async def chat_once(
         self,
@@ -72,21 +78,21 @@ class LLMClient:
         has_mm = any(isinstance(m.get("content"), list) for m in messages)
         msgs = self._normalize_messages(messages, keep_multimodal=has_mm)
 
-        if settings.PROVIDER == "groq":
-            if not settings.GROQ_API_KEY:
-                raise RuntimeError("GROQ_API_KEY não configurada")
-            payload = {
+        if settings.PROVIDER == "openrouter":
+            if not settings.OPENROUTER_API_KEY:
+                raise RuntimeError("OPENROUTER_API_KEY não configurada")
+            payload: dict = {
                 "model": model,
                 "messages": msgs,
                 "stream": False,
                 "temperature": 0.6,
             }
             if max_tokens is not None:
-                payload["max_completion_tokens"] = max(1, int(max_tokens))
+                payload["max_tokens"] = max(1, int(max_tokens))
             async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.post(
-                    f"{settings.GROQ_BASE_URL}/chat/completions",
-                    headers=self._groq_headers(),
+                    f"{settings.OPENROUTER_BASE_URL}/chat/completions",
+                    headers=self._openrouter_headers(),
                     json=payload,
                 )
                 r.raise_for_status()
@@ -98,6 +104,7 @@ class LLMClient:
                     (choices[0].get("message") or {}).get("content") or ""
                 ).strip()
 
+        # Ollama
         payload = {
             "model": model,
             "messages": msgs,
@@ -121,8 +128,8 @@ class LLMClient:
         has_mm = any(isinstance(m.get("content"), list) for m in messages)
         msgs = self._normalize_messages(messages, keep_multimodal=has_mm)
 
-        if settings.PROVIDER == "groq":
-            async for line in self._stream_groq(model, msgs):
+        if settings.PROVIDER == "openrouter":
+            async for line in self._stream_openai_compatible(model, msgs):
                 yield line
             return
 
@@ -142,11 +149,12 @@ class LLMClient:
                     if line:
                         yield line + "\n"
 
-    async def _stream_groq(
+    async def _stream_openai_compatible(
         self, model: str, messages: list[dict]
     ) -> AsyncIterator[str]:
-        if not settings.GROQ_API_KEY:
-            raise RuntimeError("GROQ_API_KEY não configurada no Railway")
+        """SSE OpenAI → NDJSON estilo Ollama (Flutter)."""
+        if not settings.OPENROUTER_API_KEY:
+            raise RuntimeError("OPENROUTER_API_KEY não configurada")
 
         payload = {
             "model": model,
@@ -159,14 +167,15 @@ class LLMClient:
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream(
                 "POST",
-                f"{settings.GROQ_BASE_URL}/chat/completions",
-                headers=self._groq_headers(),
+                f"{settings.OPENROUTER_BASE_URL}/chat/completions",
+                headers=self._openrouter_headers(),
                 json=payload,
             ) as response:
                 if response.status_code >= 400:
                     body = await response.aread()
                     raise RuntimeError(
-                        f"Groq {response.status_code}: {body.decode(errors='replace')[:400]}"
+                        f"OpenRouter {response.status_code}: "
+                        f"{body.decode(errors='replace')[:400]}"
                     )
 
                 async for line in response.aiter_lines():
@@ -223,7 +232,9 @@ class LLMClient:
                         ) + "\n"
 
     @staticmethod
-    def _normalize_messages(messages: list[dict], *, keep_multimodal: bool = False) -> list[dict]:
+    def _normalize_messages(
+        messages: list[dict], *, keep_multimodal: bool = False
+    ) -> list[dict]:
         """Normaliza mensagens. Se keep_multimodal=True, preserva content em lista (visão)."""
         output: list[dict] = []
         for message in messages:
@@ -233,14 +244,15 @@ class LLMClient:
             content = message.get("content")
             if isinstance(content, list):
                 if keep_multimodal:
-                    # Formato OpenAI: [{type:text},{type:image_url}]
                     parts = []
                     for part in content:
                         if not isinstance(part, dict):
                             continue
                         ptype = part.get("type")
                         if ptype == "text":
-                            parts.append({"type": "text", "text": str(part.get("text") or "")})
+                            parts.append(
+                                {"type": "text", "text": str(part.get("text") or "")}
+                            )
                         elif ptype == "image_url":
                             parts.append(part)
                     content = parts if parts else ""
@@ -260,17 +272,11 @@ class LLMClient:
 
     @staticmethod
     def inject_images(messages: list[dict], images, *, provider: str) -> list[dict]:
-        """Injeta imagens no último user message.
-
-        Groq (OpenAI-compatible): content multimodal com image_url data-URI.
-        Ollama: imagens no campo images (tratado no payload ollama se necessário)
-        ou data-URI se o modelo for multimodal OpenAI-like.
-        """
+        """Injeta imagens no último user message (formato OpenAI multimodal)."""
         if not images:
             return messages
         result = [dict(message) for message in messages]
 
-        # Monta partes de imagem (máx. 3 no Groq)
         image_parts: list[dict] = []
         for img in images[:3]:
             data = (img.get("data") or "").strip()

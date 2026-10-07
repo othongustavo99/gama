@@ -200,15 +200,11 @@ async def chat(request: ChatRequest):
                         getattr(_settings, "VISION_MODEL", None)
                         or "qwen2-vl"
                     )
-                elif llm.provider == "openrouter":
+                else:
+                    # openrouter (padrão)
                     active_model = (
                         getattr(_settings, "VISION_MODEL", None)
-                        or "openai/gpt-4o-mini"
-                    )
-                elif llm.provider == "groq":
-                    active_model = (
-                        getattr(_settings, "VISION_MODEL", None)
-                        or model
+                        or "google/gemini-2.5-flash"
                     )
                 gama_messages = LLMClient.inject_images(
                     gama_messages,
