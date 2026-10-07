@@ -14,7 +14,7 @@ from .routes.tts import router as tts_router
 
 app = FastAPI(
     title="Frequência40 API",
-    version="0.8.0",
+    version="0.9.0",
 )
 
 app.add_middleware(
@@ -48,6 +48,7 @@ async def health():
         "multi_provider",
         "web_search",
         "project_analyzer",
+        "code_analyzer",
         "image_analyzer",
         "tts",
     ]
@@ -55,7 +56,7 @@ async def health():
     return {
         "status": "ok" if ok else "degraded",
         "service": "frequencia40",
-        "version": "0.8.0",
+        "version": "0.9.0",
         "provider": settings.PROVIDER,
         "web_search": settings.WEB_SEARCH_ENABLED,
         "llm": "online" if ok else "offline",

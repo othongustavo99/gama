@@ -76,39 +76,11 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             children: [
               const Spacer(flex: 2),
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: GamaColors.accentSoft,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: GamaColors.accent.withValues(alpha: 0.4),
-                  ),
-                ),
-                alignment: Alignment.center,
-                clipBehavior: Clip.antiAlias,
-                child: ColorFiltered(
-                  // força aparência clara/branca no logo
-                  colorFilter: const ColorFilter.mode(
-                    Colors.white,
-                    BlendMode.srcIn,
-                  ),
-                  child: Image.asset(
-                    'assets/images/image2.pnng',
-                    width: 44,
-                    height: 44,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Text(
-                      'G',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 36,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ),
+              Image.asset(
+                'assets/images/image3.png',
+                width: 64,
+                height: 64,
+                fit: BoxFit.contain,
               ),
               const SizedBox(height: 20),
               const Text(

@@ -815,8 +815,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       // Fala (botão de ouvir / TTS automático) ou modo Conversar →
       // pede resposta só em frases naturais, sem listas/código/símbolos.
-      final willSpeak =
-          voiceRequested || SettingsService.instance.ttsAuto;
+      final willSpeak = voiceRequested || SettingsService.instance.ttsAuto;
       final stream = _ollama.chatStream(
         messages: apiMessages,
         images: imagePayload.isEmpty ? null : imagePayload,
@@ -1346,30 +1345,11 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: GamaColors.accentSoft,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: GamaColors.accent.withOpacity(0.3)),
-              ),
-              clipBehavior: Clip.antiAlias,
-              alignment: Alignment.center,
-              child: Image.asset(
-                'assets/images/image2.peng',
-                width: 40,
-                height: 40,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Text(
-                  'G',
-                  style: TextStyle(
-                    color: GamaColors.accent,
-                    fontSize: 28,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
+            Image.asset(
+              'assets/images/image3.png',
+              width: 72,
+              height: 72,
+              fit: BoxFit.contain,
             ),
             const SizedBox(height: 20),
             const Text(

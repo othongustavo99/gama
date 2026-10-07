@@ -4,7 +4,15 @@ import logging
 from .context import ContextManager
 from .memory import get_store, try_extract_memory
 from .url_fetch import build_url_context
-from .project_analyzer import build_query_context
+from .code_analyzer import build_query_context, detect_and_prepare
+from .code_analyzer.pipeline import build_query_context_async
+from .code_analyzer.source_detector import (
+    extract_project_id,
+    extract_pdf_id,
+    extract_inline_code,
+    parse_github_url,
+    detect_level,
+)
 import re as _re
 from .prompts import build_system_prompt
 from ..config import settings
@@ -89,8 +97,15 @@ class GamaCore:
             context = messages[-16:]
 
         url_block = ""
+        # Se for GitHub de código, o Code Analyzer cuida — evita duplicar fetch genérico
+        is_github_code = bool(parse_github_url(last_user)) if last_user else False
         try:
-            if last_user and isinstance(last_user, str) and "http" in last_user.lower():
+            if (
+                last_user
+                and isinstance(last_user, str)
+                and "http" in last_user.lower()
+                and not is_github_code
+            ):
                 url_block = await build_url_context(last_user)
         except Exception as e:
             logger.warning("url_context: %s", e)
@@ -103,19 +118,70 @@ class GamaCore:
         if url_block:
             prepared.append({"role": "system", "content": url_block})
 
-        # Project Analyzer: marker [project_id:xxxx] no texto do usuário
+        # ── Code Analyzer ────────────────────────────────────────────────
         try:
-            pid = None
-            if last_user and isinstance(last_user, str):
-                m = _re.search(r"\[project_id:([a-zA-Z0-9_\-]{6,32})\]", last_user)
-                if m:
-                    pid = m.group(1)
-            if pid:
-                # limpa marker da última user msg no contexto se possível
-                proj_ctx = build_query_context(pid, last_user, max_tokens=4500)
-                prepared.append({"role": "system", "content": proj_ctx})
+            code_ctx = await self._code_analyzer_block(
+                last_user, user_id=user_id or "default"
+            )
+            if code_ctx:
+                prepared.append({"role": "system", "content": code_ctx})
         except Exception as e:
-            logger.warning("project_analyzer: %s", e)
+            logger.warning("code_analyzer: %s", e)
 
         prepared.extend(context)
         return prepared, fact_saved, search_query, sources
+
+    async def _code_analyzer_block(
+        self, last_user: str, *, user_id: str = "default"
+    ) -> str:
+        """Prepara contexto de código sem mandar o projeto inteiro ao LLM."""
+        if not last_user or not isinstance(last_user, str):
+            return ""
+
+        level = detect_level(last_user)
+        max_tokens = {"quick": 2500, "targeted": 4500, "deep": 8000}.get(level, 4500)
+
+        # 1) project_id / pdf_id já ingeridos
+        pid = extract_project_id(last_user) or extract_pdf_id(last_user)
+        if pid:
+            # GitHub lazy → async fetch dos blobs relevantes
+            try:
+                return await build_query_context_async(
+                    pid, last_user, max_tokens=max_tokens, level=level
+                )
+            except Exception:
+                return build_query_context(
+                    pid, last_user, max_tokens=max_tokens, level=level
+                )
+
+        # 2) URL GitHub na mensagem → ingest + contexto
+        gh = parse_github_url(last_user)
+        if gh:
+            summary = await detect_and_prepare(last_user, user_id=user_id)
+            if summary and summary.get("project_id"):
+                pid = summary["project_id"]
+                ctx = await build_query_context_async(
+                    pid, last_user, max_tokens=max_tokens, level=level
+                )
+                header = (
+                    f"[Code Analyzer] Repositório {summary.get('name')} indexado "
+                    f"({summary.get('file_count', '?')} arquivos, "
+                    f"frameworks={summary.get('frameworks')}). "
+                    f"project_id={pid}\n"
+                )
+                return header + ctx
+            if summary and summary.get("error"):
+                return f"(Code Analyzer: falha ao indexar GitHub — {summary['error']})"
+
+        # 3) código inline longo
+        inline = extract_inline_code(last_user)
+        if inline and len(inline) > 120:
+            from .code_analyzer import ingest_direct_code
+
+            summary = ingest_direct_code(inline, name="inline", user_id=user_id)
+            pid = summary["project_id"]
+            return build_query_context(
+                pid, last_user, max_tokens=max_tokens, level=level
+            )
+
+        return ""
