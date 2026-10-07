@@ -46,7 +46,7 @@ class Settings:
     # Visão: multimodal confiável — Gemini 2.5 Flash
     OPENROUTER_DEFAULT_MODEL = os.getenv(
         "OPENROUTER_DEFAULT_MODEL",
-        "deepseek/deepseek-chat",
+        "openai/gpt-5.4-mini",
     ).strip()
 
     OPENROUTER_MODELS = [
@@ -57,6 +57,7 @@ class Settings:
             "google/gemini-2.5-flash-lite,"
             "google/gemini-2.5-flash,"
             "qwen/qwen2.5-vl-72b-instruct",
+            "openai/gpt-5.4-mini"
         ).split(",")
         if m.strip()
     ]
@@ -64,13 +65,13 @@ class Settings:
     # Modelo de conversa (Talk / chat casual / voz)
     CONVERSATION_MODEL = os.getenv(
         "CONVERSATION_MODEL",
-        "google/gemini-2.5-flash-lite",
+        "openai/gpt-5.4-mini",
     ).strip()
 
     # Modelo de programação (padrão do app quando modo Programar)
     CODING_MODEL = os.getenv(
         "CODING_MODEL",
-        "deepseek/deepseek-chat",
+        "openai/gpt-5.4-mini",
     ).strip()
 
     # ── Ollama (opcional / legado / local) ────────────────────────────
@@ -105,7 +106,7 @@ class Settings:
     # Visão (Image Analyzer / anexos de imagem)
     VISION_MODEL = os.getenv(
         "VISION_MODEL",
-        "google/gemini-2.5-flash",
+        "openai/gpt-5.4-mini",
     ).strip()
 
     @property
