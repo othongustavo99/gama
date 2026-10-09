@@ -10,6 +10,7 @@ from .code_analyzer.source_detector import (
     extract_project_id,
     extract_pdf_id,
     extract_inline_code,
+    extract_need_more_paths,
     parse_github_url,
     detect_level,
 )
@@ -182,7 +183,10 @@ class GamaCore:
         # ── Code Analyzer ────────────────────────────────────────────────
         try:
             code_ctx = await self._code_analyzer_block(
-                last_user, user_id=user_id or "default", session=session
+                last_user,
+                user_id=user_id or "default",
+                session=session,
+                messages=messages,
             )
             if code_ctx:
                 prepared.append({"role": "system", "content": code_ctx})
@@ -212,6 +216,7 @@ class GamaCore:
         *,
         user_id: str = "default",
         session: Optional[dict] = None,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> str:
         """Prepara contexto de código sem mandar o projeto inteiro ao LLM."""
         if not last_user or not isinstance(last_user, str):
@@ -223,6 +228,47 @@ class GamaCore:
         level = detect_level(last_user or "analise o projeto")
         max_tokens = {"quick": 2500, "targeted": 4500, "deep": 8000}.get(level, 4500)
 
+        # paths explícitos: [need_more:a,b] ou lib/.../file.dart no texto do usuário
+        extra_paths = extract_need_more_paths(last_user or "")
+
+        # se o usuário pede códigos completos mas não listou paths,
+        # reaproveita [need_more:...] ou paths da última resposta da assistente
+        qlow = (last_user or "").lower()
+        wants_codes = any(
+            k in qlow
+            for k in (
+                "códigos completos",
+                "codigos completos",
+                "código completo",
+                "codigo completo",
+                "conteúdo completo",
+                "conteudo completo",
+                "prontos para substituir",
+                "me de os codigo",
+                "me dê os código",
+            )
+        )
+        if wants_codes and not extra_paths and messages:
+            for m in reversed(messages[-8:]):
+                if (m.get("role") or "") != "assistant":
+                    continue
+                content = m.get("content") or ""
+                if isinstance(content, list):
+                    content = " ".join(
+                        (p.get("text") or "") for p in content if isinstance(p, dict)
+                    )
+                found = extract_need_more_paths(str(content))
+                if found:
+                    extra_paths = found
+                    break
+        if wants_codes:
+            level = "deep"
+            max_tokens = max(max_tokens, 16000)
+        if extra_paths:
+            level = "deep"
+            # vários arquivos completos → orçamento alto
+            max_tokens = max(max_tokens, min(28000, 5000 + 3500 * len(extra_paths)))
+
         # 1) project_id / pdf_id na mensagem OU projeto ativo da conversa
         pid = extract_project_id(last_user) or extract_pdf_id(last_user)
         if not pid and session and session.get("active_project_id"):
@@ -232,11 +278,19 @@ class GamaCore:
                 set_active_project(session, project_id=pid, source="marker")
             try:
                 return await build_query_context_async(
-                    pid, last_user or "contexto do projeto", max_tokens=max_tokens, level=level
+                    pid,
+                    last_user or "contexto do projeto",
+                    max_tokens=max_tokens,
+                    level=level,
+                    extra_paths=extra_paths or None,
                 )
             except Exception:
                 return build_query_context(
-                    pid, last_user or "contexto do projeto", max_tokens=max_tokens, level=level
+                    pid,
+                    last_user or "contexto do projeto",
+                    max_tokens=max_tokens,
+                    level=level,
+                    extra_paths=extra_paths or None,
                 )
 
         # 2) URL GitHub na mensagem OU salva na sessão desta conversa
@@ -260,7 +314,7 @@ class GamaCore:
                     if summary.get("name"):
                         add_action(session, f"Indexou GitHub {summary.get('name')}")
                 ctx = await build_query_context_async(
-                    pid, last_user, max_tokens=max_tokens, level=level
+                    pid, last_user, max_tokens=max_tokens, level=level, extra_paths=extra_paths or None
                 )
                 header = (
                     f"[Code Analyzer] Repositório {summary.get('name')} indexado "
@@ -280,7 +334,7 @@ class GamaCore:
             summary = ingest_direct_code(inline, name="inline", user_id=user_id)
             pid = summary["project_id"]
             return build_query_context(
-                pid, last_user, max_tokens=max_tokens, level=level
+                pid, last_user, max_tokens=max_tokens, level=level, extra_paths=extra_paths or None
             )
 
         return ""

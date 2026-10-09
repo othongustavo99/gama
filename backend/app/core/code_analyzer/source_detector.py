@@ -92,6 +92,14 @@ def detect_level(query: str) -> str:
         "completo e literal",
         "o que tem dentro",
         "me diga exatamente",
+        "códigos completos",
+        "codigos completos",
+        "código completo",
+        "codigo completo",
+        "me de os codigo",
+        "me dê os código",
+        "prontos para substituir",
+        "need_more",
     ]
     quick_hints = [
         "que linguagem",
@@ -109,3 +117,33 @@ def detect_level(query: str) -> str:
         if h in q:
             return "quick"
     return "targeted"
+
+
+_NEED_MORE_RE = re.compile(
+    r"\[need_more:\s*([^\]]+)\]",
+    re.I,
+)
+# paths soltos em lista tipo path/to/file.dart
+_PATH_LIKE_RE = re.compile(
+    r"(?:^|[\s,;]|\d+[.)]\s*)((?:lib|app|src|backend|frontend|android|ios|web|test|tests)/"
+    r"[\w./\-]+\.(?:dart|py|js|ts|tsx|jsx|java|kt|go|rs|swift|cs|rb|php|json|yaml|yml|md))",
+    re.I | re.M,
+)
+
+
+def extract_need_more_paths(text: str) -> list[str]:
+    """Extrai paths de [need_more:a,b,c] ou paths explícitos no texto."""
+    if not text:
+        return []
+    found: list[str] = []
+    for m in _NEED_MORE_RE.finditer(text):
+        raw = m.group(1)
+        for part in re.split(r"[,;\s]+", raw):
+            p = part.strip().lstrip("./").replace("\\", "/")
+            if p and p not in found and "." in p:
+                found.append(p)
+    for m in _PATH_LIKE_RE.finditer(text):
+        p = m.group(1).strip().lstrip("./").replace("\\", "/")
+        if p and p not in found:
+            found.append(p)
+    return found[:30]

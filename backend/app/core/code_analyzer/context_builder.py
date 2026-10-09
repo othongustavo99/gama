@@ -23,7 +23,24 @@ _FULL_CONTENT_RE = re.compile(
 
 
 def _wants_full_content(query: str) -> bool:
-    return bool(_FULL_CONTENT_RE.search(query or ""))
+    q = query or ""
+    if _FULL_CONTENT_RE.search(q):
+        return True
+    # [need_more:...] implica pedido de conteúdo integral desses paths
+    if "[need_more:" in q.lower():
+        return True
+    if any(
+        k in q.lower()
+        for k in (
+            "códigos completos",
+            "codigos completos",
+            "código completo",
+            "codigo completo",
+            "prontos para substituir",
+        )
+    ):
+        return True
+    return False
 
 
 def _budget_chars(max_tokens: int) -> int:
@@ -63,9 +80,10 @@ def build_context(
 
     # pedido de arquivo completo → orçamento bem maior só para esses arquivos
     if full_intent and forced:
-        max_tokens = max(max_tokens, 12000)
+        # 1 arquivo ~12k; vários arquivos completos escalam
+        max_tokens = max(max_tokens, min(32000, 8000 + 3500 * len(forced)))
     elif forced and level != "quick":
-        max_tokens = max(max_tokens, 7000)
+        max_tokens = max(max_tokens, min(16000, 5000 + 2000 * len(forced)))
 
     budget = _budget_chars(max_tokens)
     parts: list[str] = []
