@@ -514,29 +514,62 @@ memory_store = MemoryStore(user_id="default")
 
 
 def answer_memory_question(user_text: str, facts: List[dict]) -> Optional[str]:
-    """Responde diretamente perguntas simples cuja resposta está na memória."""
-    q = re.sub(r"\s+", " ", (user_text or "").strip().lower())
+    """Responde perguntas diretas com fatos de identidade já salvos na memória."""
+    q = re.sub(r"\s+", " ", (user_text or "").strip().casefold())
     if not q:
         return None
+
     asks_name = bool(re.search(
-        r"\b(qual [ée] o meu nome|qual [ée] meu nome|como eu me chamo|"
-        r"como me chamo|voc[eê] sabe meu nome|voc[eê] lembra meu nome|"
-        r"lembra do meu nome|qual meu nome)\b", q
+        r"\b(?:qual\s+(?:é\s+)?(?:o\s+)?meu\s+nome|qual\s+meu\s+nome|"
+        r"como\s+(?:eu\s+)?me\s+chamo|quem\s+sou\s+eu|"
+        r"qual\s+é\s+meu\s+apelido|qual\s+meu\s+apelido|"
+        r"voc[eê]\s+(?:sabe|lembra|recorda)\s+(?:qual\s+é\s+)?(?:o\s+)?meu\s+nome|"
+        r"lembra\s+(?:do\s+)?meu\s+nome)\b", q, re.I
     ))
     if not asks_name:
         return None
+
+    # Primeiro, os formatos estruturados que o extrator atual e versões antigas gravam.
     patterns = [
-        re.compile(r"\bmeu nome [ée]\s+(.+)$", re.I),
-        re.compile(r"\bme chamo\s+(.+)$", re.I),
-        re.compile(r"\bnome\s*:\s*(.+)$", re.I),
+        re.compile(r"^(?:nome preferido do usuário|nome preferido do usuario|"
+                   r"nome completo do usuário|nome completo do usuario|"
+                   r"nome do usuário|nome do usuario|meu nome|nome|"
+                   r"como me chamo|apelido)\s*:\s*(.+)$", re.I),
+        re.compile(r"^(?:meu nome\s+[ée]|eu\s+me\s+chamo|me\s+chamo|chamo-me)\s+(.+)$", re.I),
     ]
-    for fact in reversed(facts or []):
+
+    candidates = []
+    for idx, fact in enumerate(facts or []):
+        if not isinstance(fact, dict) or fact.get("superseded_at") or fact.get("status") == "superseded":
+            continue
         text = re.sub(r"\s+", " ", str(fact.get("text", "")).strip())
+        if not text:
+            continue
+        category = str(fact.get("category") or "").casefold()
+        source = str(fact.get("source") or "").casefold()
+        # Favorece fatos de identidade; preserva a ordem para escolher o mais recente.
+        priority = 2 if category == "identidade" else 1
+        candidates.append((priority, idx, text, source, category))
+
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    for _, _, text, source, category in candidates:
         for pattern in patterns:
             match = pattern.search(text)
             if match:
                 name = match.group(1).strip().strip(" .,!?:;\"'")
-                name = re.split(r"\s+(?:e eu|mas eu|porque|e também)\b", name, maxsplit=1, flags=re.I)[0]
-                if 1 <= len(name) <= 80:
+                name = re.split(
+                    r"\s+(?:e eu|mas eu|porque|e também|e tamb[eé]m)\b",
+                    name, maxsplit=1, flags=re.I
+                )[0].strip()
+                # Não responder a partir de frases inteiras acidentalmente gravadas.
+                if 1 <= len(name) <= 100 and not re.search(
+                    r"\b(?:gosto de|prefiro|moro em|trabalho como|tenho \d+ anos)\b",
+                    name, re.I
+                ):
                     return f"Seu nome é {name}."
+        # Compatibilidade com a memória legada que guardava apenas "Othon".
+        if source == "auto" and (category in {"identidade", "identidade_legada_possivel", ""}):
+            if re.fullmatch(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\-]*(?:\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\-]*){0,3}", text):
+                return f"Seu nome é {text}."
+
     return None
