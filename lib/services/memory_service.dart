@@ -42,34 +42,44 @@ class MemoryService {
 
   /// Após login Google: mescla memória de ids legados (google_<numeric>)
   /// na chave estável google_email_*.
+  /// Tenta todas as origens conhecidas e não falha o app se o endpoint
+  /// ainda não existir ou a rede cair.
   Future<void> migrateIfNeeded() async {
-    final from = IdentityService.instance.takeMigrateFrom();
-    if (from == null || from.isEmpty) return;
     final to = IdentityService.instance.userId;
-    if (from == to) return;
-    try {
-      await _dio().post(
-        '/memory/migrate',
-        data: {'from_user_id': from, 'to_user_id': to},
-        options: Options(
-          headers: {'X-User-Id': to},
-        ),
-      );
-    } catch (_) {
-      // silencioso: não bloqueia o app se o endpoint ainda não existir
+    if (to.isEmpty || to == 'default') return;
+
+    final candidates = <String>{};
+
+    final from = IdentityService.instance.takeMigrateFrom();
+    if (from != null && from.isNotEmpty && from != to) {
+      candidates.add(from);
     }
-    // tenta também o id numérico gravado
+
     final numeric = IdentityService.instance.googleNumericId;
     if (numeric != null && numeric.isNotEmpty) {
       final alt = 'google_$numeric';
-      if (alt != to && alt != from) {
-        try {
-          await _dio().post(
-            '/memory/migrate',
-            data: {'from_user_id': alt, 'to_user_id': to},
-            options: Options(headers: {'X-User-Id': to}),
-          );
-        } catch (_) {}
+      if (alt != to) candidates.add(alt);
+    }
+
+    // Também tenta id legado que possa estar ainda no prefs (sem consumir)
+    // — IdentityService.takeMigrateFrom já limpa as chaves principais.
+
+    for (final src in candidates) {
+      try {
+        final res = await _dio().post(
+          '/memory/migrate',
+          data: {'from_user_id': src, 'to_user_id': to},
+          options: Options(
+            headers: {'X-User-Id': to},
+            validateStatus: (s) => s != null && s < 500,
+          ),
+        );
+        // 404 = endpoint antigo sem migrate; 403 = política; 200 = ok
+        if (res.statusCode == 200) {
+          // sucesso — continua tentando outras origens se houver
+        }
+      } catch (_) {
+        // silencioso: não bloqueia o app
       }
     }
   }
