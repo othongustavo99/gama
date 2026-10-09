@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../models/message.dart';
+import '../utils/message_sanitize.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
 
@@ -138,9 +139,12 @@ class OllamaService {
     final dio = _client();
 
     try {
-      final requestMessages = messages
-          .map((message) => message.toJson())
-          .toList();
+      // Sanitiza histórico: tira base64 de imagens e dumps grandes de ZIP
+      final requestMessages = MessageSanitize.historyForApi(
+        messages
+            .map((m) => {'role': m.role, 'content': m.content})
+            .toList(),
+      );
 
       // Em modo fala / conversar: reforça no pedido para a resposta ser
       // apenas frases naturais, sem listas, código, tabelas ou símbolos.

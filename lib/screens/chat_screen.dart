@@ -20,6 +20,8 @@ import 'settings_screen.dart';
 import '../widgets/message_content.dart';
 import '../widgets/chat_composer.dart';
 import '../services/settings_service.dart';
+import '../services/download_service.dart';
+import '../utils/message_sanitize.dart';
 import '../services/tts_service.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -574,8 +576,8 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _processingAttachment = true;
       _processingLabel = isZip
-          ? 'Indexando projeto $name…'
-          : 'Processando $name…';
+          ? 'Anexando $name…'
+          : 'Anexando $name…';
     });
     try {
       final processed = await _attachmentService.processFile(path);
@@ -591,9 +593,6 @@ class _ChatScreenState extends State<ChatScreen> {
         bytes: processed.bytes,
         sourcePath: path,
       );
-      if (isZip && mounted) {
-        _snack('Projeto indexado: ${processed.label}');
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1199,11 +1198,88 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ? Alignment.centerRight
                                 : Alignment.centerLeft,
                             child: GestureDetector(
-                              onLongPress: () {
-                                Clipboard.setData(
-                                  ClipboardData(text: msg.content),
+                              onLongPress: () async {
+                                final action = await showModalBottomSheet<String>(
+                                  context: context,
+                                  backgroundColor: GamaColors.surfaceElevated,
+                                  shape: const RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.vertical(
+                                      top: Radius.circular(16),
+                                    ),
+                                  ),
+                                  builder: (ctx) => SafeArea(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        ListTile(
+                                          leading: const Icon(Icons.copy_rounded,
+                                              color: GamaColors.accent),
+                                          title: const Text('Copiar texto',
+                                              style: TextStyle(
+                                                  color: GamaColors.textPrimary)),
+                                          onTap: () => Navigator.pop(ctx, 'copy'),
+                                        ),
+                                        ListTile(
+                                          leading: const Icon(
+                                              Icons.download_rounded,
+                                              color: GamaColors.accent),
+                                          title: const Text(
+                                              'Baixar no dispositivo',
+                                              style: TextStyle(
+                                                  color: GamaColors.textPrimary)),
+                                          onTap: () =>
+                                              Navigator.pop(ctx, 'download'),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 );
-                                _snack('Mensagem copiada');
+                                if (!mounted || action == null) return;
+                                if (action == 'copy') {
+                                  // copia sem o bloco bruto de imagem base64
+                                  final clean = MessageSanitize.forApi(msg.content)
+                                      .replaceAll(
+                                          '[imagem gerada anteriormente nesta conversa]',
+                                          '');
+                                  await Clipboard.setData(
+                                      ClipboardData(text: clean.trim()));
+                                  _snack('Mensagem copiada');
+                                } else if (action == 'download') {
+                                  try {
+                                    // tenta salvar imagens embutidas
+                                    final re = RegExp(
+                                      r'\[gama_image\]\s*mime:([^\n]+)\s*data:([A-Za-z0-9+/=\s]+)\s*\[/gama_image\]',
+                                      multiLine: true,
+                                    );
+                                    var saved = 0;
+                                    for (final m in re.allMatches(msg.content)) {
+                                      await DownloadService.instance
+                                          .saveBase64Image(
+                                        m.group(2)!,
+                                        mime: m.group(1)!.trim(),
+                                      );
+                                      saved++;
+                                    }
+                                    final text = MessageSanitize.forApi(msg.content)
+                                        .replaceAll(
+                                            '[imagem gerada anteriormente nesta conversa]',
+                                            '')
+                                        .trim();
+                                    String? path;
+                                    if (text.length > 20) {
+                                      path = await DownloadService.instance
+                                          .saveText(text);
+                                    }
+                                    if (path != null) {
+                                      await DownloadService.instance.openPath(path);
+                                    }
+                                    _snack(saved > 0
+                                        ? 'Salvo ($saved imagem(ns))'
+                                        : 'Arquivo salvo no dispositivo');
+                                  } catch (e) {
+                                    _snack('Falha ao salvar: $e');
+                                  }
+                                }
                               },
                               child: Container(
                                 constraints: BoxConstraints(

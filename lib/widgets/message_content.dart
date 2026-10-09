@@ -6,6 +6,7 @@ import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/gama_colors.dart';
+import '../services/download_service.dart';
 
 class ParsedMessage {
   final String text;
@@ -199,17 +200,45 @@ class MessageContentView extends StatelessWidget {
               final bytes = base64Decode(img.base64);
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: Image.memory(
-                    bytes,
-                    fit: BoxFit.cover,
-                    gaplessPlayback: true,
-                    errorBuilder: (_, __, ___) => const Text(
-                      '[imagem indisponível]',
-                      style: TextStyle(color: GamaColors.textMuted),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Image.memory(
+                        bytes,
+                        fit: BoxFit.cover,
+                        gaplessPlayback: true,
+                        errorBuilder: (_, __, ___) => const Text(
+                          '[imagem indisponível]',
+                          style: TextStyle(color: GamaColors.textMuted),
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: GamaColors.accent,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        onPressed: () async {
+                          try {
+                            final path = await DownloadService.instance
+                                .saveBase64Image(
+                              img.base64,
+                              mime: img.mime,
+                            );
+                            await DownloadService.instance.openPath(path);
+                          } catch (_) {}
+                        },
+                        icon: const Icon(Icons.download_rounded, size: 18),
+                        label: const Text('Baixar imagem'),
+                      ),
+                    ),
+                  ],
                 ),
               );
             } catch (_) {
@@ -230,6 +259,29 @@ class MessageContentView extends StatelessWidget {
             (a) => Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: _AttachmentChip(preview: a, isUser: isUser),
+            ),
+          ),
+        ],
+        if (!isUser && parsed.text.trim().length > 40) ...[
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              style: TextButton.styleFrom(
+                foregroundColor: GamaColors.textMuted,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                visualDensity: VisualDensity.compact,
+              ),
+              onPressed: () async {
+                try {
+                  final path = await DownloadService.instance.saveText(
+                    parsed.text,
+                  );
+                  await DownloadService.instance.openPath(path);
+                } catch (_) {}
+              },
+              icon: const Icon(Icons.download_rounded, size: 18),
+              label: const Text('Baixar texto'),
             ),
           ),
         ],

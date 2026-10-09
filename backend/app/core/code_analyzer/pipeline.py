@@ -523,10 +523,10 @@ def build_query_context(
 
     # pedido de conteúdo completo → orçamento alto
     if _wants_full_file(query):
-        max_tokens = max(max_tokens, 12000)
+        max_tokens = min(max(max_tokens, 6000), 8000)
         level = "deep"
     elif level == "deep":
-        max_tokens = max(max_tokens, 7000)
+        max_tokens = min(max(max_tokens, 4500), 7000)
 
     return build_context(
         map_data,
@@ -630,7 +630,7 @@ async def build_query_context_async(
         map_data,
         ranked,
         query,
-        max_tokens=max_tokens if level != "deep" else max(max_tokens, 7000),
+        max_tokens=min(max_tokens if level != "deep" else max(max_tokens, 5000), 8000),
         level=level,
         source_label="Code Analyzer / GitHub",
         followup_paths=follow,

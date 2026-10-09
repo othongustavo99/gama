@@ -145,30 +145,18 @@ class AttachmentService {
         try {
           final summary = await _ingestProjectZip(path, name);
           final id = summary['project_id']?.toString() ?? '';
-          final fw = summary['frameworks'];
-          final langs = summary['languages'];
-          final count = summary['file_count'];
-          final samples =
-              (summary['sample_paths'] as List?)?.take(12).join('\n- ') ?? '';
-          final body = StringBuffer()
-            ..writeln('[project_id:$id]')
-            ..writeln('Projeto ZIP anexado: $name')
-            ..writeln('Arquivos indexados: $count')
-            ..writeln('Frameworks: $fw')
-            ..writeln('Linguagens: $langs')
-            ..writeln('Paths (amostra):')
-            ..writeln('- $samples')
-            ..writeln()
-            ..writeln(
-              'Use o Project Analyzer: investigue com base no índice. '
-              'Não peça o ZIP de novo. Se faltar arquivo, cite o path.',
-            );
+          // Marcador mínimo: o analyzer busca arquivos sob demanda.
+          // Não despejar lista de paths/frameworks no histórico (estoura contexto).
+          final body =
+              '[project_id:$id]\n'
+              'Projeto anexado: $name. Use o Code Analyzer com este project_id; '
+              'não peça o ZIP de novo.';
           return ProcessedAttachment(
             name: name,
             ext: ext,
             kind: kind,
-            contentForModel: body.toString(),
-            label: '$name (projeto)',
+            contentForModel: body,
+            label: name,
             bytes: bytes,
           );
         } catch (e) {

@@ -16,6 +16,57 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
+import re
+
+_GAMA_IMAGE_RE = re.compile(r"\[gama_image\][\s\S]*?\[/gama_image\]", re.I)
+_MAX_MSG_CHARS = 12_000
+_MAX_TOTAL_INPUT_CHARS = 280_000  # folga vs limite 400k tokens do OpenRouter
+
+
+def _strip_heavy_content(text: str) -> str:
+    if not text:
+        return ""
+    t = _GAMA_IMAGE_RE.sub("\n[imagem gerada anteriormente]\n", text)
+    if len(t) > _MAX_MSG_CHARS:
+        t = t[:_MAX_MSG_CHARS] + "\n\n…[cortado para caber no contexto]"
+    return t
+
+
+def _budget_messages(messages: list[dict]) -> list[dict]:
+    """Mantém mensagens recentes dentro do orçamento de caracteres."""
+    cleaned: list[dict] = []
+    for m in messages:
+        role = m.get("role") or "user"
+        content = m.get("content")
+        if isinstance(content, list):
+            # multimodal: limpa partes de texto; mantém image_url só da msg atual
+            parts = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text":
+                    parts.append({"type": "text", "text": _strip_heavy_content(str(part.get("text") or ""))})
+                else:
+                    parts.append(part)
+            cleaned.append({"role": role, "content": parts or ""})
+        else:
+            cleaned.append({"role": role, "content": _strip_heavy_content(str(content or ""))})
+
+    out: list[dict] = []
+    total = 0
+    for m in reversed(cleaned):
+        c = m.get("content")
+        if isinstance(c, list):
+            size = sum(len(str(p.get("text") or "")) for p in c if isinstance(p, dict))
+        else:
+            size = len(str(c or ""))
+        if out and total + size > _MAX_TOTAL_INPUT_CHARS:
+            break
+        out.insert(0, m)
+        total += size
+    return out
+
+
 
 class LLMClient:
     provider = settings.PROVIDER
@@ -77,6 +128,7 @@ class LLMClient:
         model = self.resolve_model(model)
         has_mm = any(isinstance(m.get("content"), list) for m in messages)
         msgs = self._normalize_messages(messages, keep_multimodal=has_mm)
+        msgs = _budget_messages(msgs)
 
         if settings.PROVIDER == "openrouter":
             if not settings.OPENROUTER_API_KEY:
@@ -127,6 +179,7 @@ class LLMClient:
         model = self.resolve_model(model)
         has_mm = any(isinstance(m.get("content"), list) for m in messages)
         msgs = self._normalize_messages(messages, keep_multimodal=has_mm)
+        msgs = _budget_messages(msgs)
 
         if settings.PROVIDER == "openrouter":
             async for line in self._stream_openai_compatible(model, msgs):

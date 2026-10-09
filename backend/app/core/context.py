@@ -13,7 +13,7 @@ class ContextManager:
       e mantém as mensagens mais recentes
     """
 
-    def __init__(self, max_messages: int = 48, summary_max_chars: int = 3500):
+    def __init__(self, max_messages: int = 32, summary_max_chars: int = 2500):
         self.max_messages = max_messages
         self.summary_max_chars = summary_max_chars
 
@@ -26,14 +26,25 @@ class ContextManager:
         if not messages:
             return []
 
-        normalized = [
-            {
+        normalized = []
+        for m in messages:
+            content = (m.get("content") or "").strip()
+            if not content:
+                continue
+            # evita reenviar base64 de imagens geradas
+            if "[gama_image]" in content:
+                import re
+                content = re.sub(
+                    r"\[gama_image\][\s\S]*?\[/gama_image\]",
+                    "[imagem gerada anteriormente]",
+                    content,
+                )
+            if len(content) > 12000:
+                content = content[:12000] + "\n…[cortado]"
+            normalized.append({
                 "role": m.get("role", "user"),
-                "content": (m.get("content") or "").strip(),
-            }
-            for m in messages
-            if (m.get("content") or "").strip()
-        ]
+                "content": content,
+            })
 
         if len(normalized) <= self.max_messages:
             return normalized
