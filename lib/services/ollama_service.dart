@@ -27,9 +27,11 @@ class WebSource {
 class ChatStreamEvent {
   final String? token;
   final String? memorySaved;
-  final String? phase; // searching | thinking | typing | generating_image | image_ready
+  final String?
+  phase; // searching | thinking | typing | generating_image | image_ready
   final String? webSearchQuery;
   final List<WebSource>? sources;
+
   /// Imagem gerada (base64 puro, sem data: prefix)
   final String? imageBase64;
   final String? imageMime;
@@ -132,8 +134,12 @@ class OllamaService {
     String? model,
     List<Map<String, String>>? images,
     bool voiceMode = false,
+
     /// 'conversar' | 'programar' — estilo da resposta no backend.
     String? chatMode,
+
+    /// ID da conversa no app — mantém project_id/ZIP entre mensagens.
+    String? conversationId,
   }) async* {
     final selectedModel = model ?? SettingsService.instance.model;
     final dio = _client();
@@ -141,9 +147,7 @@ class OllamaService {
     try {
       // Sanitiza histórico: tira base64 de imagens e dumps grandes de ZIP
       final requestMessages = MessageSanitize.historyForApi(
-        messages
-            .map((m) => {'role': m.role, 'content': m.content})
-            .toList(),
+        messages.map((m) => {'role': m.role, 'content': m.content}).toList(),
       );
 
       // Em modo fala / conversar: reforça no pedido para a resposta ser

@@ -587,15 +587,73 @@ async def build_query_context_async(
     ranked_meta.sort(key=lambda x: -x["score"])
     ranked_meta = rank_for_query(ranked_meta, query, level=level)
 
+    # Resolve nomes soltos (attachment_service.dart) → path completo no tree
     if extra_paths:
-        have = {r["path"] for r in ranked_meta}
+        from .code_search import find_matching_paths, extract_mentioned_filenames
+        resolved: list[str] = []
         for ep in extra_paths:
-            ep = ep.strip().lstrip("./")
-            if ep and ep not in have:
-                ranked_meta.insert(0, {"path": ep, "score": 999, "important": True})
+            ep = (ep or "").strip().lstrip("./")
+            if not ep:
+                continue
+            # match exato
+            exact = [f["path"] for f in files if f["path"] == ep or f["path"].endswith("/" + ep)]
+            if exact:
+                resolved.extend(exact)
+                continue
+            # basename / fuzzy
+            matches = find_matching_paths(files, [ep])
+            if matches:
+                resolved.extend(matches)
+            else:
+                resolved.append(ep)  # tenta path cru mesmo assim
 
-    paths = [r["path"] for r in ranked_meta[:18]]
-    texts = await _load_github_texts(meta, paths)
+        # também nomes mencionados na query
+        mentioned = extract_mentioned_filenames(query)
+        if mentioned:
+            resolved.extend(find_matching_paths(files, mentioned))
+
+        # dedupe preservando ordem
+        seen = set()
+        ordered = []
+        for r in resolved:
+            if r not in seen:
+                seen.add(r)
+                ordered.append(r)
+
+        have = {r["path"] for r in ranked_meta}
+        for ep in ordered:
+            if ep not in have:
+                ranked_meta.insert(
+                    0, {"path": ep, "score": 999, "important": True, "forced": True}
+                )
+            else:
+                for r in ranked_meta:
+                    if r["path"] == ep:
+                        r["score"] = 999
+                        r["forced"] = True
+                        r["important"] = True
+        # forced no topo
+        ranked_meta.sort(key=lambda r: (0 if r.get("forced") else 1, -float(r.get("score") or 0)))
+
+    # sempre prioriza forced / high score no fetch
+    paths = []
+    for r in ranked_meta:
+        if r["path"] not in paths:
+            paths.append(r["path"])
+        if len(paths) >= 18:
+            break
+    # garante extra_paths no fetch mesmo se ranking os empurrou
+    if extra_paths:
+        for ep in extra_paths:
+            ep = (ep or "").strip().lstrip("./")
+            if not ep:
+                continue
+            matches = [f["path"] for f in files if f["path"] == ep or f["path"].endswith("/" + ep) or Path(f["path"]).name.lower() == Path(ep).name.lower()]
+            for m in matches or [ep]:
+                if m not in paths:
+                    paths.insert(0, m)
+
+    texts = await _load_github_texts(meta, paths[:24])
 
     # cache no workspace para próximas queries
     scan = workspace(project_id)

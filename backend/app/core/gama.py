@@ -305,7 +305,46 @@ class GamaCore:
             # vários arquivos completos → orçamento alto
             max_tokens = min(max(max_tokens, 5000 + 2500 * len(extra_paths)), 12000)
 
-        # 1) project_id / pdf_id na mensagem OU projeto ativo da conversa
+        # 1) URL GitHub NA MENSAGEM ATUAL → prioridade (não ficar preso no ZIP antigo)
+        gh_now = parse_github_url(last_user)
+        if gh_now:
+            summary = await detect_and_prepare(last_user, user_id=user_id)
+            if summary and summary.get("project_id"):
+                pid = summary["project_id"]
+                if session is not None:
+                    set_active_project(
+                        session,
+                        project_id=pid,
+                        name=summary.get("name"),
+                        source=summary.get("source") or "github",
+                    )
+                    session["github_url"] = gh_now.get("url") or session.get("github_url")
+                    if summary.get("name"):
+                        add_action(session, f"Indexou GitHub {summary.get('name')}")
+                ctx = await build_query_context_async(
+                    pid,
+                    last_user,
+                    max_tokens=max_tokens,
+                    level=level,
+                    extra_paths=extra_paths or None,
+                )
+                header = (
+                    f"[Code Analyzer] Repositório {summary.get('name')} indexado "
+                    f"({summary.get('file_count', '?')} arquivos, "
+                    f"frameworks={summary.get('frameworks')}). "
+                    f"project_id={pid}\n"
+                    "Instrução: o contexto abaixo contém arquivos deste GitHub. "
+                    "Se o usuário pediu um arquivo pelo nome, o conteúdo está (ou deveria estar) "
+                    "neste bloco — responda com base nele e NÃO diga que não tem o arquivo.\n"
+                )
+                return header + (ctx or "")
+            if summary and summary.get("error"):
+                return (
+                    f"(Code Analyzer: falha ao indexar GitHub — {summary['error']}. "
+                    "Verifique se o repo é público ou se GITHUB_TOKEN está configurado no backend.)"
+                )
+
+        # 2) project_id / pdf_id na mensagem OU projeto ativo da conversa
         pid = extract_project_id(last_user) or extract_pdf_id(last_user)
         if not pid and session and session.get("active_project_id"):
             pid = session["active_project_id"]
@@ -329,15 +368,16 @@ class GamaCore:
                     extra_paths=extra_paths or None,
                 )
 
-        # 2) URL GitHub na mensagem OU salva na sessão desta conversa
-        gh = parse_github_url(last_user)
-        if not gh and session and session.get("github_url"):
+        # 3) GitHub só na sessão (sem URL nesta mensagem)
+        gh = None
+        if session and session.get("github_url"):
             gh = parse_github_url(session["github_url"])
-            # reforça a pergunta com o url para o ranking de arquivos
             if gh and last_user and session["github_url"] not in last_user:
                 last_user = f"{last_user}\n{session['github_url']}"
         if gh:
-            summary = await detect_and_prepare(last_user, user_id=user_id)
+            summary = await detect_and_prepare(
+                session.get("github_url") or last_user, user_id=user_id
+            )
             if summary and summary.get("project_id"):
                 pid = summary["project_id"]
                 if session is not None:
@@ -347,18 +387,14 @@ class GamaCore:
                         name=summary.get("name"),
                         source=summary.get("source") or "github",
                     )
-                    if summary.get("name"):
-                        add_action(session, f"Indexou GitHub {summary.get('name')}")
                 ctx = await build_query_context_async(
                     pid, last_user, max_tokens=max_tokens, level=level, extra_paths=extra_paths or None
                 )
                 header = (
-                    f"[Code Analyzer] Repositório {summary.get('name')} indexado "
-                    f"({summary.get('file_count', '?')} arquivos, "
-                    f"frameworks={summary.get('frameworks')}). "
-                    f"project_id={pid}\n"
+                    f"[Code Analyzer] Repositório {summary.get('name')} "
+                    f"(project_id={pid})\n"
                 )
-                return header + ctx
+                return header + (ctx or "")
             if summary and summary.get("error"):
                 return f"(Code Analyzer: falha ao indexar GitHub — {summary['error']})"
 

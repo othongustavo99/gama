@@ -48,6 +48,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Arquivos anexados (ainda não enviados)
   final List<ProcessedAttachment> _attachments = [];
+
   /// True enquanto um anexo (esp. ZIP) está sendo processado/indexado.
   bool _processingAttachment = false;
   String? _processingLabel;
@@ -575,9 +576,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final isZip = name.toLowerCase().endsWith('.zip');
     setState(() {
       _processingAttachment = true;
-      _processingLabel = isZip
-          ? 'Anexando $name…'
-          : 'Anexando $name…';
+      _processingLabel = isZip ? 'Anexando $name…' : 'Anexando $name…';
     });
     try {
       final processed = await _attachmentService.processFile(path);
@@ -1200,50 +1199,66 @@ class _ChatScreenState extends State<ChatScreen> {
                                 : Alignment.centerLeft,
                             child: GestureDetector(
                               onLongPress: () async {
-                                final action = await showModalBottomSheet<String>(
-                                  context: context,
-                                  backgroundColor: GamaColors.surfaceElevated,
-                                  shape: const RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.vertical(
-                                      top: Radius.circular(16),
-                                    ),
-                                  ),
-                                  builder: (ctx) => SafeArea(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        ListTile(
-                                          leading: const Icon(Icons.copy_rounded,
-                                              color: GamaColors.accent),
-                                          title: const Text('Copiar texto',
-                                              style: TextStyle(
-                                                  color: GamaColors.textPrimary)),
-                                          onTap: () => Navigator.pop(ctx, 'copy'),
+                                final action =
+                                    await showModalBottomSheet<String>(
+                                      context: context,
+                                      backgroundColor:
+                                          GamaColors.surfaceElevated,
+                                      shape: const RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.vertical(
+                                          top: Radius.circular(16),
                                         ),
-                                        ListTile(
-                                          leading: const Icon(
-                                              Icons.download_rounded,
-                                              color: GamaColors.accent),
-                                          title: const Text(
-                                              'Baixar no dispositivo',
-                                              style: TextStyle(
-                                                  color: GamaColors.textPrimary)),
-                                          onTap: () =>
-                                              Navigator.pop(ctx, 'download'),
+                                      ),
+                                      builder: (ctx) => SafeArea(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            ListTile(
+                                              leading: const Icon(
+                                                Icons.copy_rounded,
+                                                color: GamaColors.accent,
+                                              ),
+                                              title: const Text(
+                                                'Copiar texto',
+                                                style: TextStyle(
+                                                  color: GamaColors.textPrimary,
+                                                ),
+                                              ),
+                                              onTap: () =>
+                                                  Navigator.pop(ctx, 'copy'),
+                                            ),
+                                            ListTile(
+                                              leading: const Icon(
+                                                Icons.download_rounded,
+                                                color: GamaColors.accent,
+                                              ),
+                                              title: const Text(
+                                                'Baixar no dispositivo',
+                                                style: TextStyle(
+                                                  color: GamaColors.textPrimary,
+                                                ),
+                                              ),
+                                              onTap: () => Navigator.pop(
+                                                ctx,
+                                                'download',
+                                              ),
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
-                                  ),
-                                );
+                                      ),
+                                    );
                                 if (!mounted || action == null) return;
                                 if (action == 'copy') {
                                   // copia sem o bloco bruto de imagem base64
-                                  final clean = MessageSanitize.forApi(msg.content)
-                                      .replaceAll(
-                                          '[imagem gerada anteriormente nesta conversa]',
-                                          '');
+                                  final clean =
+                                      MessageSanitize.forApi(msg.content)
+                                          .replaceAll(
+                                            '[imagem gerada anteriormente nesta conversa]',
+                                            '',
+                                          );
                                   await Clipboard.setData(
-                                      ClipboardData(text: clean.trim()));
+                                    ClipboardData(text: clean.trim()),
+                                  );
                                   _snack('Mensagem copiada');
                                 } else if (action == 'download') {
                                   try {
@@ -1253,30 +1268,38 @@ class _ChatScreenState extends State<ChatScreen> {
                                       multiLine: true,
                                     );
                                     var saved = 0;
-                                    for (final m in re.allMatches(msg.content)) {
+                                    for (final m in re.allMatches(
+                                      msg.content,
+                                    )) {
                                       await DownloadService.instance
                                           .saveBase64Image(
-                                        m.group(2)!,
-                                        mime: m.group(1)!.trim(),
-                                      );
+                                            m.group(2)!,
+                                            mime: m.group(1)!.trim(),
+                                          );
                                       saved++;
                                     }
-                                    final text = MessageSanitize.forApi(msg.content)
-                                        .replaceAll(
-                                            '[imagem gerada anteriormente nesta conversa]',
-                                            '')
-                                        .trim();
+                                    final text =
+                                        MessageSanitize.forApi(msg.content)
+                                            .replaceAll(
+                                              '[imagem gerada anteriormente nesta conversa]',
+                                              '',
+                                            )
+                                            .trim();
                                     String? path;
                                     if (text.length > 20) {
                                       path = await DownloadService.instance
                                           .saveText(text);
                                     }
                                     if (path != null) {
-                                      await DownloadService.instance.openPath(path);
+                                      await DownloadService.instance.openPath(
+                                        path,
+                                      );
                                     }
-                                    _snack(saved > 0
-                                        ? 'Salvo ($saved imagem(ns))'
-                                        : 'Arquivo salvo no dispositivo');
+                                    _snack(
+                                      saved > 0
+                                          ? 'Salvo ($saved imagem(ns))'
+                                          : 'Arquivo salvo no dispositivo',
+                                    );
                                   } catch (e) {
                                     _snack('Falha ao salvar: $e');
                                   }
