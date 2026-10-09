@@ -104,9 +104,10 @@ def build_context(
             f"Arquivos pedidos (conteúdo integral abaixo): {paths}\n"
             f"Pergunta: {query.strip()[:300]}\n"
             "Instrução interna: os arquivos abaixo foram carregados NA ÍNTEGRA. "
-            "Você TEM o texto completo. Reproduza ou analise com base nele. "
-            "NÃO diga que o conteúdo está parcial/truncado. "
-            "NÃO peça para o usuário colar o arquivo de novo.\n"
+            "Você TEM o texto completo. Se o usuário pedir o código/exato/completo, "
+            "REPRODUZA o arquivo inteiro em um bloco de código (com path no cabeçalho). "
+            "NÃO diga que não tem o texto. NÃO peça para colar de novo. "
+            "NÃO diga que o conteúdo está parcial/truncado.\n"
         )
     else:
         parts.append(

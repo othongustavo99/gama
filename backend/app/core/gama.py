@@ -267,8 +267,7 @@ class GamaCore:
         except Exception:
             pass
 
-        # se o usuário pede códigos completos mas não listou paths,
-        # reaproveita [need_more:...] ou paths da última resposta da assistente
+        # Pedido de código integral / "me de o código" (follow-up sem path)
         qlow = (last_user or "").lower()
         wants_codes = any(
             k in qlow
@@ -282,27 +281,88 @@ class GamaCore:
                 "prontos para substituir",
                 "me de os codigo",
                 "me dê os código",
+                "me de o codigo",
+                "me dê o código",
+                "me de o código",
+                "me dê o codigo",
+                "exatamente o codigo",
+                "exatamente o código",
+                "o codigo completo",
+                "o código completo",
+                "mostra o codigo",
+                "mostra o código",
+                "cole o codigo",
+                "cole o código",
+                "reproduz o codigo",
+                "reproduz o código",
+                "código exato",
+                "codigo exato",
+                "texto integral",
+                "arquivo completo",
+                "na íntegra",
+                "na integra",
+                "full content",
+                "entire file",
             )
         )
-        if wants_codes and not extra_paths and messages:
-            for m in reversed(messages[-8:]):
-                if (m.get("role") or "") != "assistant":
-                    continue
-                content = m.get("content") or ""
-                if isinstance(content, list):
-                    content = " ".join(
-                        (p.get("text") or "") for p in content if isinstance(p, dict)
-                    )
-                found = extract_need_more_paths(str(content))
-                if found:
-                    extra_paths = found
-                    break
-        if wants_codes:
+
+        def _collect_paths_from_text(text: str) -> list[str]:
+            found: list[str] = []
+            try:
+                from .code_analyzer.code_search import extract_mentioned_filenames
+                found.extend(extract_mentioned_filenames(text or ""))
+            except Exception:
+                pass
+            found.extend(extract_need_more_paths(text or ""))
+            return found
+
+        # Se pediu o código mas não citou arquivo nesta mensagem:
+        # 1) sessão (files_mentioned)
+        # 2) mensagens recentes do usuário
+        # 3) última resposta da assistente (paths / need_more)
+        if wants_codes and not extra_paths:
+            for fm in (session or {}).get("files_mentioned") or []:
+                if fm and fm not in extra_paths:
+                    extra_paths.append(fm)
+            if messages:
+                for m in reversed(messages[-12:]):
+                    content = m.get("content") or ""
+                    if isinstance(content, list):
+                        content = " ".join(
+                            str(p.get("text") or "")
+                            for p in content
+                            if isinstance(p, dict)
+                        )
+                    for path in _collect_paths_from_text(str(content)):
+                        if path and path not in extra_paths:
+                            extra_paths.append(path)
+                    if len(extra_paths) >= 8:
+                        break
+
+        # Mesmo sem frase "código completo": se há projeto ativo e a msg
+        # só pede o arquivo já discutido, força reload
+        if not extra_paths and session and session.get("files_mentioned"):
+            if any(
+                k in qlow
+                for k in (
+                    "esse arquivo",
+                    "este arquivo",
+                    "o arquivo",
+                    "dele",
+                    "desse arquivo",
+                    "código",
+                    "codigo",
+                )
+            ):
+                for fm in session.get("files_mentioned") or []:
+                    if fm and fm not in extra_paths:
+                        extra_paths.append(fm)
+
+        if wants_codes or extra_paths:
             level = "deep"
-            max_tokens = min(max(max_tokens, 6000), 9000)
+            max_tokens = min(max(max_tokens, 6000), 10000)
         if extra_paths:
             level = "deep"
-            # vários arquivos completos → orçamento alto
             max_tokens = min(max(max_tokens, 5000 + 2500 * len(extra_paths)), 12000)
 
         # 1) URL GitHub NA MENSAGEM ATUAL → prioridade (não ficar preso no ZIP antigo)
