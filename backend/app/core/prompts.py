@@ -26,6 +26,7 @@ Adapte o estilo APENAS nesta resposta:
 def build_system_prompt(
     memory_block: str = "",
     *,
+    behavior_block: str = "",
     web_enabled: bool = True,
     voice_mode: bool = False,
     conversational_mode: bool = False,
@@ -184,9 +185,16 @@ Este é o modelo de conversa. Priorize respostas naturais, simples e fáceis de 
 NOTA: a busca na web está desligada neste ambiente (WEB_SEARCH_ENABLED=0).
 """
 
-    parts = [base, extra.strip()]
+    parts = [base]
 
-    # Talk Skill (camada de estilo — depois das skills, antes da memória)
+    # Regras de comportamento do usuário: prioridade de ESTILO sobre a persona padrão.
+    # Ficam logo após a identidade, antes de capacidades/Talk/memória factual.
+    if behavior_block and behavior_block.strip():
+        parts.append(behavior_block.strip())
+
+    parts.append(extra.strip())
+
+    # Talk Skill (camada de estilo situacional — não anula regras do usuário)
     if talk_layer and talk_layer.strip():
         header = "TALK SKILL ATIVA"
         if talk_mode:

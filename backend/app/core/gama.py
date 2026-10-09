@@ -146,6 +146,11 @@ class GamaCore:
         except Exception:
             memory_block = ""
 
+        try:
+            behavior_block = store.as_behavior_block()
+        except Exception:
+            behavior_block = ""
+
         mode = (chat_mode or "").strip().lower()
         conversational_mode = mode in {"conversar", "conversation", "conversational"} or (
             "20b" in (model or "").lower() and mode != "programar"
@@ -177,6 +182,7 @@ class GamaCore:
 
         system_prompt = build_system_prompt(
             memory_block=memory_block,
+            behavior_block=behavior_block,
             web_enabled=web_on,
             voice_mode=voice_mode,
             conversational_mode=conversational_mode,
