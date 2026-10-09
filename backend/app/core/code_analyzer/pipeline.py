@@ -49,6 +49,18 @@ def _stem_close(path: str, mention: str) -> bool:
     return aliases.get(a) == b or aliases.get(b) == a
 
 
+
+def _wants_full_file(query: str) -> bool:
+    q = (query or "").lower()
+    keys = (
+        "conteúdo completo", "conteudo completo", "texto integral", "texto completo",
+        "texto literal", "arquivo completo", "linha por linha", "na íntegra", "na integra",
+        "completo e literal", "o que tem dentro", "me diga exatamente", "full content",
+        "entire file", "whole file",
+    )
+    return any(k in q for k in keys)
+
+
 def _scan_root_for(project_id: str, meta: dict[str, Any]) -> Path:
     root = workspace(project_id)
     rel = meta.get("scan_root") or "."
@@ -509,11 +521,18 @@ def build_query_context(
     ranked.sort(key=lambda r: (0 if r.get("forced") else 1, -float(r.get("score") or 0)))
     follow = suggest_followup_paths(ranked, files, query) if level != "quick" else []
 
+    # pedido de conteúdo completo → orçamento alto
+    if _wants_full_file(query):
+        max_tokens = max(max_tokens, 12000)
+        level = "deep"
+    elif level == "deep":
+        max_tokens = max(max_tokens, 7000)
+
     return build_context(
         map_data,
         ranked,
         query,
-        max_tokens=max_tokens if level != "deep" else max(max_tokens, 7000),
+        max_tokens=max_tokens,
         level=level,
         source_label="Code Analyzer",
         followup_paths=follow,

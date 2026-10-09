@@ -79,6 +79,19 @@ def detect_level(query: str) -> str:
         "problemas no projeto",
         "deep",
         "full analysis",
+        # pedido de conteúdo integral de arquivo(s)
+        "conteúdo completo",
+        "conteudo completo",
+        "texto integral",
+        "texto completo",
+        "texto literal",
+        "arquivo completo",
+        "linha por linha",
+        "na íntegra",
+        "na integra",
+        "completo e literal",
+        "o que tem dentro",
+        "me diga exatamente",
     ]
     quick_hints = [
         "que linguagem",
