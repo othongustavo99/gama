@@ -22,14 +22,45 @@ class ProjectsScreen extends StatelessWidget {
         builder: (context, _) {
           final pinned = service.pinnedConversations;
           if (pinned.isEmpty) {
-            return const Center(
+            return Center(
               child: Padding(
-                padding: EdgeInsets.all(28),
-                child: Text(
-                  'Nenhum projeto ainda.\n'
-                  'Fixe uma conversa no menu ⋮ do drawer para aparecer aqui.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: GamaColors.textMuted, height: 1.4),
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        color: GamaColors.accentSoft,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: const Icon(
+                        Icons.folder_special_rounded,
+                        color: GamaColors.accent,
+                        size: 32,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Nenhum projeto ainda',
+                      style: TextStyle(
+                        color: GamaColors.textPrimary,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Fixe uma conversa no menu ⋮ do histórico (drawer) '
+                      'para ela aparecer aqui como espaço de trabalho.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: GamaColors.textMuted,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -40,6 +71,11 @@ class ProjectsScreen extends StatelessWidget {
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (_, i) {
               final c = pinned[i];
+              final updated = c.updatedAt;
+              final dd = updated.day.toString().padLeft(2, '0');
+              final mm = updated.month.toString().padLeft(2, '0');
+              final hh = updated.hour.toString().padLeft(2, '0');
+              final mi = updated.minute.toString().padLeft(2, '0');
               return Material(
                 color: GamaColors.surfaceCard,
                 borderRadius: BorderRadius.circular(14),
@@ -55,6 +91,13 @@ class ProjectsScreen extends StatelessWidget {
                     c.title,
                     style: const TextStyle(color: GamaColors.textPrimary),
                   ),
+                  subtitle: Text(
+                    'Atualizado $dd/$mm $hh:$mi',
+                    style: const TextStyle(
+                      color: GamaColors.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
                   trailing: const Icon(
                     Icons.chevron_right_rounded,
                     color: GamaColors.textMuted,
@@ -62,6 +105,36 @@ class ProjectsScreen extends StatelessWidget {
                   onTap: () async {
                     await service.selectConversation(c.id);
                     if (context.mounted) Navigator.pop(context);
+                  },
+                  onLongPress: () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        backgroundColor: GamaColors.surfaceCard,
+                        title: const Text(
+                          'Desafixar projeto?',
+                          style: TextStyle(color: GamaColors.textPrimary),
+                        ),
+                        content: Text(
+                          'A conversa "${c.title}" sai da lista de projetos, '
+                          'mas continua no histórico.',
+                          style: const TextStyle(color: GamaColors.textSecondary),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('Cancelar'),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text('Desafixar'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirm == true) {
+                      await service.togglePin(c.id);
+                    }
                   },
                 ),
               );

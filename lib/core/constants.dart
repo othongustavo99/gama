@@ -1,12 +1,31 @@
+/// Constantes centrais do app Frequência40 / Gamma.
 class AppConstants {
+  /// URL base da API (HTTPS obrigatório para APK release).
   static const String apiBaseUrl =
       'https://gama-production-592b.up.railway.app';
 
-  static const String modelProgramar = 'openai/gpt-oss-120b';
-  static const String modelConversar = 'openai/gpt-oss-20b';
+  /// Modo Programar — código, debug, arquitetura, análise de ZIP/PDF.
+  static const String modelProgramar = 'openai/gpt-4o-mini';
 
-  /// Default = programar
+  /// Modo Conversar — diálogo rápido, voz, memória leve.
+  static const String modelConversar = 'openai/gpt-4o-mini';
+
   static const String defaultModel = modelProgramar;
 
-  static const List<String> availableModels = [modelProgramar, modelConversar];
+  static const List<String> availableModels = [
+    modelProgramar,
+    modelConversar,
+  ];
+
+  static const Map<String, String> modelLabels = {
+    'openai/gpt-4o-mini': 'GPT-4o Mini',
+    'openai/gpt-4o': 'GPT-4o',
+    'google/gemini-2.0-flash-001': 'Gemini 2.0 Flash',
+    'deepseek/deepseek-chat': 'DeepSeek Chat',
+    'qwen/qwen-2.5-coder-32b-instruct': 'Qwen 2.5 Coder',
+  };
+
+  static String labelFor(String modelId) {
+    return modelLabels[modelId] ?? modelId.split('/').last;
+  }
 }

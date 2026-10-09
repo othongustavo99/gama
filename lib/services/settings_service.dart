@@ -2,11 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
 
-/// Modo de uso → modelo Groq.
-enum GamaMode {
-  programar, // openai/gpt-oss-120b
-  conversar, // openai/gpt-oss-20b
-}
+enum GamaMode { programar, conversar }
 
 class SettingsService {
   SettingsService._();
@@ -40,9 +36,12 @@ class SettingsService {
     return _prefs.getString(_keyApiBaseUrl) ?? AppConstants.apiBaseUrl;
   }
 
+  /// Modelo efetivo. Prefere o valor salvo se estiver na lista do backend;
+  /// senão deriva do modo.
   String get model {
     _ensureInitialized();
-    // sempre deriva do modo (fonte da verdade)
+    final saved = _prefs.getString(_keyModel)?.trim();
+    if (saved != null && saved.isNotEmpty) return saved;
     return mode == GamaMode.conversar
         ? AppConstants.modelConversar
         : AppConstants.modelProgramar;
@@ -68,18 +67,15 @@ class SettingsService {
   Future<void> setBaseUrl(String url) async {
     _ensureInitialized();
     final cleaned = url.trim().replaceAll(RegExp(r'/$'), '');
+    if (cleaned.isEmpty) return;
     await _prefs.setString(_keyApiBaseUrl, cleaned);
   }
 
   Future<void> setModel(String model) async {
     _ensureInitialized();
-    await _prefs.setString(_keyModel, model.trim());
-    // sincroniza modo
-    if (model.contains('20b')) {
-      await _prefs.setString(_keyMode, 'conversar');
-    } else {
-      await _prefs.setString(_keyMode, 'programar');
-    }
+    final m = model.trim();
+    if (m.isEmpty) return;
+    await _prefs.setString(_keyModel, m);
   }
 
   Future<void> setMode(GamaMode mode) async {
@@ -87,12 +83,6 @@ class SettingsService {
     await _prefs.setString(
       _keyMode,
       mode == GamaMode.conversar ? 'conversar' : 'programar',
-    );
-    await _prefs.setString(
-      _keyModel,
-      mode == GamaMode.conversar
-          ? AppConstants.modelConversar
-          : AppConstants.modelProgramar,
     );
   }
 

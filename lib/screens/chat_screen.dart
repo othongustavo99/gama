@@ -46,6 +46,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Arquivos anexados (ainda não enviados)
   final List<ProcessedAttachment> _attachments = [];
+  /// True enquanto um anexo (esp. ZIP) está sendo processado/indexado.
+  bool _processingAttachment = false;
+  String? _processingLabel;
   final _attachmentService = AttachmentService();
   final SpeechToText _speech = SpeechToText();
   bool _speechReady = false;
@@ -566,17 +569,37 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _addPath(String path) async {
+    final name = path.split(RegExp(r'[/\\]')).last;
+    final isZip = name.toLowerCase().endsWith('.zip');
+    setState(() {
+      _processingAttachment = true;
+      _processingLabel = isZip
+          ? 'Indexando projeto $name…'
+          : 'Processando $name…';
+    });
     try {
       final processed = await _attachmentService.processFile(path);
       if (!mounted) return;
-      setState(() => _attachments.add(processed));
+      setState(() {
+        _attachments.add(processed);
+        _processingAttachment = false;
+        _processingLabel = null;
+      });
       await LibraryScreen.addEntry(
         name: processed.name,
         kind: processed.kind.name,
         bytes: processed.bytes,
         sourcePath: path,
       );
+      if (isZip && mounted) {
+        _snack('Projeto indexado: ${processed.label}');
+      }
     } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _processingAttachment = false;
+        _processingLabel = null;
+      });
       _snack('$e');
     }
   }
@@ -1249,6 +1272,39 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
 
         // Anexos pendentes
+        if (_processingAttachment)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: GamaColors.accentSoft,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: GamaColors.accent.withOpacity(0.35)),
+            ),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: GamaColors.accent,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _processingLabel ?? 'Processando anexo…',
+                    style: const TextStyle(
+                      color: GamaColors.textPrimary,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         if (_attachments.isNotEmpty)
           Container(
             width: double.infinity,
