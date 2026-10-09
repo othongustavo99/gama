@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/constants.dart';
 import '../core/gama_colors.dart';
+import '../services/memory_service.dart';
 import '../services/ollama_service.dart';
 import '../services/settings_service.dart';
 
@@ -15,6 +16,9 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _urlController = TextEditingController();
   final _api = OllamaService();
+  final _memory = MemoryService();
+
+  bool _resettingMemory = false;
 
   List<String> _models = [];
   String? _selectedModel;
@@ -103,6 +107,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (ok) await _loadModels();
   }
 
+  Future<void> _resetMemory() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: GamaColors.surfaceCard,
+        title: const Text(
+          'Resetar memória?',
+          style: TextStyle(color: GamaColors.textPrimary),
+        ),
+        content: const Text(
+          'Todos os fatos que a Gama guardou sobre você serão apagados. '
+          'Essa ação não pode ser desfeita.',
+          style: TextStyle(color: GamaColors.textMuted, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: GamaColors.error),
+            child: const Text('Resetar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _resettingMemory = true);
+    String message;
+    try {
+      await _memory.clear();
+      message = 'Memória resetada';
+    } catch (e) {
+      message = 'Não foi possível resetar a memória. Verifique a conexão.';
+    }
+    if (!mounted) return;
+    setState(() => _resettingMemory = false);
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _save() async {
     await SettingsService.instance.setBaseUrl(_urlController.text);
     await SettingsService.instance.setMode(_mode);
@@ -112,9 +159,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await SettingsService.instance.setTtsAuto(_ttsAuto);
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Configurações salvas')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Configurações salvas')));
     Navigator.pop(context);
   }
 
@@ -149,7 +195,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: GamaColors.accent, width: 1.2),
+                borderSide: const BorderSide(
+                  color: GamaColors.accent,
+                  width: 1.2,
+                ),
               ),
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 14,
@@ -289,8 +338,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _loadingModels
                       ? 'Carregando modelos…'
                       : (_models.isEmpty
-                          ? 'Nenhum modelo disponível'
-                          : 'Selecione um modelo'),
+                            ? 'Nenhum modelo disponível'
+                            : 'Selecione um modelo'),
                   style: const TextStyle(color: GamaColors.textMuted),
                 ),
                 dropdownColor: GamaColors.surfaceCard,
@@ -350,6 +399,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _ttsAuto,
             activeThumbColor: GamaColors.accent,
             onChanged: (v) => setState(() => _ttsAuto = v),
+          ),
+          const SizedBox(height: 28),
+          const _SectionTitle('Memória'),
+          const SizedBox(height: 6),
+          const Text(
+            'Apaga tudo o que a Gama lembra sobre você (nome, preferências, '
+            'projetos…).',
+            style: TextStyle(
+              color: GamaColors.textMuted,
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _resettingMemory ? null : _resetMemory,
+              icon: _resettingMemory
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: GamaColors.error,
+                      ),
+                    )
+                  : const Icon(Icons.delete_sweep_rounded, size: 18),
+              label: Text(_resettingMemory ? 'Resetando…' : 'Resetar memória'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: GamaColors.error,
+                side: BorderSide(color: GamaColors.error.withOpacity(0.5)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
           ),
           const SizedBox(height: 32),
           SizedBox(
