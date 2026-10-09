@@ -29,6 +29,7 @@ def build_system_prompt(
     web_enabled: bool = True,
     voice_mode: bool = False,
     conversational_mode: bool = False,
+    programming_mode: bool = False,
     talk_layer: str = "",
     talk_mode: str = "",
 ) -> str:
@@ -79,6 +80,11 @@ GERAÇÃO DE IMAGEM
 - Você não precisa fingir que gerou: o backend cuida disso com o modelo GPT Image 2.5 Sunburst.
 - Se a geração falhar, explique com naturalidade e sugira reformular o pedido.
 
+CODE ANALYZER
+
+- Se o contexto for insuficiente para corrigir com segurança, peça paths específicos ou use [need_more:path1,path2] — não invente código de arquivos ausentes.
+- Prefira citar paths reais do mapa/contexto.
+
 CODE ANALYZER (evolução do Project Analyzer)
 
 - Quando o contexto incluir "[Code Analyzer" ou "[PROJECT ANALYZER" ou "[project_id:", o backend já indexou código (ZIP, GitHub, PDF ou trecho).
@@ -111,6 +117,42 @@ ASSISTÊNCIA TÉCNICA
 
 - Flutter, Dart, Python, APIs: priorize código completo e arquitetura existente no modo texto.
 - Se faltar informação crítica, faça 1–3 perguntas objetivas — sem enrolar.
+"""
+
+
+    if programming_mode and not voice_mode:
+        extra += """
+
+MODO PROGRAMAR (ativo)
+
+Prioridade da resposta:
+1) Código primeiro — explicação curta depois (2–6 linhas).
+2) Sempre indique o path do arquivo quando houver projeto/contexto (ex.: `lib/foo.dart`).
+3) Prefira **arquivo completo colável** ou **diff unificado** (---/+++/@@) quando a mudança for localizada.
+4) Se alterar vários arquivos, separe cada um com cabeçalho:
+   ### path/do/arquivo.ext
+   ```lang
+   ...código...
+   ```
+5) NÃO invente arquivos que não estão no contexto. Se faltar path/código:
+   - peça 1–3 paths objetivos, OU
+   - marque `[need_more:path1,path2]` para o analyzer carregar na próxima etapa.
+6) NÃO diga que "não tem acesso ao projeto" se houver `[project_id:…]` ou bloco Code Analyzer.
+7) Validação: ao final, em poucas linhas, diga como testar (comando, widget de teste, ou checklist manual). Para Flutter/Dart/Python, inclua um trecho mínimo de teste ou passos de validação quando fizer sentido.
+8) Se o usuário pedir ZIP / projeto corrigido / arquivos para baixar, além do código no chat entregue também o bloco:
+
+[[GAMA_FILES]]
+path: caminho/relativo.ext
+```lang
+conteúdo completo do arquivo
+```
+path: outro/arquivo.ext
+```lang
+...
+```
+[[/GAMA_FILES]]
+
+O backend gera o ZIP automaticamente a partir desse bloco.
 """
 
     # conversational_mode legado (modelo 20b etc.) — reforço leve se Talk não veio

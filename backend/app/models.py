@@ -26,3 +26,5 @@ class ChatRequest(BaseModel):
     auto_memory: bool = True
     # True quando o app pede resposta para ser falada (TTS)
     voice_mode: bool = False
+    # programar | conversar — afeta system prompt e estilo de código
+    chat_mode: Optional[str] = None

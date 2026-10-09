@@ -259,6 +259,7 @@ async def chat(
                     user_id=uid,
                     auto_memory=getattr(request, "auto_memory", True),
                     voice_mode=bool(getattr(request, "voice_mode", False)),
+                    chat_mode=getattr(request, "chat_mode", None),
                     conversation_id=getattr(request, "conversation_id", None),
                 )
             except Exception as e:
@@ -414,6 +415,24 @@ async def chat(
                 except Exception:
                     pass
                 yield chunk
+
+
+            # ── ZIP automático a partir de [[GAMA_FILES]] ──
+            try:
+                full_assistant = "".join(assistant_acc)
+                if "[[GAMA_FILES]]" in full_assistant or _wants_zip_delivery(last_user):
+                    artifact_meta = _try_build_zip_from_assistant(
+                        full_assistant,
+                        last_user=last_user,
+                        user_id=(x_user_id or getattr(request, "user_id", None) or "default"),
+                    )
+                    if artifact_meta:
+                        yield json.dumps(
+                            {"gama_meta": {"phase": "artifact_ready", "artifact": artifact_meta}},
+                            ensure_ascii=False,
+                        ) + "\n"
+            except Exception as zip_err:
+                logger.warning("zip from assistant: %s", zip_err)
 
             # Memória automática pós-turno
             if getattr(request, "auto_memory", True):

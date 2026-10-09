@@ -33,34 +33,64 @@ def _strip_heavy_content(text: str) -> str:
 
 
 def _budget_messages(messages: list[dict]) -> list[dict]:
-    """Mantém mensagens recentes dentro do orçamento de caracteres."""
+    """Mantém mensagens recentes dentro do orçamento de caracteres.
+
+    A última mensagem do usuário (código colado) usa teto maior e
+    tem prioridade no orçamento.
+    """
+    # índice da última user
+    last_user = -1
+    for i in range(len(messages) - 1, -1, -1):
+        if (messages[i].get("role") or "") == "user":
+            last_user = i
+            break
+
     cleaned: list[dict] = []
-    for m in messages:
+    for i, m in enumerate(messages):
         role = m.get("role") or "user"
         content = m.get("content")
+        is_last_user = i == last_user
         if isinstance(content, list):
-            # multimodal: limpa partes de texto; mantém image_url só da msg atual
             parts = []
             for part in content:
                 if not isinstance(part, dict):
                     continue
                 if part.get("type") == "text":
-                    parts.append({"type": "text", "text": _strip_heavy_content(str(part.get("text") or ""))})
+                    txt = str(part.get("text") or "")
+                    if is_last_user:
+                        if "[gama_image]" in txt:
+                            txt = _GAMA_IMAGE_RE.sub("\n[imagem gerada anteriormente]\n", txt)
+                        if len(txt) > 100_000:
+                            txt = txt[:100_000] + "\n…[código cortado no limite]"
+                    else:
+                        txt = _strip_heavy_content(txt)
+                    parts.append({"type": "text", "text": txt})
                 else:
                     parts.append(part)
             cleaned.append({"role": role, "content": parts or ""})
         else:
-            cleaned.append({"role": role, "content": _strip_heavy_content(str(content or ""))})
+            txt = str(content or "")
+            if is_last_user:
+                if "[gama_image]" in txt:
+                    txt = _GAMA_IMAGE_RE.sub("\n[imagem gerada anteriormente]\n", txt)
+                if len(txt) > 100_000:
+                    txt = txt[:100_000] + "\n…[código cortado no limite]"
+            else:
+                txt = _strip_heavy_content(txt)
+            cleaned.append({"role": role, "content": txt})
 
     out: list[dict] = []
     total = 0
-    for m in reversed(cleaned):
+    for idx in range(len(cleaned) - 1, -1, -1):
+        m = cleaned[idx]
         c = m.get("content")
         if isinstance(c, list):
             size = sum(len(str(p.get("text") or "")) for p in c if isinstance(p, dict))
         else:
             size = len(str(c or ""))
-        if out and total + size > _MAX_TOTAL_INPUT_CHARS:
+        is_last_user = (m.get("role") == "user" and
+                        not any(x.get("role") == "user" for x in cleaned[idx + 1:]))
+        if out and total + size > _MAX_TOTAL_INPUT_CHARS and not is_last_user:
             break
         out.insert(0, m)
         total += size

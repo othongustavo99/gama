@@ -65,57 +65,46 @@ def extract_inline_code(text: str) -> Optional[str]:
 
 
 def detect_level(query: str) -> str:
+    """quick | targeted | deep.
+
+    Pedidos vagos de bug/correção usam *targeted* (não quick), para o analyzer
+    puxar arquivos relevantes em vez de só o mapa do projeto.
+    """
     q = (query or "").lower()
-    deep_hints = [
-        "arquitetura inteira",
-        "arquitetura completa",
-        "revisão completa",
-        "analise o projeto",
-        "analise completa",
-        "análise completa",
-        "todo o projeto",
-        "code review",
-        "revisão de código",
-        "problemas no projeto",
-        "deep",
-        "full analysis",
-        # pedido de conteúdo integral de arquivo(s)
-        "conteúdo completo",
-        "conteudo completo",
-        "texto integral",
-        "texto completo",
-        "texto literal",
-        "arquivo completo",
-        "linha por linha",
-        "na íntegra",
-        "na integra",
-        "completo e literal",
-        "o que tem dentro",
-        "me diga exatamente",
-        "códigos completos",
-        "codigos completos",
-        "código completo",
-        "codigo completo",
-        "me de os codigo",
-        "me dê os código",
-        "prontos para substituir",
-        "need_more",
-    ]
-    quick_hints = [
-        "que linguagem",
-        "qual framework",
-        "estrutura do projeto",
-        "resumo do projeto",
-        "o que é esse projeto",
-        "linguagens usadas",
-        "dependências",
-    ]
+    deep_hints = (
+        "arquitetura inteira", "arquitetura completa", "revisão completa",
+        "analise o projeto", "analise completa", "análise completa",
+        "todo o projeto", "code review", "revisão de código",
+        "problemas no projeto", "deep", "full analysis",
+        "conteúdo completo", "conteudo completo", "texto integral",
+        "texto completo", "arquivo completo", "linha por linha",
+        "na íntegra", "na integra", "código completo", "codigo completo",
+        "prontos para substituir", "need_more", "refatore tudo",
+        "refatorar o projeto",
+    )
+    quick_hints = (
+        "que linguagem", "qual framework", "estrutura do projeto",
+        "resumo do projeto", "o que é esse projeto", "linguagens usadas",
+        "dependências", "dependencias",
+    )
+    targeted_hints = (
+        "arruma", "corrige", "corrigir", "bug", "erro", "exception",
+        "stacktrace", "não funciona", "nao funciona", "quebr", "falha",
+        "debug", "implementa", "implemente", "adiciona", "adicione",
+        "refatore", "refatorar", "otimize", "melhore", "fix",
+        "widget", "endpoint", "crash", "null",
+    )
     for h in deep_hints:
         if h in q:
             return "deep"
     for h in quick_hints:
         if h in q:
             return "quick"
+    for h in targeted_hints:
+        if h in q:
+            return "targeted"
+    if re.search(r"\.(dart|py|js|ts|tsx|jsx|java|kt|go|rs)\b", q):
+        return "targeted"
     return "targeted"
 
 

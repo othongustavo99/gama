@@ -70,6 +70,7 @@ class GamaCore:
         user_id: Optional[str] = None,
         voice_mode: bool = False,
         conversation_id: Optional[str] = None,
+        chat_mode: Optional[str] = None,
     ) -> Tuple[List[Dict[str, str]], Optional[str], Optional[str], List[Dict[str, str]]]:
         """
         Returns: prepared, fact_saved, search_query, sources
@@ -119,7 +120,13 @@ class GamaCore:
         except Exception:
             memory_block = ""
 
-        conversational_mode = "20b" in (model or "").lower()
+        mode = (chat_mode or "").strip().lower()
+        conversational_mode = mode in {"conversar", "conversation", "conversational"} or (
+            "20b" in (model or "").lower() and mode != "programar"
+        )
+        programming_mode = mode in {"programar", "coding", "code"} or (
+            not conversational_mode and not voice_mode
+        )
 
         # Sinais para a Talk Skill (antes de montar o system prompt)
         has_project = bool(
@@ -147,6 +154,7 @@ class GamaCore:
             web_enabled=web_on,
             voice_mode=voice_mode,
             conversational_mode=conversational_mode,
+            programming_mode=programming_mode and not conversational_mode,
             talk_layer=talk_layer,
             talk_mode=talk_mode,
         )
@@ -263,11 +271,11 @@ class GamaCore:
                     break
         if wants_codes:
             level = "deep"
-            max_tokens = max(max_tokens, 16000)
+            max_tokens = min(max(max_tokens, 6000), 9000)
         if extra_paths:
             level = "deep"
             # vários arquivos completos → orçamento alto
-            max_tokens = max(max_tokens, min(28000, 5000 + 3500 * len(extra_paths)))
+            max_tokens = min(max(max_tokens, 5000 + 2500 * len(extra_paths)), 12000)
 
         # 1) project_id / pdf_id na mensagem OU projeto ativo da conversa
         pid = extract_project_id(last_user) or extract_pdf_id(last_user)
