@@ -131,15 +131,7 @@ class GamaCore:
             web_block = _format_results(sources, query)
 
         try:
-            memory_block = store.as_prompt_block()
-            if memory_block:
-                memory_block += (
-                    "\n\nREGRA OBRIGATÓRIA DE RECUPERAÇÃO DA MEMÓRIA: "
-                    "antes de responder sobre o usuário, consulte os fatos acima. "
-                    "Se a pergunta pedir um dado que está registrado, responda com "
-                    "esse dado diretamente; não diga que não sabe, não lembra ou "
-                    "que não tem acesso à memória. Não invente dados ausentes."
-                )
+            memory_block = store.as_prompt_block(query=last_user, limit=24)
         except Exception:
             memory_block = ""
 
