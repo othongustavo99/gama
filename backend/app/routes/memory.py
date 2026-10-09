@@ -35,11 +35,14 @@ class MigrateIn(BaseModel):
 @router.get("")
 async def list_memory(
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    include_archived: bool = False,
 ):
     store = get_store(_uid(x_user_id))
+    # Por padrão só fatos ativos (não superseded). ?include_archived=true traz tudo.
+    facts = store.list_facts(active_only=not include_archived)
     return {
         "user_id": store.user_id,
-        "facts": store.list_facts(),
+        "facts": facts,
     }
 
 

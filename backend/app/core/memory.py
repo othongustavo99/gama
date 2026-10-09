@@ -57,6 +57,29 @@ def _safe_user_id(user_id: Optional[str]) -> str:
     return uid or "default"
 
 
+_JUNK_FACT_EXACT = {
+    "tudo que achar relevante sobre mim",
+    "tudo que achar relevante",
+    "relevante sobre mim",
+    "tudo sobre mim",
+    "o que achar relevante",
+}
+
+
+def _is_junk_fact(text: str) -> bool:
+    """Textos meta / instruções genéricas que não devem ficar na memória."""
+    t = re.sub(r"\s+", " ", (text or "").strip().casefold())
+    if not t:
+        return True
+    if t in _JUNK_FACT_EXACT:
+        return True
+    if re.fullmatch(r"(?:lembre|grave|anote|salva|remember).{0,30}", t):
+        return True
+    if re.fullmatch(r"(?:tudo|algo|o que).{0,40}(?:relevante|importante).{0,20}(?:sobre mim)?", t):
+        return True
+    return False
+
+
 class _FileLock:
     """Lock de arquivo cross-process (fcntl) com fallback no-op."""
 
@@ -194,14 +217,37 @@ class MemoryStore:
 
         return _Both(self)
 
-    def list_facts(self) -> List[dict]:
+    def list_facts(self, *, active_only: bool = False) -> List[dict]:
         with self._with_locks():
-            return list(self._read_unlocked().get("facts", []))
+            data = self._read_unlocked()
+            facts = [f for f in data.get("facts", []) if isinstance(f, dict)]
+            # remove lixo residual de versões antigas (persiste limpeza)
+            cleaned = []
+            changed = False
+            for f in facts:
+                txt = str(f.get("text") or "")
+                if _is_junk_fact(txt):
+                    changed = True
+                    continue
+                cleaned.append(f)
+            if changed:
+                data["facts"] = cleaned
+                self._write_unlocked(data)
+                facts = cleaned
+            if active_only:
+                facts = [
+                    f
+                    for f in facts
+                    if not f.get("superseded_at") and f.get("status") != "superseded"
+                ]
+            return list(facts)
 
     def add_fact(self, text: str, source: str = "user") -> dict:
         text = re.sub(r"\s+", " ", (text or "").strip())
         if len(text) < 3:
             raise ValueError("Fato vazio")
+        if _is_junk_fact(text):
+            raise ValueError("Fato irrelevante / meta — não gravado")
         if len(text) > 400:
             text = text[:400].rstrip() + "…"
         category = self._category(text)
@@ -627,7 +673,7 @@ _REMEMBER_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:quero que voc[eê]|prefiro que voc[eê]|pode|poderia)\s+(.+)",
+        r"(?:quero que voc[eê]|prefiro que voc[eê])\s+(.+)",
         re.IGNORECASE,
     ),
     re.compile(
@@ -647,6 +693,139 @@ _REMEMBER_PATTERNS = [
         re.IGNORECASE,
     ),
 ]
+
+
+
+def try_forget_memory(user_text: str, store: "MemoryStore") -> Optional[str]:
+    """Detecta pedido para esquecer/cancelar regra e marca fatos como superseded.
+
+    Exemplos:
+      - "pode esquecer a regra de respostas curtas"
+      - "não precisa mais ser tão direta"
+      - "cancela o comportamento de não usar emoji"
+      - "esquece tudo sobre comportamento"
+    """
+    if not isinstance(user_text, str):
+        return None
+    text = user_text.strip()
+    if len(text) < 8 or len(text) > 500:
+        return None
+
+    forget_all_behavior = bool(
+        re.search(
+            r"\b("
+            r"esquece(?:r)?\s+(?:todas?\s+)?(?:as\s+)?(?:regras?\s+de\s+)?comportamento|"
+            r"cancela(?:r)?\s+(?:todas?\s+)?(?:as\s+)?(?:regras?\s+de\s+)?comportamento|"
+            r"n[aã]o\s+siga\s+mais\s+(?:nenhuma\s+)?regra|"
+            r"reset(?:ar)?\s+(?:o\s+)?comportamento|"
+            r"volta(?:r)?\s+ao\s+comportamento\s+padr[aã]o"
+            r")\b",
+            text,
+            re.I,
+        )
+    )
+
+    forget_signal = bool(
+        re.search(
+            r"\b("
+            r"esquece(?:r)?|esquec[ea]|cancela(?:r)?|ignore(?:r)?|"
+            r"n[aã]o\s+(?:precisa|precisa)\s+mais|n[aã]o\s+siga\s+mais|"
+            r"pode\s+parar\s+de|para\s+de\s+(?:seguir|usar)|"
+            r"revoga(?:r)?|desfaz(?:er)?"
+            r")\b",
+            text,
+            re.I,
+        )
+    )
+    if not forget_all_behavior and not forget_signal:
+        return None
+
+    with store._with_locks():
+        data = store._read_unlocked()
+        facts = [f for f in data.get("facts", []) if isinstance(f, dict)]
+        now = _utc_now()
+        changed = 0
+        matched_texts = []
+
+        for f in facts:
+            if f.get("superseded_at") or f.get("status") == "superseded":
+                continue
+            ftext = str(f.get("text") or "")
+            cat = f.get("category") or store._category(ftext)
+            is_behavior = cat == "comportamento" or ftext.casefold().startswith("comportamento:")
+
+            if forget_all_behavior and is_behavior:
+                f["superseded_at"] = now
+                f["superseded_by"] = "usuário pediu reset de comportamento"
+                f["status"] = "superseded"
+                changed += 1
+                matched_texts.append(ftext)
+                continue
+
+            if not forget_signal:
+                continue
+
+            # Esquecer fato específico: tokens da frase batem no texto do fato
+            # (só comportamento, ou qualquer fato se disser "esquece que...")
+            tokens = {
+                t
+                for t in re.findall(r"[\wÀ-ÿ]{4,}", text.casefold())
+                if t
+                not in {
+                    "esquece",
+                    "esquecer",
+                    "esqueca",
+                    "cancela",
+                    "cancelar",
+                    "ignore",
+                    "ignorar",
+                    "regra",
+                    "regras",
+                    "comportamento",
+                    "precisa",
+                    "mais",
+                    "siga",
+                    "sobre",
+                    "aquela",
+                    "aquele",
+                    "dessa",
+                    "desse",
+                    "pode",
+                    "parar",
+                    "seguir",
+                    "usando",
+                }
+            }
+            if not tokens:
+                continue
+            ftokens = set(re.findall(r"[\wÀ-ÿ]{4,}", ftext.casefold()))
+            overlap = tokens & ftokens
+            # exige algum overlap; favorece comportamento
+            if is_behavior and len(overlap) >= 1:
+                f["superseded_at"] = now
+                f["superseded_by"] = text[:200]
+                f["status"] = "superseded"
+                changed += 1
+                matched_texts.append(ftext)
+            elif not is_behavior and len(overlap) >= 2 and re.search(
+                r"\b(?:esquece(?:r)?|cancela(?:r)?)\s+(?:que\s+|o\s+fato\s+|a\s+info)",
+                text,
+                re.I,
+            ):
+                f["superseded_at"] = now
+                f["superseded_by"] = text[:200]
+                f["status"] = "superseded"
+                changed += 1
+                matched_texts.append(ftext)
+
+        if changed:
+            data["facts"] = facts
+            store._write_unlocked(data)
+            preview = matched_texts[0] if matched_texts else ""
+            if len(preview) > 80:
+                preview = preview[:80] + "…"
+            return f"Removi {changed} item(ns) da memória" + (f": {preview}" if preview else "")
+    return None
 
 
 def try_extract_memory(user_text: str) -> Optional[str]:
