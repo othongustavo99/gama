@@ -141,42 +141,66 @@ def _extract_pdf(raw: bytes) -> str:
 
 
 def _extract_zip(raw: bytes) -> str:
+    """Extrai conteúdo textual de um ZIP (fallback / endpoint /extract).
+
+    Prioriza arquivos de código e configs; respeita limite de caracteres.
+    """
     text_exts = {
-        ".dart",
-        ".py",
-        ".js",
-        ".ts",
-        ".json",
-        ".md",
-        ".txt",
-        ".yaml",
-        ".yml",
-        ".html",
-        ".css",
-        ".xml",
-        ".sql",
-        ".sh",
+        ".dart", ".py", ".js", ".ts", ".tsx", ".jsx",
+        ".java", ".kt", ".kts", ".go", ".rs", ".swift", ".cs",
+        ".rb", ".php", ".c", ".cpp", ".h", ".hpp",
+        ".json", ".md", ".txt", ".yaml", ".yml", ".toml",
+        ".html", ".css", ".xml", ".sql", ".sh", ".gradle",
+        ".properties", ".ini", ".cfg", ".env",
     }
-    parts = []
+    skip_parts = ("__macosx", ".git/", ".venv/", "node_modules/", "__pycache__/",
+                  ".dart_tool/", ".gradle/", "build/", "dist/")
+    parts: list[str] = []
     total = 0
+    file_count = 0
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+        # primeiro: lista de paths (árvore)
+        all_names = []
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            name = info.filename
-            if "__MACOSX" in name:
+            name = info.filename.replace("\\", "/")
+            low = name.lower()
+            if any(s in low for s in skip_parts):
                 continue
-            lower = name.lower()
-            if not any(lower.endswith(ext) for ext in text_exts):
+            all_names.append(name)
+        if all_names:
+            sample = "\n".join(f"- {n}" for n in all_names[:80])
+            header = f"[ZIP: {len(all_names)} arquivos]\nPaths (amostra):\n{sample}\n"
+            parts.append(header)
+            total += len(header)
+
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            name = info.filename.replace("\\", "/")
+            low = name.lower()
+            if any(s in low for s in skip_parts):
+                continue
+            if not any(low.endswith(ext) for ext in text_exts):
+                continue
+            if info.file_size > 2_000_000:
                 continue
             try:
                 data = zf.read(info)
                 text = data.decode("utf-8", errors="replace")
             except Exception:
                 continue
-            if total + len(text) > MAX_CHARS:
-                parts.append("…[limite do ZIP]")
+            if not text.strip():
+                continue
+            block = f"### {name}\n```\n{text}\n```"
+            if total + len(block) > MAX_CHARS:
+                parts.append("…[limite do ZIP — peça um arquivo específico pelo path]")
                 break
-            parts.append(f"### {name}\n```\n{text}\n```")
-            total += len(text)
-    return "\n\n".join(parts)
+            parts.append(block)
+            total += len(block)
+            file_count += 1
+            if file_count >= 40:
+                parts.append("…[limite de arquivos no extract rápido]")
+                break
+    return "\n\n".join(parts) if parts else "(ZIP sem arquivos de texto legíveis)"

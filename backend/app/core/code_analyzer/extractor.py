@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 MAX_ZIP_BYTES = 80 * 1024 * 1024  # 80 MB
 MAX_FILES = 8000
-MAX_SINGLE_FILE = 2 * 1024 * 1024  # 2 MB por arquivo no extract
+MAX_SINGLE_FILE = 5 * 1024 * 1024  # 5 MB por arquivo no extract
 
 
 def safe_extract(zip_bytes: bytes, dest: Path) -> int:

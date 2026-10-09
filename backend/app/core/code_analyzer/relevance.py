@@ -16,13 +16,17 @@ def rank_for_query(
     quick     → poucos arquivos (mapa + 3–5)
     targeted  → foco no fluxo (8–14)
     deep      → mais amplo (18–25) ainda sem jogar o projeto inteiro
+
+    Arquivos com forced=True (mencionados explicitamente) nunca são cortados.
     """
     if not ranked:
         return []
 
     q = (query or "").lower()
-    # boost arquivos cujo path contém palavras da pergunta
     for r in ranked:
+        if r.get("forced"):
+            r["score"] = max(float(r.get("score") or 0), 999.0)
+            continue
         pl = r.get("path", "").lower()
         for tok in q.split():
             if len(tok) > 3 and tok in pl:
@@ -30,11 +34,19 @@ def rank_for_query(
         if r.get("via_dependency"):
             r["score"] = float(r.get("score") or 0) + 1.5
 
-    ranked = sorted(ranked, key=lambda x: -float(x.get("score") or 0))
+    ranked = sorted(
+        ranked,
+        key=lambda x: (0 if x.get("forced") else 1, -float(x.get("score") or 0)),
+    )
 
     limits = {"quick": 5, "targeted": 14, "deep": 24}
     k = limits.get(level, 14)
-    return ranked[:k]
+
+    forced = [r for r in ranked if r.get("forced")]
+    others = [r for r in ranked if not r.get("forced")]
+    # sempre inclui todos os forced + completa até o limite
+    out = forced + others[: max(0, k - len(forced))]
+    return out
 
 
 def suggest_followup_paths(

@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from .code_search import search_files
+from .code_search import search_files, extract_mentioned_filenames, find_matching_paths
 from .context_builder import build_context
 from .dependency_resolver import resolve_dependencies
 from .extractor import safe_extract
@@ -29,6 +29,24 @@ from .relevance import rank_for_query, suggest_followup_paths
 from .source_detector import detect_level, parse_github_url
 
 logger = logging.getLogger(__name__)
+
+
+
+def _stem_close(path: str, mention: str) -> bool:
+    """Match flexível de basename (context.py ↔ contexto)."""
+    from pathlib import Path as _P
+    a = _P(path).stem.lower()
+    b = _P(mention).stem.lower()
+    if a == b:
+        return True
+    if len(a) >= 4 and len(b) >= 4 and (a in b or b in a):
+        return True
+    aliases = {
+        "contexto": "context", "context": "contexto",
+        "memoria": "memory", "memory": "memoria",
+        "configuracao": "config", "config": "configuracao",
+    }
+    return aliases.get(a) == b or aliases.get(b) == a
 
 
 def _scan_root_for(project_id: str, meta: dict[str, Any]) -> Path:
@@ -433,31 +451,62 @@ def build_query_context(
         scan, files, query, top_k=24 if level == "deep" else 18, symbol_index=symbol_index
     )
 
-    if extra_paths:
-        have = {r["path"] for r in ranked}
-        for ep in extra_paths:
-            ep = ep.strip().lstrip("./")
-            if not ep or ep in have:
-                continue
-            p = scan / ep
-            if p.is_file():
-                try:
-                    text = p.read_text(encoding="utf-8", errors="replace")
-                    ranked.insert(
-                        0,
-                        {
-                            "path": ep,
-                            "score": 999,
-                            "important": True,
-                            "text": text,
-                        },
-                    )
-                except Exception:
-                    pass
+    # paths extras explícitos + nomes de arquivo mencionados na pergunta
+    have = {r["path"] for r in ranked}
+    auto_paths: list[str] = list(extra_paths or [])
+    mentioned = extract_mentioned_filenames(query)
+    if mentioned:
+        auto_paths.extend(find_matching_paths(files, mentioned))
+    for ep in auto_paths:
+        ep = (ep or "").strip().lstrip("./").replace("\\", "/")
+        if not ep or ep in have:
+            continue
+        p = scan / ep
+        if p.is_file():
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+                ranked.insert(
+                    0,
+                    {
+                        "path": ep,
+                        "score": 999,
+                        "important": True,
+                        "text": text,
+                        "forced": True,
+                    },
+                )
+                have.add(ep)
+            except Exception:
+                pass
+        else:
+            # tenta achar por basename em qualquer subpasta
+            base = Path(ep).name.lower()
+            for fm in files:
+                if Path(fm["path"]).name.lower() == base or _stem_close(fm["path"], ep):
+                    cand = scan / fm["path"]
+                    if cand.is_file() and fm["path"] not in have:
+                        try:
+                            text = cand.read_text(encoding="utf-8", errors="replace")
+                            ranked.insert(
+                                0,
+                                {
+                                    "path": fm["path"],
+                                    "score": 999,
+                                    "important": True,
+                                    "text": text,
+                                    "forced": True,
+                                },
+                            )
+                            have.add(fm["path"])
+                        except Exception:
+                            pass
+                        break
 
-    # dependency resolver
+    # dependency resolver (não remove arquivos forced)
     ranked = resolve_dependencies(scan, ranked, symbol_index, files, max_extra=8 if level != "quick" else 3)
     ranked = rank_for_query(ranked, query, level=level)
+    # garante que forced fiquem no topo mesmo após rank
+    ranked.sort(key=lambda r: (0 if r.get("forced") else 1, -float(r.get("score") or 0)))
     follow = suggest_followup_paths(ranked, files, query) if level != "quick" else []
 
     return build_context(
