@@ -2,7 +2,7 @@ from typing import List, Dict, Optional, Tuple, Any
 import logging
 
 from .context import ContextManager
-from .memory import get_store, try_extract_memory, try_forget_memory
+from .memory import get_store, try_extract_memories
 from .url_fetch import build_url_context
 from .code_analyzer import build_query_context, detect_and_prepare
 from .code_analyzer.pipeline import build_query_context_async
@@ -109,24 +109,15 @@ class GamaCore:
                     break
 
         if auto_memory and last_user:
-            # 1) pedidos de esquecer/cancelar regra
             try:
-                forgotten = try_forget_memory(last_user, store)
-                if forgotten:
-                    fact_saved = forgotten  # reutiliza canal de meta "memory_saved"
-            except Exception:
-                forgotten = None
-
-            # 2) extração de novos fatos / regras
-            extracted = try_extract_memory(last_user)
-            if extracted:
-                try:
-                    store.add_fact(extracted, source="auto")
-                    fact_saved = extracted
-                except Exception:
-                    # fato lixo ou duplicata inválida — ignora
-                    if not fact_saved:
-                        fact_saved = None
+                for extracted in try_extract_memories(last_user):
+                    try:
+                        store.add_fact(extracted, source="auto")
+                        fact_saved = fact_saved or extracted
+                    except Exception as e:
+                        logger.warning("memory add: %s", e)
+            except Exception as e:
+                logger.warning("memory extract: %s", e)
 
         web_on = enable_web_search and getattr(settings, "WEB_SEARCH_ENABLED", True)
 
@@ -142,14 +133,9 @@ class GamaCore:
             web_block = _format_results(sources, query)
 
         try:
-            memory_block = store.as_prompt_block(query=last_user, limit=24)
+            memory_block = store.as_prompt_block()
         except Exception:
             memory_block = ""
-
-        try:
-            behavior_block = store.as_behavior_block()
-        except Exception:
-            behavior_block = ""
 
         mode = (chat_mode or "").strip().lower()
         conversational_mode = mode in {"conversar", "conversation", "conversational"} or (
@@ -182,7 +168,6 @@ class GamaCore:
 
         system_prompt = build_system_prompt(
             memory_block=memory_block,
-            behavior_block=behavior_block,
             web_enabled=web_on,
             voice_mode=voice_mode,
             conversational_mode=conversational_mode,
@@ -248,6 +233,21 @@ class GamaCore:
             logger.warning("conversation_session: %s", e)
 
         prepared.extend(context)
+
+        # Memória também logo ANTES da última mensagem do usuário: modelos pequenos
+        # dão mais peso ao que está perto da pergunta do que ao fim de um system longo.
+        if memory_block:
+            reminder = {"role": "system", "content": memory_block}
+            idx = None
+            for i in range(len(prepared) - 1, -1, -1):
+                if prepared[i].get("role") == "user":
+                    idx = i
+                    break
+            if idx is None:
+                prepared.append(reminder)
+            else:
+                prepared.insert(idx, reminder)
+
         return prepared, fact_saved, search_query, sources
 
     async def _code_analyzer_block(

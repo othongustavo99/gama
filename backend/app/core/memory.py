@@ -1,39 +1,20 @@
 """
 Memória de longo prazo da Gamma — por usuário.
 
-Persistência:
-- Arquivo: {DATA_DIR}/memory/{user_id}.json
-- Escrita atômica (tmp + os.replace) + fsync
-- Lock de processo (threading) + file lock (fcntl) para multi-worker
-- Backup rotativo (.bak) a cada escrita bem-sucedida
-- Migração de ids legados (Google) via migrate_memory()
-
-Extração:
-- Padrões explícitos (regex) no início do turno
-- Extração LLM opcional após o turno
+- Arquivo: data/memory/{user_id}.json
+- Extração: padrões explícitos + preferências + (opcional) LLM no turno
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
-import shutil
 import threading
-import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
-
-logger = logging.getLogger(__name__)
-
-try:
-    import fcntl  # type: ignore
-
-    _HAS_FCNTL = True
-except ImportError:
-    _HAS_FCNTL = False
 
 
 def _data_dir() -> Path:
@@ -43,7 +24,7 @@ def _data_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "data"
 
 
-_process_lock = threading.RLock()
+_lock = threading.Lock()
 
 
 def _utc_now() -> str:
@@ -52,357 +33,127 @@ def _utc_now() -> str:
 
 def _safe_user_id(user_id: Optional[str]) -> str:
     uid = (user_id or "default").strip() or "default"
-    # evita path traversal; mantém @ . - _ para e-mails Google
+    # evita path traversal
     uid = re.sub(r"[^\w\-\.@]+", "_", uid)[:120]
     return uid or "default"
 
 
-_JUNK_FACT_EXACT = {
-    "tudo que achar relevante sobre mim",
-    "tudo que achar relevante",
-    "relevante sobre mim",
-    "tudo sobre mim",
-    "o que achar relevante",
-}
-
-# Trechos que, se aparecerem em qualquer lugar do texto, marcam como lixo meta.
-_JUNK_FACT_CONTAINS = (
-    r"tudo\s+que\s+(?:voc[eê]\s+)?achar\s+relevante\s+sobre\s+mim",
-    r"de\s+tudo\s+que\s+(?:voc[eê]\s+)?achar\s+relevante",
-    r"achar\s+relevante\s+sobre\s+mim",
-    r"o\s+que\s+achar\s+relevante\s+sobre\s+mim",
-    r"tudo\s+que\s+for\s+relevante\s+sobre\s+mim",
-    r"grave\s+tudo\s+que\s+(?:voc[eê]\s+)?achar",
-    r"lembre\s+tudo\s+que\s+(?:voc[eê]\s+)?achar",
+_LABEL_RE = re.compile(
+    r"^(Nome|Idade|Nascimento|Natural de|Mora em|Estado civil|Profissão|Cor favorita|"
+    r"Esposa|Esposo|Marido|Mulher|Namorado|Namorada|Filho|Filha|Irmão|Irmã|Mãe|Pai|"
+    r"Empresa|Projeto|App|Aplicativo|Stack|Linguagem|Framework|Time)\s*:",
+    re.IGNORECASE,
 )
 
 
-def _is_junk_fact(text: str) -> bool:
-    """Textos meta / instruções genéricas que não devem ficar na memória."""
-    t = re.sub(r"\s+", " ", (text or "").strip().casefold())
-    if not t:
-        return True
-    if t in _JUNK_FACT_EXACT:
-        return True
-    # frase inteira só com "lembre/grave..." sem conteúdo útil
-    if re.fullmatch(r"(?:lembre|grave|anote|salva|remember).{0,30}", t):
-        return True
-    for pat in _JUNK_FACT_CONTAINS:
-        if re.search(pat, t, re.I):
-            return True
-    # "relevante sobre mim" + link/github sem fato concreto
-    if re.search(r"relevante\s+sobre\s+mim", t) and re.search(
-        r"(?:https?://|github\.com|acerca\s+dess[ea]|sobre\s+esse\s+link)", t
-    ):
-        return True
-    return False
+def _label_of(text: str) -> Optional[str]:
+    m = _LABEL_RE.match((text or "").strip())
+    return m.group(1).lower() if m else None
 
 
-class _FileLock:
-    """Lock de arquivo cross-process (fcntl) com fallback no-op."""
-
-    def __init__(self, path: Path):
-        self.path = path
-        self._fh = None
-
-    def __enter__(self):
-        if not _HAS_FCNTL:
-            return self
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = open(self.path, "a+", encoding="utf-8")
-        try:
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
-        except Exception as e:
-            logger.warning("file lock acquire failed: %s", e)
-        return self
-
-    def __exit__(self, *args):
-        if self._fh is not None:
-            try:
-                if _HAS_FCNTL:
-                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
-            except Exception:
-                pass
-            try:
-                self._fh.close()
-            except Exception:
-                pass
-            self._fh = None
+def _new_id() -> str:
+    return uuid.uuid4().hex
 
 
 class MemoryStore:
-    MAX_FACTS = 150  # aumentado para reduzir perda
-    MAX_ARCHIVED = 40
-    MIN_IMPORTANCE_KEEP = 5  # nunca descarta importance >= 5 se couber
+    MAX_FACTS = 100
 
     def __init__(self, user_id: Optional[str] = None):
         self.user_id = _safe_user_id(user_id)
-        base = _data_dir() / "memory"
-        base.mkdir(parents=True, exist_ok=True)
-        self.path = base / f"{self.user_id}.json"
-        self.lock_path = base / f".{self.user_id}.lock"
-        self.bak_path = base / f"{self.user_id}.json.bak"
-        self._ensure_file()
-
-    def _ensure_file(self) -> None:
-        if self.path.exists():
-            return
-        # migra memory.json legado para default uma vez
-        legacy = _data_dir() / "memory.json"
-        if self.user_id == "default" and legacy.exists():
-            try:
-                with open(legacy, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                self._write_unlocked(data if isinstance(data, dict) else {"facts": []})
-                return
-            except Exception as e:
-                logger.warning("legacy memory migrate: %s", e)
-        self._write_unlocked({"facts": [], "user_id": self.user_id})
-
-    def _read_unlocked(self) -> dict:
-        for candidate in (self.path, self.bak_path):
-            if not candidate.exists():
-                continue
-            try:
-                with open(candidate, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if not isinstance(data, dict):
-                    continue
-                data.setdefault("facts", [])
-                data["user_id"] = self.user_id
-                # filtra fatos inválidos
-                facts = [f for f in data.get("facts", []) if isinstance(f, dict) and f.get("text")]
-                data["facts"] = facts
-                return data
-            except Exception as e:
-                logger.warning("memory read %s: %s", candidate, e)
-        return {"facts": [], "user_id": self.user_id}
-
-    def _write_unlocked(self, data: dict) -> None:
+        self.path = _data_dir() / "memory" / f"{self.user_id}.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        data = dict(data)
-        data["user_id"] = self.user_id
-        data["updated_at"] = _utc_now()
-        temp_path = self.path.with_suffix(self.path.suffix + f".tmp.{os.getpid()}")
+        if not self.path.exists():
+            # migra memory.json legado para default uma vez
+            legacy = _data_dir() / "memory.json"
+            if self.user_id == "default" and legacy.exists():
+                try:
+                    with open(legacy, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    self._write(data if isinstance(data, dict) else {"facts": []})
+                    return
+                except Exception:
+                    pass
+            self._write({"facts": [], "user_id": self.user_id})
+
+    def _read(self) -> dict:
         try:
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            # backup do arquivo atual antes de substituir
-            if self.path.exists():
-                try:
-                    shutil.copy2(self.path, self.bak_path)
-                except Exception as e:
-                    logger.warning("memory backup: %s", e)
-            os.replace(temp_path, self.path)
-            # fsync do diretório (melhor garantia em alguns FS)
-            try:
-                dir_fd = os.open(str(self.path.parent), os.O_RDONLY)
-                try:
-                    os.fsync(dir_fd)
-                finally:
-                    os.close(dir_fd)
-            except Exception:
-                pass
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return {"facts": [], "user_id": self.user_id}
+            facts = data.get("facts")
+            data["facts"] = [f for f in facts if isinstance(f, dict)] if isinstance(facts, list) else []
+            data["user_id"] = self.user_id
+            return data
         except Exception:
+            return {"facts": [], "user_id": self.user_id}
+
+    def _write(self, data: dict) -> None:
+        """Escrita atômica: nunca deixa o JSON pela metade (o que zerava a memória)."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        data["user_id"] = self.user_id
+        tmp = self.path.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
             try:
-                if temp_path.exists():
-                    temp_path.unlink()
-            except Exception:
+                os.fsync(f.fileno())
+            except OSError:
                 pass
-            raise
+        os.replace(tmp, self.path)
 
-    def _with_locks(self):
-        """Context manager composto: process lock + file lock."""
-        class _Both:
-            def __init__(self, store: "MemoryStore"):
-                self.store = store
-                self._file = None
-
-            def __enter__(self):
-                _process_lock.acquire()
-                self._file = _FileLock(self.store.lock_path)
-                self._file.__enter__()
-                return self
-
-            def __exit__(self, *a):
-                try:
-                    if self._file:
-                        self._file.__exit__(*a)
-                finally:
-                    _process_lock.release()
-
-        return _Both(self)
-
-    def list_facts(self, *, active_only: bool = False) -> List[dict]:
-        with self._with_locks():
-            data = self._read_unlocked()
-            facts = [f for f in data.get("facts", []) if isinstance(f, dict)]
-            # remove lixo residual de versões antigas (persiste limpeza)
-            cleaned = []
-            changed = False
-            for f in facts:
-                txt = str(f.get("text") or "")
-                if _is_junk_fact(txt):
-                    changed = True
-                    continue
-                cleaned.append(f)
-            if changed:
-                data["facts"] = cleaned
-                self._write_unlocked(data)
-                facts = cleaned
-            if active_only:
-                facts = [
-                    f
-                    for f in facts
-                    if not f.get("superseded_at") and f.get("status") != "superseded"
-                ]
-            return list(facts)
+    def list_facts(self) -> List[dict]:
+        with _lock:
+            return list(self._read().get("facts", []))
 
     def add_fact(self, text: str, source: str = "user") -> dict:
         text = re.sub(r"\s+", " ", (text or "").strip())
         if len(text) < 3:
             raise ValueError("Fato vazio")
-        if _is_junk_fact(text):
-            raise ValueError("Fato irrelevante / meta — não gravado")
-        category = self._category(text)
-        # Apelido / nome preferido sempre identidade (pinned em todas as conversas)
-        if re.search(r"nome preferido|me chame de|me chama de|pode me chamar|apelido", text, re.I):
-            category = "identidade"
         if len(text) > 400:
-            # regras de comportamento podem ser mais longas
-            limit = 1200 if category == "comportamento" else 400
-            if len(text) > limit:
-                text = text[:limit].rstrip() + "…"
-        importance = (
-            5
-            if category in {
-                "identidade",
-                "localidade",
-                "trabalho_estudos",
-                "projetos",
-                "comportamento",
-            }
-            else 4
-            if category in {"preferencias", "familia_relacoes", "biografia"}
-            else 3
-        )
-        normalized = re.sub(r"[^\wÀ-ÿ]+", " ", text.casefold()).strip()
+            text = text[:400].rstrip() + "…"
 
-        with self._with_locks():
-            data = self._read_unlocked()
-            facts = [f for f in data.get("facts", []) if isinstance(f, dict)]
+        with _lock:
+            data = self._read()
+            facts = data.get("facts", [])
+            normalized = text.lower()
+            label = _label_of(text)
 
-            # Dedup por texto normalizado — atualiza last_seen
             for f in facts:
-                existing = str(f.get("text") or "").strip()
-                existing_norm = re.sub(r"[^\wÀ-ÿ]+", " ", existing.casefold()).strip()
-                if existing_norm == normalized:
-                    f["category"] = f.get("category") or category
-                    f["importance"] = max(int(f.get("importance", 3) or 3), importance)
-                    f["last_seen_at"] = _utc_now()
+                ftext = f.get("text", "")
+                if ftext.lower() == normalized:
+                    return f
+                # mesmo rótulo (Nome:, Idade:, Mora em:...) → atualiza em vez de duplicar
+                if label and _label_of(ftext) == label:
+                    f["text"] = text
+                    f["source"] = source
                     f["updated_at"] = _utc_now()
-                    f.pop("superseded_at", None)
-                    f.pop("superseded_by", None)
-                    f["status"] = "active"
                     data["facts"] = facts
-                    self._write_unlocked(data)
+                    self._write(data)
+                    return f
+                # quase duplicata (só para textos longos o bastante)
+                fl = ftext.lower()
+                if len(fl) >= 8 and len(normalized) >= 8 and (normalized in fl or fl in normalized):
+                    if len(text) > len(ftext):
+                        f["text"] = text
+                        f["source"] = source
+                        f["updated_at"] = _utc_now()
+                        data["facts"] = facts
+                        self._write(data)
                     return f
 
-            # Nome preferido / apelido: substitui nomes preferidos anteriores
-            if category == "identidade" and re.search(
-                r"nome preferido|me chame|me chama|pode me chamar|apelido", text, re.I
-            ):
-                for f in facts:
-                    ft = str(f.get("text") or "")
-                    if f.get("superseded_at"):
-                        continue
-                    if re.search(r"nome preferido|me chame|me chama|pode me chamar|apelido", ft, re.I):
-                        f["superseded_at"] = _utc_now()
-                        f["superseded_by"] = text
-                        f["status"] = "superseded"
-
-            # Comportamento: qualquer regra nova substitui TODAS as regras de estilo anteriores
-            if category == "comportamento":
-                for f in facts:
-                    cat = f.get("category") or self._category(str(f.get("text") or ""))
-                    ftext = str(f.get("text") or "")
-                    is_beh = cat == "comportamento" or ftext.casefold().startswith("comportamento:")
-                    if is_beh and not f.get("superseded_at") and f.get("status") != "superseded":
-                        f["superseded_at"] = _utc_now()
-                        f["superseded_by"] = text
-                        f["status"] = "superseded"
-
-            # Marca fatos da mesma chave (nome, cidade, profissão) como substituídos
-            key_patterns = {
-                "identidade": r"^(?:meu nome|nome|me chamo|chamo[- ]me|apelido|nome preferido)\s*[:é -]",
-                "localidade": r"^(?:mora em|moro em|reside em|resido em|vive em|vivo em|cidade atual)\s*[:é -]",
-                "trabalho_estudos": r"^(?:profissão|profissao|trabalho como|cargo|empresa|estuda)\s*[:é -]",
-                "biografia": r"^(?:idade|tenho)\s*[:é -]",
-            }
-            key_pattern = key_patterns.get(category)
-            if key_pattern and re.search(key_pattern, text, re.I):
-                for f in facts:
-                    cat = f.get("category") or self._category(str(f.get("text") or ""))
-                    if cat == category and re.search(
-                        key_pattern, str(f.get("text") or ""), re.I
-                    ):
-                        f["superseded_at"] = _utc_now()
-                        f["superseded_by"] = text
-                        f["status"] = "superseded"
-
-            now = _utc_now()
             item = {
-                "id": f"{int(time.time() * 1000)}_{len(facts)}",
+                "id": _new_id(),
                 "text": text,
-                "category": category,
-                "importance": importance,
-                "created_at": now,
-                "updated_at": now,
-                "last_seen_at": now,
+                "created_at": _utc_now(),
                 "source": source,
-                "status": "active",
             }
             facts.append(item)
-            data["facts"] = self._prune(facts)
-            self._write_unlocked(data)
+            if len(facts) > self.MAX_FACTS:
+                facts = facts[-self.MAX_FACTS :]
+            data["facts"] = facts
+            self._write(data)
             return item
-
-    def _prune(self, facts: List[dict]) -> List[dict]:
-        """Mantém fatos ativos prioritários; arquiva superseded sem perder tudo."""
-        active = [f for f in facts if not f.get("superseded_at") and f.get("status") != "superseded"]
-        archived = [f for f in facts if f.get("superseded_at") or f.get("status") == "superseded"]
-
-        def sort_key(f: dict):
-            return (
-                int(f.get("importance", 3) or 3),
-                str(f.get("updated_at") or f.get("created_at") or ""),
-            )
-
-        active.sort(key=sort_key, reverse=True)
-        archived.sort(key=sort_key, reverse=True)
-
-        # Nunca descartar importance >= MIN_IMPORTANCE_KEEP se ainda houver espaço
-        keep_active: List[dict] = []
-        rest_active: List[dict] = []
-        for f in active:
-            if int(f.get("importance", 3) or 3) >= self.MIN_IMPORTANCE_KEEP:
-                keep_active.append(f)
-            else:
-                rest_active.append(f)
-
-        # reserva espaço para os de alta importância
-        budget = self.MAX_FACTS
-        high = keep_active[:budget]
-        remaining = budget - len(high)
-        mid = rest_active[: max(0, remaining)]
-        active_out = high + mid
-
-        arch_budget = min(self.MAX_ARCHIVED, max(0, self.MAX_FACTS - len(active_out)))
-        archived_out = archived[:arch_budget]
-
-        return active_out + archived_out
 
     def add_facts(self, texts: List[str], source: str = "auto") -> List[dict]:
         out = []
@@ -414,635 +165,183 @@ class MemoryStore:
         return out
 
     def remove_fact(self, fact_id: str) -> bool:
-        with self._with_locks():
-            data = self._read_unlocked()
+        with _lock:
+            data = self._read()
             facts = data.get("facts", [])
-            new_facts = [f for f in facts if str(f.get("id")) != str(fact_id)]
+            new_facts = [f for f in facts if f.get("id") != fact_id]
             if len(new_facts) == len(facts):
                 return False
             data["facts"] = new_facts
-            self._write_unlocked(data)
+            self._write(data)
             return True
 
     def clear(self) -> None:
-        with self._with_locks():
-            self._write_unlocked({"facts": [], "user_id": self.user_id})
+        with _lock:
+            self._write({"facts": [], "user_id": self.user_id})
 
-    @staticmethod
-    def _tokens(text: str) -> set[str]:
-        return {
-            token
-            for token in re.findall(r"[\wÀ-ÿ]+", (text or "").casefold())
-            if len(token) > 2
-            and token
-            not in {
-                "qual",
-                "quais",
-                "como",
-                "quando",
-                "onde",
-                "porque",
-                "porquê",
-                "sobre",
-                "isso",
-                "esta",
-                "esse",
-                "essa",
-                "para",
-                "com",
-                "uma",
-                "meu",
-                "minha",
-                "meus",
-                "minhas",
-                "voce",
-                "você",
-                "quero",
-                "saber",
-                "lembra",
-                "lembre",
-                "memoria",
-                "memória",
-                "usuario",
-                "usuário",
-            }
-        }
-
-    @staticmethod
-    def _category(text: str) -> str:
-        value = (text or "").casefold()
-        rules = [
-            (
-                "comportamento",
-                r"\b("
-                r"a partir de agora|daqui pra? frente|sempre que|sempre responda|sempre fale|"
-                r"nunca (?:mais )?use|nunca (?:mais )?fale|n[aã]o (?:me )?chame|"
-                r"me chame de|prefiro que voc[eê]|quero que voc[eê]|"
-                r"modo de (?:falar|responder)|estilo de (?:resposta|fala)|"
-                r"seja mais|seja menos|respostas? curtas?|respostas? longas?|"
-                r"comportamento|instru[cç][aã]o de (?:resposta|estilo)|"
-                r"atue|aja como|em todas as conversas"
-                r")\b",
-            ),
-            ("identidade", r"\b(nome|chamo|apelido)\b"),
-            ("localidade", r"\b(mora|moro|cidade|estado|país|pais|reside|natural de)\b"),
-            ("trabalho_estudos", r"\b(trabalho|profiss|empresa|cargo|estudo|faculdade|curso)\b"),
-            ("preferencias", r"\b(gosto|prefiro|favorit|odeio|evito|prefere)\b"),
-            ("projetos", r"\b(projeto|app|aplicativo|frequência40|frequencia40|gama|flutter|python|programa)\b"),
-            ("familia_relacoes", r"\b(esposa|esposo|marido|namorad|filho|filha|família|familia|casad)\b"),
-            ("biografia", r"\b(idade|anos|nasci|nascimento|aniversário|aniversario)\b"),
-        ]
-        for category, pattern in rules:
-            if re.search(pattern, value, re.I):
-                return category
-        return "geral"
-
-    def search_facts(self, query: str = "", limit: int = 18) -> List[dict]:
-        """Recupera fatos relevantes para a pergunta, mantendo fatos estáveis disponíveis."""
-        facts = [
-            f
-            for f in self.list_facts()
-            if not f.get("superseded_at") and f.get("status") != "superseded"
-        ]
-        if not facts:
-            return []
-        q = (query or "").casefold()
-        qt = self._tokens(q)
-        identity_query = bool(
-            re.search(
-                r"\b(meu nome|como me chamo|quem sou eu|qual [eé] meu nome|meu apelido)\b",
-                q,
-            )
-        )
-        preference_query = bool(
-            re.search(r"\b(gosto|prefiro|favorit|odeio|preferência|preferencia)\b", q)
-        )
-        location_query = bool(
-            re.search(
-                r"\b(onde moro|onde eu moro|minha cidade|onde vivo|onde resido|de onde sou)\b",
-                q,
-            )
-        )
-        work_query = bool(
-            re.search(
-                r"\b(meu trabalho|minha profiss|onde trabalho|o que eu faço|o que faco)\b",
-                q,
-            )
-        )
-
-        def score(f: dict) -> tuple:
-            text = str(f.get("text") or "")
-            ft = self._tokens(text)
-            overlap = len(qt & ft)
-            category = f.get("category") or self._category(text)
-            legacy_bare_name = bool(
-                identity_query
-                and (f.get("source") == "auto")
-                and re.fullmatch(
-                    r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’-]*(?:\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’-]*){0,2}",
-                    text,
-                )
-                and not re.search(
-                    r"\b(?:gosto|prefiro|moro|trabalho|projeto|flutter|python)\b",
-                    text,
-                    re.I,
-                )
-            )
-            if legacy_bare_name:
-                category = "identidade_legada_possivel"
-            boost = 0
-            if identity_query and category == "identidade":
-                boost += 100
-            if identity_query and category == "identidade_legada_possivel":
-                boost += 80
-            if preference_query and category == "preferencias":
-                boost += 35
-            if location_query and category == "localidade":
-                boost += 35
-            if work_query and category == "trabalho_estudos":
-                boost += 35
-            importance = int(f.get("importance", 3) or 3)
-            updated = str(f.get("updated_at") or f.get("created_at") or "")
-            return (boost + overlap * 8 + importance, updated)
-
-        ranked = sorted(facts, key=score, reverse=True)
-        chosen = ranked[: max(1, limit)]
-        chosen_ids = {str(f.get("id", id(f))) for f in chosen}
-        if len(chosen) < limit:
-            for f in facts:
-                if str(f.get("id", id(f))) not in chosen_ids:
-                    chosen.append(f)
-                    if len(chosen) >= limit:
-                        break
-        return chosen
-
-    def as_prompt_block(self, query: str = "", limit: int = 24) -> str:
-        q = (query or "").casefold()
-        asks_all_about_user = bool(
-            re.search(
-                r"\b("
-                r"tudo\s+que\s+(?:você|voce|tu)\s+sabe\s+sobre\s+mim|"
-                r"o\s+que\s+(?:você|voce|tu)\s+sabe\s+sobre\s+mim|"
-                r"o\s+que\s+(?:você|voce)\s+(?:lembra|recorda)\s+(?:de\s+mim|sobre\s+mim)|"
-                r"me\s+conta\s+(?:tudo\s+)?(?:sobre\s+mim|o\s+que\s+sabe)|"
-                r"resumo\s+da\s+(?:minha\s+)?mem[oó]ria|"
-                r"lista(?:r)?\s+(?:minha\s+)?mem[oó]ria|"
-                r"quem\s+eu\s+sou|"
-                r"perfil\s+(?:meu|do\s+usu[aá]rio)|"
-                r"what\s+do\s+you\s+know\s+about\s+me|"
-                r"tell\s+me\s+everything\s+you\s+know\s+about\s+me"
-                r")\b",
-                q,
-                re.I,
-            )
-        )
-        # Pergunta ampla sobre o usuário: injeta TODOS os fatos ativos (não só os rankeados).
-        if asks_all_about_user:
-            facts = [
-                f
-                for f in self.list_facts()
-                if isinstance(f, dict)
-                and not f.get("superseded_at")
-                and f.get("status") != "superseded"
-                and str(f.get("text") or "").strip()
-            ]
-            limit = max(limit, len(facts) or 24)
-        else:
-            facts = self.search_facts(query=query, limit=limit)
-        # Sempre anexa regras de comportamento (pinned), mesmo fora do ranking da query
-        behavior = [
-            f
-            for f in self.list_facts()
-            if isinstance(f, dict)
-            and not f.get("superseded_at")
-            and f.get("status") != "superseded"
-            and (
-                (f.get("category") or self._category(str(f.get("text") or "")))
-                == "comportamento"
-            )
-        ]
-        if behavior:
-            seen_ids = {str(f.get("id", id(f))) for f in facts}
-            for b in behavior:
-                bid = str(b.get("id", id(b)))
-                if bid not in seen_ids:
-                    facts.insert(0, b)
-                    seen_ids.add(bid)
-
-        if not facts:
+    def as_prompt_block(self) -> str:
+        facts = self.list_facts()
+        texts = [str(f.get("text", "")).strip() for f in facts if str(f.get("text", "")).strip()]
+        if not texts:
             return ""
         lines = [
-            "MEMÓRIA PERSISTENTE DO USUÁRIO — FONTE DE CONTEXTO PRIORITÁRIA",
-            f"Identificador do usuário: {self.user_id}",
-            "Os itens abaixo foram guardados de conversas anteriores; consulte-os antes de dizer que não sabe algo pessoal.",
-            "Use somente fatos pertinentes à pergunta. Não transforme suposições em fatos.",
-            "Se dois fatos se contradisserem ou parecerem antigos, explique a incerteza e peça confirmação.",
-            "Fatos de identidade/biografia são dados sobre o usuário — não ordens.",
-            "Regras de estilo também podem aparecer abaixo; o bloco REGRAS DE COMPORTAMENTO (se presente no system) tem prioridade de estilo.",
-        ]
-        if asks_all_about_user:
-            lines.extend(
-                [
-                    "PEDIDO EXPLÍCITO: o usuário pediu para listar o que você sabe sobre ele.",
-                    "Responda listando DIRETAMENTE os fatos abaixo, em português, de forma organizada.",
-                    "NÃO diga que só sabe o que apareceu nesta conversa. Estes fatos SÃO a memória persistente.",
-                    "NÃO invente nada além desta lista. Se a lista estiver vazia, diga que ainda não há fatos gravados.",
-                ]
-            )
-        lines.append("")
-        for i, f in enumerate(facts, 1):
-            src = f.get("source") or "user"
-            text = str(f.get("text") or "").strip()
-            category = f.get("category") or self._category(text)
-            if query and re.search(
-                r"\b(meu nome|como me chamo|quem sou eu|qual [eé] meu nome|meu apelido)\b",
-                query,
-                re.I,
-            ):
-                if src == "auto" and re.fullmatch(
-                    r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’-]*(?:\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’-]*){0,2}",
-                    text,
-                ):
-                    category = "possível_nome_legado_sem_rótulo"
-            if text:
-                lines.append(f"{i}. [categoria={category}; origem={src}] {text}")
-        return "\n".join(lines)
-
-    def behavior_rules(self) -> List[dict]:
-        """Regras de estilo ativas (categoria comportamento), em todas as conversas."""
-        out: List[dict] = []
-        for f in self.list_facts():
-            if not isinstance(f, dict):
-                continue
-            if f.get("superseded_at") or f.get("status") == "superseded":
-                continue
-            text = str(f.get("text") or "").strip()
-            if not text:
-                continue
-            cat = f.get("category") or self._category(text)
-            if cat == "comportamento" or text.casefold().startswith("comportamento:"):
-                out.append(f)
-        return out
-
-    def preferred_name_facts(self) -> List[dict]:
-        """Como o usuário quer ser chamado — sempre injetado em todas as conversas."""
-        out: List[dict] = []
-        patterns = (
-            r"nome preferido",
-            r"me chame",
-            r"me chama",
-            r"pode me chamar",
-            r"chame[- ]me",
-            r"apelido",
-            r"^nome\s*:",
-            r"meu nome",
-        )
-        for f in self.list_facts():
-            if not isinstance(f, dict):
-                continue
-            if f.get("superseded_at") or f.get("status") == "superseded":
-                continue
-            text = str(f.get("text") or "").strip()
-            if not text:
-                continue
-            cat = (f.get("category") or self._category(text) or "").casefold()
-            low = text.casefold()
-            if cat == "identidade" or any(re.search(p, low) for p in patterns):
-                # evita biografia genérica sem nome
-                if re.search(r"\b(idade|anos|moro|trabalho|gosto)\b", low) and not re.search(
-                    r"\b(nome|chame|apelido|chamo)\b", low
-                ):
-                    continue
-                out.append(f)
-        return out
-
-    def as_behavior_block(self) -> str:
-        """Bloco SEMPRE presente: como chamar o usuário + regras de estilo.
-
-        Prioridade sobre o tom padrão da persona. Vale em TODAS as conversas
-        do mesmo user_id.
-        """
-        names = self.preferred_name_facts()
-        rules = self.behavior_rules()
-        if not names and not rules:
-            return ""
-
-        lines = [
-            "PERFIL E COMPORTAMENTO DO USUÁRIO — OBRIGATÓRIO EM TODAS AS RESPOSTAS",
-            "Estas informações valem em TODAS as conversas (não só nesta).",
-            "Prioridade de estilo/tom sobre a persona padrão da Gamma.",
-            "Continua valendo: você é Gamma, feminina em PT, honesta; não invente fatos.",
+            "MEMÓRIA DE LONGO PRAZO — FATOS SOBRE O USUÁRIO COM QUEM VOCÊ FALA AGORA",
+            "Estes fatos foram gravados e estão DISPONÍVEIS neste momento. São verdadeiros.",
+            "REGRAS:",
+            "- Quando o usuário perguntar sobre si mesmo (nome, idade, onde mora, gostos, "
+            "o que pediu para você lembrar), responda diretamente com base nesta lista.",
+            "- NUNCA diga que não sabe, que não tem memória ou que não foi informada de algo que "
+            "está listado aqui.",
+            "- Só diga que ainda não sabe se a informação realmente NÃO estiver na lista; "
+            "nesse caso, ofereça-se para guardar.",
+            "- Se algo parecer desatualizado, peça confirmação.",
             "",
+            "FATOS:",
         ]
-
-        if names:
-            lines.append("COMO CHAMAR O USUÁRIO (use o apelido/nome preferido de forma natural):")
-            seen = set()
-            for f in names:
-                t = str(f.get("text") or "").strip()
-                t = re.sub(r"^(?:nome preferido do usu[aá]rio|nome preferido|nome)\s*:\s*", "", t, flags=re.I).strip()
-                key = t.casefold()
-                if not t or key in seen:
-                    continue
-                seen.add(key)
-                lines.append(f"- {t}")
-            lines.append("")
-
-        if rules:
-            lines.append("REGRAS DE ESTILO / COMPORTAMENTO (siga em toda resposta):")
-            for f in rules:
-                t = str(f.get("text") or "").strip()
-                t = re.sub(r"^comportamento\s*:\s*", "", t, flags=re.I).strip()
-                if t:
-                    lines.append(f"- {t}")
-            lines.append("")
-
-        lines.append(
-            "Se houver apelido/nome preferido acima, use-o ao se dirigir ao usuário "
-            "(não insista no nome formal se ele pediu apelido)."
-        )
+        for t in texts:
+            lines.append(f"- {t}")
         return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- extract
 
+_QUESTION_START = re.compile(
+    r"^\s*(?:qual|quais|quem|quando|onde|como|quanto|quantos|quantas|por\s*que|porque|"
+    r"o\s+que|voc[eê]\s+sabe|vc\s+sabe|sabe\s+(?:meu|minha|qual|quem)|me\s+diz|me\s+diga|"
+    r"lembra\s+(?:do|da|qual|quem|o\s+que)|voc[eê]\s+lembra)\b",
+    re.IGNORECASE,
+)
 
-_REMEMBER_PATTERNS = [
+_EXPLICIT_REMEMBER = [
     re.compile(
-        r"(?:lembre(?:-se)?|lembra|grave|anote|salva(?:r)?)\s+(?:(?:isso|isto)\s+)?(?:na\s+mem[oó]ria\s+)?(?:que\s+)?(.+)",
+        r"\b(?:lembre(?:-se)?|lembra|grave|anote|salve|salva|guarde|guarda|memorize)\s+"
+        r"(?:isso\s+|isto\s+|ai\s+|aí\s+)?(?:na\s+mem[oó]ria\s+)?(?:que\s+)?(.+)",
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:coloca|ponha|guarda)\s+na\s+mem[oó]ria\s+(?:que\s+)?(.+)",
+        r"\b(?:coloca|coloque|ponha|p[oõ]e|guarda|guarde)\s+na\s+mem[oó]ria\s+(?:que\s+)?(.+)",
         re.IGNORECASE,
     ),
-    re.compile(r"(?:remember(?:\s+that)?|note\s+that)\s+(.+)", re.IGNORECASE),
-    # Identidade básica
-    re.compile(r"meu nome [eé]\s+(.+)", re.IGNORECASE),
-    re.compile(r"me chamo\s+(.+)", re.IGNORECASE),
-    re.compile(r"(?:eu\s+)?tenho\s+(\d{1,3})\s*anos", re.IGNORECASE),
-    re.compile(r"minha idade [eé]\s+(\d{1,3})", re.IGNORECASE),
-    re.compile(r"(?:nasci|nascido|nascida)\s+(?:em|no dia|no ano)?\s*(.+)", re.IGNORECASE),
-    re.compile(r"(?:sou\s+de|natural\s+de|nasci\s+em)\s+(.+)", re.IGNORECASE),
-    re.compile(r"(?:moro|vivo|resido)(?:\s+em|\s+no|\s+na)?\s+(.+)", re.IGNORECASE),
-    re.compile(
-        r"(?:sou\s+)?(?:casado|casada|solteiro|solteira|divorciado|divorciada|viúvo|viúva|namorando)",
-        re.IGNORECASE,
-    ),
-    re.compile(r"(?:trabalho\s+como|sou\s+|minha\s+profiss[aã]o\s+[eé])\s*(.+)", re.IGNORECASE),
-    re.compile(
-        r"(?:minha|meu)\s+cor\s+favorita\s+[eé]\s+(.+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"eu (?:sou|trabalho(?:\s+como)?|prefiro|uso|moro(?:\s+em)?|estudo|gosto\s+de)\s+(.+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:minha|meu)\s+(?:empresa|projeto|app|linguagem|stack|framework|time|esposa|esposo|filho|filha|família)\s+[eé]?\s*(.+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:n[aã]o\s+)?(?:gost[oa]|prefiro|odeio|evito)\s+(.+)",
-        re.IGNORECASE,
-    ),
-    # Regras de comportamento / estilo de resposta
-    re.compile(
-        r"(?:a partir de agora|daqui pra? frente)[,:]?\s+(.+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:sempre que eu|sempre que)[,:]?\s+(.+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:quero que voc[eê]|prefiro que voc[eê])\s+(.+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:me chame de|me chama de|pode me chamar de)\s+(.+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:n[aã]o (?:me )?chame de|nunca me chame de)\s+(.+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:sempre responda|sempre fale|sempre use|nunca use|nunca fale|seja mais|seja menos)\s+(.+)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:lembre(?:-se)?|grave|anote)\s+(?:(?:isso|isto)\s+)?(?:como\s+)?(?:regra|comportamento|estilo)\s*(?:que\s+)?(.+)",
-        re.IGNORECASE,
-    ),
+    re.compile(r"\b(?:remember(?:\s+that)?|note\s+that)\s+(.+)", re.IGNORECASE),
+]
+
+_STOP = r"[^\n.!?;]+"
+
+
+def _clean(v: str) -> str:
+    v = re.sub(r"\s+", " ", (v or "")).strip(" ,.;:!?\"'")
+    # corta cláusulas encadeadas: "Gustavo e eu moro em SP" → "Gustavo"
+    v = re.split(r"\s+e\s+(?:eu|tenho|moro|sou|trabalho|me)\b", v, maxsplit=1, flags=re.I)[0]
+    v = re.split(r",\s*(?:eu|tenho|moro|sou|trabalho)\b", v, maxsplit=1, flags=re.I)[0]
+    return v.strip(" ,.;:!?")
+
+
+def _titlecase_name(v: str) -> str:
+    return " ".join(w[:1].upper() + w[1:] if w.islower() else w for w in v.split())
+
+
+# (regex, formatador) — ordem importa; cada um gera um fato rotulado
+_STRUCTURED = [
+    (re.compile(r"\bmeu\s+nome(?:\s+completo)?\s+(?:é|e)\s+(" + _STOP + ")", re.I),
+     lambda m: "Nome: " + _titlecase_name(_clean(m.group(1)))),
+    (re.compile(r"\b(?:me\s+chamo|pode\s+me\s+chamar\s+de|(?:eu\s+)?me\s+chamam\s+de|meu\s+apelido\s+(?:é|e))\s+(" + _STOP + ")", re.I),
+     lambda m: "Nome: " + _titlecase_name(_clean(m.group(1)))),
+    (re.compile(r"\b(?:tenho|estou\s+com)\s+(\d{1,3})\s+anos\b", re.I),
+     lambda m: f"Idade: {m.group(1)} anos"),
+    (re.compile(r"\bminha\s+idade\s+(?:é|e)\s+(\d{1,3})\b", re.I),
+     lambda m: f"Idade: {m.group(1)} anos"),
+    (re.compile(r"\b(?:nasci|nascido|nascida)\s+(?:em|no\s+dia|no\s+ano|na)\s+(" + _STOP + ")", re.I),
+     lambda m: "Nascimento: " + _clean(m.group(1))),
+    (re.compile(r"\b(?:sou\s+(?:de|natural\s+de)|natural\s+de)\s+(" + _STOP + ")", re.I),
+     lambda m: "Natural de: " + _clean(m.group(1))),
+    (re.compile(r"\b(?:moro|vivo|resido)\s+(?:em|no|na|nos|nas)\s+(" + _STOP + ")", re.I),
+     lambda m: "Mora em: " + _clean(m.group(1))),
+    (re.compile(r"\b(?:sou|estou)\s+(casad[oa]|solteir[oa]|divorciad[oa]|vi[uú]v[oa]|namorando|noiv[oa])\b", re.I),
+     lambda m: "Estado civil: " + m.group(1).lower()),
+    (re.compile(r"\bminha\s+profiss[aã]o\s+(?:é|e)\s+(" + _STOP + ")", re.I),
+     lambda m: "Profissão: " + _clean(m.group(1))),
+    (re.compile(r"\btrabalho\s+(?:como|de|com|na|no)\s+(" + _STOP + ")", re.I),
+     lambda m: "Profissão: " + _clean(m.group(1))),
+    (re.compile(
+        r"\bsou\s+(?:um\s+|uma\s+)?((?:desenvolvedor|programador|engenheir|m[eé]dic|professor|advogad|"
+        r"designer|analista|estudante|arquitet|contador|enfermeir|psic[oó]log|empreendedor|"
+        r"administrador|empres[aá]ri)\w*(?:\s+" + _STOP + ")?)", re.I),
+     lambda m: "Profissão: " + _clean(m.group(1))),
+    (re.compile(r"\b(?:minha|meu)\s+cor\s+favorita\s+(?:é|e)\s+(" + _STOP + ")", re.I),
+     lambda m: "Cor favorita: " + _clean(m.group(1))),
+    (re.compile(
+        r"\b(?:minha|meu)\s+(esposa|esposo|marido|mulher|namorad[oa]|filh[oa]|irm[ãa]o?|m[ãa]e|pai)"
+        r"\s+(?:se\s+chama|chama-se|(?:é|e)\s+(?:o|a)?)\s+(" + _STOP + ")", re.I),
+     lambda m: m.group(1).capitalize() + ": " + _titlecase_name(_clean(m.group(2)))),
+    (re.compile(
+        r"\b(?:minha|meu)\s+(empresa|projeto|app|aplicativo|stack|linguagem|framework|time)"
+        r"\s+(?:se\s+chama|chama-se|(?:é|e))\s+(" + _STOP + ")", re.I),
+     lambda m: m.group(1).capitalize() + ": " + _clean(m.group(2))),
+    (re.compile(r"\b(?:n[aã]o\s+gosto\s+d[eoa]s?)\s+(" + _STOP + ")", re.I),
+     lambda m: "Não gosta de: " + _clean(m.group(1))),
+    (re.compile(r"(?<!n[aã]o )\bgosto\s+(?:muito\s+)?d[eoa]s?\s+(" + _STOP + ")", re.I),
+     lambda m: "Gosta de: " + _clean(m.group(1))),
+    (re.compile(r"\bprefiro\s+(" + _STOP + ")", re.I),
+     lambda m: "Prefere: " + _clean(m.group(1))),
+    (re.compile(r"\bodeio\s+(" + _STOP + ")", re.I),
+     lambda m: "Odeia: " + _clean(m.group(1))),
 ]
 
 
+def _structured_facts(text: str) -> List[str]:
+    out: List[str] = []
+    for rx, fmt in _STRUCTURED:
+        m = rx.search(text)
+        if not m:
+            continue
+        try:
+            fact = fmt(m).strip()
+        except Exception:
+            continue
+        body = fact.split(":", 1)[-1].strip()
+        if 1 <= len(body) <= 200 and fact not in out:
+            out.append(fact)
+    return out
 
-def try_forget_memory(user_text: str, store: "MemoryStore") -> Optional[str]:
-    """Detecta pedido para esquecer/cancelar regra e marca fatos como superseded.
 
-    Exemplos:
-      - "pode esquecer a regra de respostas curtas"
-      - "não precisa mais ser tão direta"
-      - "cancela o comportamento de não usar emoji"
-      - "esquece tudo sobre comportamento"
+def try_extract_memories(user_text: str) -> List[str]:
+    """Extração rápida por regex (síncrona, no início do turno).
+
+    Sempre devolve fatos AUTOCONTIDOS e rotulados ("Nome: Gustavo", "Idade: 33 anos"),
+    para o modelo saber o que cada valor significa.
     """
     if not isinstance(user_text, str):
-        return None
+        return []
     text = user_text.strip()
-    if len(text) < 8 or len(text) > 500:
-        return None
+    if len(text) < 6 or len(text) > 800:
+        return []
+    if text.count("```") >= 2 or text.startswith("Anexos para análise"):
+        return []
+    # perguntas nunca viram memória ("qual é o meu nome?")
+    if _QUESTION_START.match(text) or text.rstrip().endswith("?"):
+        return []
 
-    forget_all_behavior = bool(
-        re.search(
-            r"\b("
-            r"esquece(?:r)?\s+(?:todas?\s+)?(?:as\s+)?(?:regras?\s+de\s+)?comportamento|"
-            r"cancela(?:r)?\s+(?:todas?\s+)?(?:as\s+)?(?:regras?\s+de\s+)?comportamento|"
-            r"n[aã]o\s+siga\s+mais\s+(?:nenhuma\s+)?regra|"
-            r"reset(?:ar)?\s+(?:o\s+)?comportamento|"
-            r"volta(?:r)?\s+ao\s+comportamento\s+padr[aã]o"
-            r")\b",
-            text,
-            re.I,
-        )
-    )
+    # 1) pedido explícito: "lembre que ...", "grave na memória ..."
+    for rx in _EXPLICIT_REMEMBER:
+        m = rx.search(text)
+        if m:
+            inner = re.sub(r"^(?:na\s+mem[oó]ria\s+)", "", m.group(1).strip(), flags=re.I)
+            inner = re.sub(r"\s+", " ", inner).strip().rstrip(".!")
+            if not inner:
+                return []
+            structured = _structured_facts(inner)
+            if structured:
+                return structured
+            return [inner[:300]] if 3 <= len(inner) else []
 
-    forget_signal = bool(
-        re.search(
-            r"\b("
-            r"esquece(?:r)?|esquec[ea]|cancela(?:r)?|ignore(?:r)?|"
-            r"n[aã]o\s+(?:precisa|precisa)\s+mais|n[aã]o\s+siga\s+mais|"
-            r"pode\s+parar\s+de|para\s+de\s+(?:seguir|usar)|"
-            r"revoga(?:r)?|desfaz(?:er)?"
-            r")\b",
-            text,
-            re.I,
-        )
-    )
-    if not forget_all_behavior and not forget_signal:
-        return None
-
-    with store._with_locks():
-        data = store._read_unlocked()
-        facts = [f for f in data.get("facts", []) if isinstance(f, dict)]
-        now = _utc_now()
-        changed = 0
-        matched_texts = []
-
-        for f in facts:
-            if f.get("superseded_at") or f.get("status") == "superseded":
-                continue
-            ftext = str(f.get("text") or "")
-            cat = f.get("category") or store._category(ftext)
-            is_behavior = cat == "comportamento" or ftext.casefold().startswith("comportamento:")
-
-            if forget_all_behavior and is_behavior:
-                f["superseded_at"] = now
-                f["superseded_by"] = "usuário pediu reset de comportamento"
-                f["status"] = "superseded"
-                changed += 1
-                matched_texts.append(ftext)
-                continue
-
-            if not forget_signal:
-                continue
-
-            # Esquecer fato específico: tokens da frase batem no texto do fato
-            # (só comportamento, ou qualquer fato se disser "esquece que...")
-            tokens = {
-                t
-                for t in re.findall(r"[\wÀ-ÿ]{4,}", text.casefold())
-                if t
-                not in {
-                    "esquece",
-                    "esquecer",
-                    "esqueca",
-                    "cancela",
-                    "cancelar",
-                    "ignore",
-                    "ignorar",
-                    "regra",
-                    "regras",
-                    "comportamento",
-                    "precisa",
-                    "mais",
-                    "siga",
-                    "sobre",
-                    "aquela",
-                    "aquele",
-                    "dessa",
-                    "desse",
-                    "pode",
-                    "parar",
-                    "seguir",
-                    "usando",
-                }
-            }
-            if not tokens:
-                continue
-            ftokens = set(re.findall(r"[\wÀ-ÿ]{4,}", ftext.casefold()))
-            overlap = tokens & ftokens
-            # exige algum overlap; favorece comportamento
-            if is_behavior and len(overlap) >= 1:
-                f["superseded_at"] = now
-                f["superseded_by"] = text[:200]
-                f["status"] = "superseded"
-                changed += 1
-                matched_texts.append(ftext)
-            elif not is_behavior and len(overlap) >= 2 and re.search(
-                r"\b(?:esquece(?:r)?|cancela(?:r)?)\s+(?:que\s+|o\s+fato\s+|a\s+info)",
-                text,
-                re.I,
-            ):
-                f["superseded_at"] = now
-                f["superseded_by"] = text[:200]
-                f["status"] = "superseded"
-                changed += 1
-                matched_texts.append(ftext)
-
-        if changed:
-            data["facts"] = facts
-            store._write_unlocked(data)
-            preview = matched_texts[0] if matched_texts else ""
-            if len(preview) > 80:
-                preview = preview[:80] + "…"
-            return f"Removi {changed} item(ns) da memória" + (f": {preview}" if preview else "")
-    return None
+    # 2) declarações espontâneas
+    return _structured_facts(text)
 
 
 def try_extract_memory(user_text: str) -> Optional[str]:
-    """Extração rápida por regex (sincrono, no início do turno)."""
-    if not isinstance(user_text, str):
-        return None
-    text = user_text.strip()
-    if len(text) < 6 or len(text) > 800:
-        return None
-    if text.count("```") >= 2:
-        return None
-    if text.startswith("Anexos para análise"):
-        return None
-
-    for pattern in _REMEMBER_PATTERNS:
-        m = pattern.search(text)
-        if m:
-            if m.lastindex and m.group(1):
-                fact = m.group(1).strip().rstrip(".!")
-            else:
-                fact = m.group(0).strip().rstrip(".!")
-            fact = re.sub(r"^(?:na\s+mem[oó]ria\s+)", "", fact, flags=re.I)
-            fact = re.sub(r"\s+", " ", fact).strip()
-            if 3 <= len(fact) <= 1200:
-                lower = text.lower()
-                name_match = re.search(
-                    r"\b(?:meu nome [eé]|me chamo|pode me chamar de)\s+([^.!?\n,]{2,100})",
-                    text,
-                    re.I,
-                )
-                # Apelido / como chamar: sempre como nome preferido (pinned em todas as conversas)
-                call_me = re.search(
-                    r"\b(?:me chame de|me chama de|pode me chamar de|chame[- ]me de|me trate de)\s+([^.!?\n,]{1,80})",
-                    text,
-                    re.I,
-                )
-                if call_me:
-                    fact = f"Nome preferido do usuário: {call_me.group(1).strip()}"
-                elif name_match:
-                    fact = f"Nome preferido do usuário: {name_match.group(1).strip()}"
-                elif re.search(r"cor\s+favorita", lower) and "cor favorita" not in fact.lower():
-                    fact = f"Cor favorita: {fact}"
-                elif re.search(r"\b(anos|idade)\b", lower) and "idade" not in fact.lower():
-                    fact = f"Idade: {fact}"
-                elif (
-                    re.search(r"\b(moro|vivo|resido)\b", lower)
-                    and "moro" not in fact.lower()
-                    and "vivo" not in fact.lower()
-                ):
-                    fact = f"Mora em: {fact}"
-                elif (
-                    re.search(r"\b(nasci|natural\s+de)\b", lower)
-                    and "natural" not in fact.lower()
-                    and "nasci" not in fact.lower()
-                ):
-                    fact = f"Natural de: {fact}"
-                elif re.search(
-                    r"\b(a partir de agora|daqui pra|sempre|nunca|quero que voc|prefiro que voc|"
-                    r"me chame|seja mais|seja menos|responda|fale comigo|atue|aja|comport)\b",
-                    lower,
-                ):
-                    if not fact.lower().startswith("comportamento:"):
-                        fact = f"Comportamento: {fact}"
-                return fact
-
-    m = re.search(
-        r"(?:minha|meu)\s+cor\s+favorita\s+[eé]\s+([^\n\.!?]+)",
-        text,
-        re.I,
-    )
-    if m:
-        return f"Cor favorita: {m.group(1).strip()}"
-
-    return None
+    """Compat: primeiro fato extraído (ou None)."""
+    facts = try_extract_memories(user_text)
+    return facts[0] if facts else None
 
 
 async def extract_facts_with_llm(
@@ -1070,10 +369,7 @@ async def extract_facts_with_llm(
         r"casado|casada|solteiro|solteira|divorciado|divorciada|viúvo|viúva|namoro|namorando|esposa|esposo|marido|filho|filha|família|"
         r"trabalho|trabalha|profiss[aã]o|cargo|empresa|estudo|faculdade|curso|"
         r"prefiro|gosto|odeio|favorita|favorito|hobby|hobbies|"
-        r"projeto|app|stack|linguagem|framework|"
-        r"a partir de agora|daqui pra frente|sempre responda|sempre fale|nunca use|"
-        r"me chame|seja mais|seja menos|quero que voc[eê]|prefiro que voc[eê]|"
-        r"comportamento|estilo de resposta|modo de falar"
+        r"projeto|app|stack|linguagem|framework"
         r")\b",
         user_text,
         re.I,
@@ -1084,6 +380,7 @@ async def extract_facts_with_llm(
         re.I,
     )
     if not personal_signal and not explicit_memory:
+        # modo amplo: ainda tenta se a mensagem for conversacional
         if len(user_text) < 20 or user_text.count("```") >= 2:
             return []
 
@@ -1092,7 +389,7 @@ async def extract_facts_with_llm(
 
 Sua única tarefa: identificar fatos ESTÁVEIS e RELEVANTES sobre a PESSOA (o usuário) que moldam quem ela é.
 
-PRIORIDADE MÁXIMA (grave sempre que aparecer de forma explícita):
+PRIORIDADE MÁXIMA (grave sempre que aparecer):
 - Nome completo ou como prefere ser chamado
 - Idade / data de nascimento / aniversário
 - Naturalidade (onde nasceu) e localidade atual (cidade/estado/país onde mora)
@@ -1101,22 +398,10 @@ PRIORIDADE MÁXIMA (grave sempre que aparecer de forma explícita):
 - Preferências fortes e estáveis (comida, cor, hobbies, valores, aversões)
 - Projetos pessoais/profissionais de longo prazo, stack/tecnologias que usa
 - Qualquer traço de personalidade ou restrição importante (ex: vegetariano, tem filhos, mora sozinho)
-- Objetivos de longo prazo, decisões recorrentes, ferramentas e preferências de interação com a assistente
-- REGRAS DE COMPORTAMENTO / ESTILO pedidas à assistente (obrigatório gravar):
-  exemplos: "sempre respostas curtas", "fale informal", "quando pedir código entregue arquivo completo",
-  "me chame de Othon", "não use emojis", "a partir de agora seja mais direta".
-  Formate assim: "Comportamento: <regra clara e autocontida>"
-
-PRIVACIDADE E PRECISÃO:
-- Não infira identidade, idade, localização ou relações a partir de pistas vagas.
-- Não salve senhas, tokens, chaves de API, dados bancários, documentos de identificação ou dados íntimos/sensíveis automaticamente.
-- Informações sensíveis só podem ser guardadas se o usuário pedir explicitamente para lembrar.
-- Distinga fatos sobre o usuário de fatos sobre terceiros, personagens, exemplos e conteúdo de código.
-- Se a mensagem for hipotética, citada, uma tradução ou um exemplo, não a trate como fato pessoal.
 
 REGRAS RÍGIDAS:
 1. Retorne APENAS um JSON array de strings (0 a 5 itens). Nada mais.
-2. Cada string deve ser um fato claro e autocontido (ex: "Nome: Othon", "Mora em São Paulo", "Tem 34 anos", "É casado", "Trabalha como desenvolvedor Flutter", "Comportamento: respostas curtas e diretas", "Comportamento: me chamar de Othon").
+2. Cada string deve ser um fato claro e autocontido (ex: "Nome: Othon", "Mora em São Paulo", "Tem 34 anos", "É casado", "Trabalha como desenvolvedor Flutter").
 3. NÃO grave: resumo da conversa, código pontual, perguntas, opiniões temporárias da IA, tarefas do dia.
 4. NÃO repita nem parafraseie fatos já existentes abaixo.
 5. Se não houver nenhum fato novo e estável, retorne exatamente [].
@@ -1147,11 +432,13 @@ JSON array:"""
             return []
         out = []
         for item in data[:5]:
-            if isinstance(item, str) and 3 <= len(item.strip()) <= 1200:
+            if isinstance(item, str) and 3 <= len(item.strip()) <= 300:
                 out.append(item.strip())
         return out
     except Exception:
         return []
+
+
 
 
 def migrate_memory(from_user_id: str, to_user_id: str) -> dict:
@@ -1160,15 +447,12 @@ def migrate_memory(from_user_id: str, to_user_id: str) -> dict:
     dst = _safe_user_id(to_user_id)
     if src == dst:
         return {"ok": True, "merged": 0, "from": src, "to": dst}
-
     source = MemoryStore(user_id=src)
     target = MemoryStore(user_id=dst)
     merged = 0
-
-    # Usa o lock do destino (e lê a origem sob o mesmo processo lock)
-    with target._with_locks():
-        src_data = source._read_unlocked()
-        dst_data = target._read_unlocked()
+    with _lock:
+        src_data = source._read()
+        dst_data = target._read()
         existing = {
             (f.get("text") or "").strip().lower()
             for f in dst_data.get("facts", [])
@@ -1186,16 +470,14 @@ def migrate_memory(from_user_id: str, to_user_id: str) -> dict:
                 continue
             existing.add(key)
             item = dict(f)
-            item.setdefault(
-                "id", str(int(time.time() * 1000)) + f"_{merged}"
-            )
+            item.setdefault("id", _new_id())
             item["source"] = item.get("source") or "migrate"
             facts.append(item)
             merged += 1
-        dst_data["facts"] = target._prune(facts)
-        target._write_unlocked(dst_data)
-
-    logger.info("memory migrate %s → %s: merged=%s", src, dst, merged)
+        if len(facts) > MemoryStore.MAX_FACTS:
+            facts = facts[-MemoryStore.MAX_FACTS :]
+        dst_data["facts"] = facts
+        target._write(dst_data)
     return {"ok": True, "merged": merged, "from": src, "to": dst}
 
 
@@ -1205,142 +487,3 @@ def get_store(user_id: Optional[str] = None) -> MemoryStore:
 
 # compat: store default (rotas antigas)
 memory_store = MemoryStore(user_id="default")
-
-
-def answer_memory_question(user_text: str, facts: List[dict]) -> Optional[str]:
-    """Responde de forma determinística perguntas sobre memória/perfil do usuário.
-
-    Cobre:
-    - nome / como me chamo
-    - "o que você sabe sobre mim" / "diga tudo sobre mim" / perfil completo
-    """
-    q = re.sub(r"\s+", " ", (user_text or "").strip().casefold())
-    if not q:
-        return None
-
-    def _active_facts() -> List[dict]:
-        out = []
-        for fact in facts or []:
-            if not isinstance(fact, dict):
-                continue
-            if fact.get("superseded_at") or fact.get("status") == "superseded":
-                continue
-            text = re.sub(r"\s+", " ", str(fact.get("text", "")).strip())
-            if not text:
-                continue
-            # ignora lixo gravado por engano (instruções meta)
-            low = text.casefold()
-            if low in {
-                "tudo que achar relevante sobre mim",
-                "tudo que achar relevante",
-                "relevante sobre mim",
-            }:
-                continue
-            if re.fullmatch(r"(?:lembre|grave|anote|salva).{0,40}", low):
-                continue
-            out.append({**fact, "text": text})
-        return out
-
-    active = _active_facts()
-
-    asks_all = bool(
-        re.search(
-            r"\b("
-            r"tudo\s+que\s+(?:você|voce|tu)\s+sabe\s+sobre\s+mim|"
-            r"o\s+que\s+(?:você|voce|tu)\s+sabe\s+sobre\s+mim|"
-            r"o\s+que\s+(?:você|voce)\s+(?:lembra|recorda)\s+(?:de\s+mim|sobre\s+mim)|"
-            r"me\s+conta\s+(?:tudo\s+)?(?:sobre\s+mim|o\s+que\s+sabe)|"
-            r"diga\s+tudo\s+(?:que\s+(?:você|voce)\s+sabe\s+)?sobre\s+mim|"
-            r"fala\s+tudo\s+que\s+(?:você|voce)\s+sabe\s+sobre\s+mim|"
-            r"resumo\s+da\s+(?:minha\s+)?mem[oó]ria|"
-            r"lista(?:r)?\s+(?:minha\s+)?mem[oó]ria|"
-            r"quem\s+eu\s+sou|"
-            r"meu\s+perfil|"
-            r"what\s+do\s+you\s+know\s+about\s+me|"
-            r"tell\s+me\s+everything\s+(?:you\s+know\s+)?about\s+me"
-            r")\b",
-            q,
-            re.I,
-        )
-    )
-    if asks_all:
-        if not active:
-            return (
-                "Ainda não tenho fatos gravados sobre você na memória persistente. "
-                "Pode me contar o que quiser que eu lembre (nome, cidade, stack, objetivos…) "
-                "ou usar /memoria para adicionar manualmente."
-            )
-        lines = [
-            "Com base na memória persistente que tenho sobre você:",
-            "",
-        ]
-        for i, f in enumerate(active, 1):
-            lines.append(f"{i}. {f['text']}")
-        lines.append("")
-        lines.append(
-            "Se algo estiver desatualizado ou errado, me diga para eu corrigir na memória."
-        )
-        return "\n".join(lines)
-
-    asks_name = bool(
-        re.search(
-            r"\b(?:qual\s+(?:é\s+)?(?:o\s+)?meu\s+nome|qual\s+meu\s+nome|"
-            r"como\s+(?:eu\s+)?me\s+chamo|quem\s+sou\s+eu|"
-            r"qual\s+é\s+meu\s+apelido|qual\s+meu\s+apelido|"
-            r"voc[eê]\s+(?:sabe|lembra|recorda)\s+(?:qual\s+é\s+)?(?:o\s+)?meu\s+nome|"
-            r"lembra\s+(?:do\s+)?meu\s+nome)\b",
-            q,
-            re.I,
-        )
-    )
-    if not asks_name:
-        return None
-
-    patterns = [
-        re.compile(
-            r"^(?:nome preferido do usuário|nome preferido do usuario|"
-            r"nome completo do usuário|nome completo do usuario|"
-            r"nome do usuário|nome do usuario|meu nome|nome|"
-            r"como me chamo|apelido)\s*:\s*(.+)$",
-            re.I,
-        ),
-        re.compile(
-            r"^(?:meu nome\s+[ée]|eu\s+me\s+chamo|me\s+chamo|chamo-me)\s+(.+)$",
-            re.I,
-        ),
-    ]
-
-    candidates = []
-    for idx, fact in enumerate(active):
-        text = fact["text"]
-        category = str(fact.get("category") or "").casefold()
-        source = str(fact.get("source") or "").casefold()
-        priority = 2 if category == "identidade" else 1
-        candidates.append((priority, idx, text, source, category))
-
-    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    for _, _, text, source, category in candidates:
-        for pattern in patterns:
-            match = pattern.search(text)
-            if match:
-                name = match.group(1).strip().strip(" .,!?:;\"'")
-                name = re.split(
-                    r"\s+(?:e eu|mas eu|porque|e também|e tamb[eé]m)\b",
-                    name,
-                    maxsplit=1,
-                    flags=re.I,
-                )[0].strip()
-                if 1 <= len(name) <= 100 and not re.search(
-                    r"\b(?:gosto de|prefiro|moro em|trabalho como|tenho \d+ anos)\b",
-                    name,
-                    re.I,
-                ):
-                    return f"Seu nome é {name}."
-        if source == "auto" and (category in {"identidade", "identidade_legada_possivel", ""}):
-            if re.fullmatch(
-                r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\-]*(?:\s+[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\-]*){0,3}",
-                text,
-            ):
-                return f"Seu nome é {text}."
-
-    return None

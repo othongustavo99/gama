@@ -1,7 +1,4 @@
-"""CRUD da memória de longo prazo — isolada por X-User-Id / user_id.
-
-Inclui endpoint de migração (Google login: ids legados → chave estável por e-mail).
-"""
+"""CRUD da memória de longo prazo — isolada por X-User-Id / user_id."""
 
 from __future__ import annotations
 
@@ -32,17 +29,29 @@ class MigrateIn(BaseModel):
     to_user_id: str = Field(min_length=1, max_length=200)
 
 
+@router.post("/migrate")
+async def migrate(body: MigrateIn):
+    """Mescla a memória de um id antigo no id atual (usado pelo app após login Google)."""
+    return migrate_memory(body.from_user_id, body.to_user_id)
+
+
+@router.get("/prompt")
+async def memory_prompt(
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+):
+    """Diagnóstico: mostra exatamente o bloco de memória injetado no prompt."""
+    store = get_store(_uid(x_user_id))
+    return {"user_id": store.user_id, "block": store.as_prompt_block()}
+
+
 @router.get("")
 async def list_memory(
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
-    include_archived: bool = False,
 ):
     store = get_store(_uid(x_user_id))
-    # Por padrão só fatos ativos (não superseded). ?include_archived=true traz tudo.
-    facts = store.list_facts(active_only=not include_archived)
     return {
         "user_id": store.user_id,
-        "facts": facts,
+        "facts": store.list_facts(),
     }
 
 
@@ -52,10 +61,7 @@ async def add_memory(
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
 ):
     store = get_store(_uid(x_user_id))
-    try:
-        fact = store.add_fact(body.text.strip(), source="user")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    fact = store.add_fact(body.text.strip(), source="user")
     return {"ok": True, "fact": fact}
 
 
@@ -78,30 +84,3 @@ async def clear_memory(
     store = get_store(_uid(x_user_id))
     store.clear()
     return {"ok": True}
-
-
-@router.post("/migrate")
-async def migrate(
-    body: MigrateIn,
-    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
-):
-    """
-    Mescla memória de from_user_id → to_user_id (sem duplicar texto).
-    Usado pelo app após login Google para unificar ids legados
-    (google_<numeric>) na chave estável google_email_*.
-    """
-    # Segurança básica: só permite migrar para o user_id do header
-    # (evita que um cliente mescle memória de terceiros).
-    caller = _uid(x_user_id)
-    to_id = (body.to_user_id or "").strip()
-    from_id = (body.from_user_id or "").strip()
-    if not to_id or not from_id:
-        raise HTTPException(status_code=400, detail="from_user_id e to_user_id obrigatórios")
-    if to_id != caller and caller not in {"default", ""}:
-        # Permite se o header já é o destino; senão rejeita.
-        raise HTTPException(
-            status_code=403,
-            detail="Migração só permitida para o próprio X-User-Id",
-        )
-    result = migrate_memory(from_id, to_id)
-    return result

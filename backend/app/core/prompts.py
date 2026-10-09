@@ -26,7 +26,6 @@ Adapte o estilo APENAS nesta resposta:
 def build_system_prompt(
     memory_block: str = "",
     *,
-    behavior_block: str = "",
     web_enabled: bool = True,
     voice_mode: bool = False,
     conversational_mode: bool = False,
@@ -49,7 +48,7 @@ def build_system_prompt(
 CAPACIDADES ATUAIS DO SISTEMA
 
 - Você recebe histórico recente da conversa e, quando necessário, um resumo do início.
-- Existe uma memória de longo prazo com fatos gravados pelo usuário ou detectados automaticamente.
+- Existe uma memória de longo prazo com fatos gravados pelo usuário ou detectados automaticamente (bloco "MEMÓRIA DE LONGO PRAZO"). Se a pergunta do usuário puder ser respondida por esse bloco, responda com ele e nunca diga que não sabe.
 - Você NÃO treina o modelo com as conversas; a "memória" é texto injetado neste prompt.
 - Quando o sistema anexar um bloco "[Resultados de busca na web...]", você TEM acesso a essas fontes nesta resposta.
 - Sem esse bloco, não afirme que acabou de consultar a internet nesta mensagem.
@@ -59,12 +58,6 @@ CAPACIDADES ATUAIS DO SISTEMA
 - Se o analyzer reportar falha (repo privado / rate limit), aí sim explique e peça ZIP ou GITHUB_TOKEN no backend.
 - Quando o contexto trouxer o texto de um arquivo (ex.: main.dart), responda com base nesse texto (trechos ou conteúdo completo conforme o pedido).
 - Quando o usuário pedir para lembrar algo, confirme de forma breve se o sistema indicar que gravou.
-- Quando o bloco "MEMÓRIA PERSISTENTE DO USUÁRIO" estiver presente, esses fatos SÃO o que você sabe sobre a pessoa. Use-os.
-- Se o usuário perguntar "o que você sabe sobre mim", "diga tudo sobre mim", "quem eu sou" ou similar: liste os fatos da memória de forma direta e organizada. NÃO diga que só sabe o que apareceu nesta conversa.
-- Não invente fatos pessoais que não estejam na memória nem no histórico. Mas também não omita fatos que ESTÃO na memória.
-- Fatos marcados como categoria=comportamento (ou texto "Comportamento: ...") são regras de estilo pedidas pelo usuário. Siga-as em todas as respostas até ele pedir para mudar ou cancelar.
-- Exemplos de comportamento: respostas curtas, tom informal, sempre entregar código completo, me chamar de certo nome, não usar emojis, ser mais direta.
-- Se o usuário disser "a partir de agora...", "sempre...", "prefiro que você...", "me chame de...", trate como regra persistente (o sistema grava automaticamente).
 
 QUALIDADE DA RESPOSTA
 
@@ -186,15 +179,12 @@ NOTA: a busca na web está desligada neste ambiente (WEB_SEARCH_ENABLED=0).
 """
 
     parts = [base]
-
-    # Regras de comportamento do usuário: prioridade de ESTILO sobre a persona padrão.
-    # Ficam logo após a identidade, antes de capacidades/Talk/memória factual.
-    if behavior_block and behavior_block.strip():
-        parts.append(behavior_block.strip())
-
+    # Memória logo após a identidade (alta prioridade), não no fim do prompt.
+    if memory_block and memory_block.strip():
+        parts.append(memory_block.strip())
     parts.append(extra.strip())
 
-    # Talk Skill (camada de estilo situacional — não anula regras do usuário)
+    # Talk Skill (camada de estilo — depois das skills, antes da memória)
     if talk_layer and talk_layer.strip():
         header = "TALK SKILL ATIVA"
         if talk_mode:
@@ -202,8 +192,5 @@ NOTA: a busca na web está desligada neste ambiente (WEB_SEARCH_ENABLED=0).
         parts.append(f"{header}\n\n{talk_layer.strip()}")
     elif voice_mode:
         parts.append(VOICE_REPLY_RULES)
-
-    if memory_block and memory_block.strip():
-        parts.append(memory_block.strip())
 
     return "\n\n".join(parts)
