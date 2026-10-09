@@ -385,3 +385,31 @@ def get_store(user_id: Optional[str] = None) -> MemoryStore:
 
 # compat: store default (rotas antigas)
 memory_store = MemoryStore(user_id="default")
+
+def answer_memory_question(user_text: str, facts: List[dict]) -> Optional[str]:
+    """Responde diretamente perguntas simples cuja resposta está na memória."""
+    q = re.sub(r"\s+", " ", (user_text or "").strip().lower())
+    if not q:
+        return None
+    asks_name = bool(re.search(
+        r"\b(qual [ée] o meu nome|qual [ée] meu nome|como eu me chamo|"
+        r"como me chamo|voc[eê] sabe meu nome|voc[eê] lembra meu nome|"
+        r"lembra do meu nome|qual meu nome)\b", q
+    ))
+    if not asks_name:
+        return None
+    patterns = [
+        re.compile(r"\bmeu nome [ée]\s+(.+)$", re.I),
+        re.compile(r"\bme chamo\s+(.+)$", re.I),
+        re.compile(r"\bnome\s*:\s*(.+)$", re.I),
+    ]
+    for fact in reversed(facts or []):
+        text = re.sub(r"\s+", " ", str(fact.get("text", "")).strip())
+        for pattern in patterns:
+            match = pattern.search(text)
+            if match:
+                name = match.group(1).strip().strip(" .,!?:;\"'")
+                name = re.split(r"\s+(?:e eu|mas eu|porque|e também)\b", name, maxsplit=1, flags=re.I)[0]
+                if 1 <= len(name) <= 80:
+                    return f"Seu nome é {name}."
+    return None

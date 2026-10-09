@@ -11,7 +11,7 @@ from ..models import ChatRequest
 from ..core.image_gen import wants_image_generation, build_image_prompt, generate_image
 from ..config import settings as app_settings
 from ..web_search import should_search, search_web
-from ..core.memory import get_store, extract_facts_with_llm
+from ..core.memory import get_store, extract_facts_with_llm, answer_memory_question
 from ..core.image_analyzer import analyze_images
 from ..core.code_analyzer.pipeline import build_query_context_async
 
@@ -118,6 +118,21 @@ async def chat(
 
         try:
             nonlocal image_analysis_context, image_analysis_ok
+
+            # Resposta determinística para recuperar o nome já salvo na memória.
+            uid_for_memory = (x_user_id or request.user_id or "default").strip() or "default"
+            try:
+                memory_store = get_store(uid_for_memory)
+                memory_answer = answer_memory_question(last_user, memory_store.list_facts())
+            except Exception as memory_lookup_error:
+                logger.warning("memory lookup: %s", memory_lookup_error)
+                memory_answer = None
+            if memory_answer:
+                yield json.dumps({"gama_meta": {"phase": "typing"}}, ensure_ascii=False) + "\n"
+                yield json.dumps({"message": {"role": "assistant", "content": memory_answer}, "done": False}, ensure_ascii=False) + "\n"
+                yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
+                return
+
             # --- fase: geração de imagem (quando o usuário pede para criar/imaginar) ---
             if want_image_gen:
                 yield json.dumps(
