@@ -337,6 +337,48 @@ JSON array:"""
         return []
 
 
+
+
+def migrate_memory(from_user_id: str, to_user_id: str) -> dict:
+    """Mescla fatos de from → to (sem duplicar texto). Usado ao unificar login Google."""
+    src = _safe_user_id(from_user_id)
+    dst = _safe_user_id(to_user_id)
+    if src == dst:
+        return {"ok": True, "merged": 0, "from": src, "to": dst}
+    source = MemoryStore(user_id=src)
+    target = MemoryStore(user_id=dst)
+    merged = 0
+    with _lock:
+        src_data = source._read()
+        dst_data = target._read()
+        existing = {
+            (f.get("text") or "").strip().lower()
+            for f in dst_data.get("facts", [])
+            if isinstance(f, dict)
+        }
+        facts = list(dst_data.get("facts") or [])
+        for f in src_data.get("facts") or []:
+            if not isinstance(f, dict):
+                continue
+            text = (f.get("text") or "").strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in existing:
+                continue
+            existing.add(key)
+            item = dict(f)
+            item.setdefault("id", str(int(datetime.now().timestamp() * 1000)) + f"_{merged}")
+            item["source"] = item.get("source") or "migrate"
+            facts.append(item)
+            merged += 1
+        if len(facts) > MemoryStore.MAX_FACTS:
+            facts = facts[-MemoryStore.MAX_FACTS :]
+        dst_data["facts"] = facts
+        target._write(dst_data)
+    return {"ok": True, "merged": merged, "from": src, "to": dst}
+
+
 def get_store(user_id: Optional[str] = None) -> MemoryStore:
     return MemoryStore(user_id=user_id)
 

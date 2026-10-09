@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -9,8 +10,19 @@ import '../core/gama_colors.dart';
 class ParsedMessage {
   final String text;
   final List<AttachmentPreview> attachments;
+  final List<GeneratedImageData> images;
 
-  const ParsedMessage({required this.text, required this.attachments});
+  const ParsedMessage({
+    required this.text,
+    required this.attachments,
+    this.images = const [],
+  });
+}
+
+class GeneratedImageData {
+  final String mime;
+  final String base64;
+  const GeneratedImageData({required this.mime, required this.base64});
 }
 
 class AttachmentPreview {
@@ -25,6 +37,24 @@ class AttachmentPreview {
     this.body = '',
     this.bytes,
   });
+}
+
+
+final _gamaImageRe = RegExp(
+  r'\[gama_image\]\s*mime:([^\n]+)\s*data:([A-Za-z0-9+/=\s]+)\s*\[/gama_image\]',
+  multiLine: true,
+);
+
+(String, List<GeneratedImageData>) extractGamaImages(String content) {
+  final images = <GeneratedImageData>[];
+  final text = content.replaceAllMapped(_gamaImageRe, (m) {
+    images.add(GeneratedImageData(
+      mime: m.group(1)!.trim(),
+      base64: m.group(2)!.replaceAll(RegExp(r'\s'), ''),
+    ));
+    return '';
+  });
+  return (text.trim(), images);
 }
 
 ParsedMessage parseMessageContent(String content) {
@@ -143,20 +173,50 @@ class MessageContentView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final extracted = extractGamaImages(content);
     final parsed = isUser
-        ? parseMessageContent(content)
-        : ParsedMessage(text: content, attachments: const []);
+        ? parseMessageContent(extracted.$1)
+        : ParsedMessage(
+            text: extracted.$1,
+            attachments: const [],
+            images: extracted.$2,
+          );
+    final images = isUser ? extracted.$2 : parsed.images;
 
     final textStyle = TextStyle(
       color: isUser ? Colors.white : GamaColors.textPrimary,
       fontSize: 15,
-      height: 1.5,
+      height: 1.55,
       letterSpacing: 0.1,
     );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (images.isNotEmpty) ...[
+          ...images.map((img) {
+            try {
+              final bytes = base64Decode(img.base64);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Image.memory(
+                    bytes,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) => const Text(
+                      '[imagem indisponível]',
+                      style: TextStyle(color: GamaColors.textMuted),
+                    ),
+                  ),
+                ),
+              );
+            } catch (_) {
+              return const SizedBox.shrink();
+            }
+          }),
+        ],
         if (parsed.text.isNotEmpty)
           _MarkdownMessage(
             text: parsed.text,

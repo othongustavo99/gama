@@ -2,6 +2,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 /// Identidade do usuário (dispositivo ou Google).
+///
+/// Memória no servidor é isolada por [userId].
+/// Contas Google usam chave estável baseada no **e-mail** (quando disponível),
+/// para Android e Windows compartilharem a mesma memória.
 class IdentityService {
   IdentityService._();
   static final IdentityService instance = IdentityService._();
@@ -12,6 +16,7 @@ class IdentityService {
   static const _keyPhotoUrl = 'gama_photo_url';
   static const _keyLoggedIn = 'gama_logged_in';
   static const _keyProvider = 'gama_auth_provider'; // google | guest
+  static const _keyGoogleNumericId = 'gama_google_numeric_id';
 
   late SharedPreferences _prefs;
   bool _ready = false;
@@ -47,8 +52,27 @@ class IdentityService {
 
   String? get email => _ready ? _prefs.getString(_keyEmail) : null;
   String? get photoUrl => _ready ? _prefs.getString(_keyPhotoUrl) : null;
+  String? get googleNumericId =>
+      _ready ? _prefs.getString(_keyGoogleNumericId) : null;
   String get provider =>
       _ready ? (_prefs.getString(_keyProvider) ?? 'guest') : 'guest';
+
+  /// Chave estável de memória para conta Google.
+  /// Prioridade: e-mail normalizado → id numérico Google.
+  static String stableGoogleUserId({
+    required String googleId,
+    String? email,
+  }) {
+    final e = (email ?? '').trim().toLowerCase();
+    if (e.contains('@') && e.length >= 5) {
+      // só caracteres seguros para path no backend
+      final safe = e.replaceAll(RegExp(r'[^\w\.\-@]+'), '_');
+      return 'google_email_$safe';
+    }
+    final gid = googleId.trim();
+    if (gid.isEmpty) return 'google_unknown';
+    return 'google_$gid';
+  }
 
   Future<void> setSession({
     required String userId,
@@ -56,6 +80,7 @@ class IdentityService {
     String? email,
     String? photoUrl,
     required String provider,
+    String? googleNumericId,
   }) async {
     await init();
     await _prefs.setString(_keyUserId, userId);
@@ -72,6 +97,9 @@ class IdentityService {
     } else {
       await _prefs.remove(_keyPhotoUrl);
     }
+    if (googleNumericId != null && googleNumericId.isNotEmpty) {
+      await _prefs.setString(_keyGoogleNumericId, googleNumericId);
+    }
   }
 
   Future<void> bindGoogleUser({
@@ -85,23 +113,53 @@ class IdentityService {
         : (email != null && email.contains('@')
               ? email.split('@').first
               : 'Usuário Google');
+
+    final stableId = stableGoogleUserId(googleId: googleId, email: email);
+    final previousId = _ready ? (_prefs.getString(_keyUserId) ?? '') : '';
+
     await setSession(
-      userId: 'google_$googleId',
+      userId: stableId,
       displayName: display,
       email: email,
       photoUrl: photoUrl,
       provider: 'google',
+      googleNumericId: googleId,
     );
+
+    // Guarda ids legados para o backend poder mesclar memória antiga
+    // (google_<numericId> → google_email_...).
+    // A migração é feita pelo app via MemoryService.migrateIfNeeded.
+    if (previousId.isNotEmpty &&
+        previousId != stableId &&
+        previousId.startsWith('google_')) {
+      await _prefs.setString('gama_memory_migrate_from', previousId);
+    }
+    // Também tenta migrar a partir do id numérico puro
+    final numericKey = 'google_$googleId';
+    if (numericKey != stableId) {
+      await _prefs.setString('gama_memory_migrate_from_numeric', numericKey);
+    }
   }
 
-  /// Convidado (sem Google) — ainda tem id estável para memória.
+  String? takeMigrateFrom() {
+    if (!_ready) return null;
+    final a = _prefs.getString('gama_memory_migrate_from');
+    final b = _prefs.getString('gama_memory_migrate_from_numeric');
+    _prefs.remove('gama_memory_migrate_from');
+    _prefs.remove('gama_memory_migrate_from_numeric');
+    // prefere o id numérico legado (mais comum entre plataformas)
+    if (b != null && b.isNotEmpty && b != userId) return b;
+    if (a != null && a.isNotEmpty && a != userId) return a;
+    return null;
+  }
+
+  /// Convidado (sem Google) — id estável no dispositivo.
   Future<void> continueAsGuest() async {
     await init();
     var id = _prefs.getString(_keyUserId);
     if (id == null || id.isEmpty || id == 'default') {
       id = 'device_${const Uuid().v4()}';
     }
-    // se já era google, gera novo device id
     if (id.startsWith('google_')) {
       id = 'device_${const Uuid().v4()}';
     }
@@ -110,6 +168,9 @@ class IdentityService {
 
   Future<void> signOutLocal() async {
     await init();
+    // Mantém userId para não "perder" a chave ao relogar no mesmo device,
+    // mas marca como deslogado. No próximo Google login, bindGoogleUser
+    // sobrescreve com a chave estável do e-mail.
     await _prefs.setBool(_keyLoggedIn, false);
     await _prefs.setString(_keyProvider, 'guest');
     await _prefs.remove(_keyEmail);
@@ -124,5 +185,6 @@ class IdentityService {
     await _prefs.remove(_keyPhotoUrl);
     await _prefs.setBool(_keyLoggedIn, false);
     await _prefs.remove(_keyProvider);
+    await _prefs.remove(_keyGoogleNumericId);
   }
 }

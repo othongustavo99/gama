@@ -87,6 +87,13 @@ class Settings:
 
     VISION_MODEL = os.getenv("VISION_MODEL", _DEFAULT_MODEL).strip()
 
+    # Geração de imagens (OpenRouter Image API)
+    IMAGE_GEN_MODEL = os.getenv(
+        "IMAGE_GEN_MODEL",
+        "openai/gpt-image-2.5-sunburst",
+    ).strip()
+    IMAGE_GEN_ENABLED = env_bool("IMAGE_GEN_ENABLED", True)
+
     # Limite de tokens de SAÍDA (evita OpenRouter 402 reservando 65k)
     MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 

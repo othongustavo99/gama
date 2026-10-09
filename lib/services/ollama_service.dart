@@ -26,9 +26,12 @@ class WebSource {
 class ChatStreamEvent {
   final String? token;
   final String? memorySaved;
-  final String? phase; // searching | thinking | typing
+  final String? phase; // searching | thinking | typing | generating_image | image_ready
   final String? webSearchQuery;
   final List<WebSource>? sources;
+  /// Imagem gerada (base64 puro, sem data: prefix)
+  final String? imageBase64;
+  final String? imageMime;
 
   const ChatStreamEvent._({
     this.token,
@@ -36,6 +39,8 @@ class ChatStreamEvent {
     this.phase,
     this.webSearchQuery,
     this.sources,
+    this.imageBase64,
+    this.imageMime,
   });
 
   factory ChatStreamEvent.token(String t) => ChatStreamEvent._(token: t);
@@ -48,11 +53,15 @@ class ChatStreamEvent {
     String? webSearchQuery,
     List<WebSource>? sources,
     String? memorySaved,
+    String? imageBase64,
+    String? imageMime,
   }) => ChatStreamEvent._(
     phase: phase,
     webSearchQuery: webSearchQuery,
     sources: sources,
     memorySaved: memorySaved,
+    imageBase64: imageBase64,
+    imageMime: imageMime,
   );
 }
 
@@ -228,11 +237,20 @@ class OllamaService {
               .where((s) => s.url.isNotEmpty)
               .toList();
         }
+        String? imgB64;
+        String? imgMime;
+        final img = meta['image'];
+        if (img is Map) {
+          imgB64 = img['data']?.toString();
+          imgMime = img['mime']?.toString() ?? 'image/png';
+        }
         yield ChatStreamEvent.meta(
           phase: phase,
           webSearchQuery: query,
           sources: sources,
           memorySaved: saved,
+          imageBase64: imgB64,
+          imageMime: imgMime,
         );
         return;
       }

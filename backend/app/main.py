@@ -54,6 +54,7 @@ async def health():
         "document_builder",
         "talk_skill",
         "image_analyzer",
+        "image_gen",
         "tts",
     ]
 

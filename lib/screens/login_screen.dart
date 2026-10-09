@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/gama_colors.dart';
 import '../services/auth_service.dart';
 import '../services/identity_service.dart';
+import '../services/memory_service.dart';
 import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -38,6 +39,10 @@ class _LoginScreenState extends State<LoginScreen> {
       final ok = await AuthService.instance.signInWithGoogle();
       if (!mounted) return;
       if (ok) {
+        // Unifica memória legada (google_<id>) → google_email_* entre Android/Windows
+        try {
+          await MemoryService().migrateIfNeeded();
+        } catch (_) {}
         await _goHome();
       } else {
         setState(() {

@@ -2,12 +2,14 @@ import json
 import logging
 import re
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
 
 from ..core.gama import GamaCore
 from ..llm import llm, LLMClient
 from ..models import ChatRequest
+from ..core.image_gen import wants_image_generation, build_image_prompt, generate_image
+from ..config import settings as app_settings
 from ..web_search import should_search, search_web
 from ..core.memory import get_store, extract_facts_with_llm
 from ..core.image_analyzer import analyze_images
@@ -55,7 +57,10 @@ async def list_models():
 
 
 @router.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+):
     """
     Stream com fases:
       1) gama_meta.phase = searching  (se for buscar)
@@ -86,6 +91,13 @@ async def chat(request: ChatRequest):
         project_id and _DEEP_PROJECT_INTENT.search(last_user)
     )
 
+    has_imgs = bool(getattr(request, "images", None))
+    want_image_gen = bool(
+        getattr(app_settings, "IMAGE_GEN_ENABLED", True)
+        and last_user
+        and wants_image_generation(last_user, has_attached_images=has_imgs)
+    )
+
     # Image Analyzer: faz a leitura visual eficiente antes do modelo principal.
     # Se falhar, o fluxo multimodal antigo continua como fallback.
     image_analysis_context = ""
@@ -105,8 +117,78 @@ async def chat(request: ChatRequest):
         gama_messages = None
 
         try:
-            # --- fase: Image Analyzer ---
             nonlocal image_analysis_context, image_analysis_ok
+            # --- fase: geração de imagem (quando o usuário pede para criar/imaginar) ---
+            if want_image_gen:
+                yield json.dumps(
+                    {"gama_meta": {"phase": "generating_image"}},
+                    ensure_ascii=False,
+                ) + "\n"
+                prompt = build_image_prompt(last_user)
+                result = await generate_image(prompt)
+                if result.get("ok") and result.get("base64"):
+                    yield json.dumps(
+                        {
+                            "gama_meta": {
+                                "phase": "image_ready",
+                                "image": {
+                                    "mime": result.get("mime") or "image/png",
+                                    "data": result["base64"],
+                                    "model": result.get("model"),
+                                    "prompt": result.get("prompt") or prompt[:200],
+                                },
+                            }
+                        },
+                        ensure_ascii=False,
+                    ) + "\n"
+                    # legenda curta via modelo de texto
+                    caption_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Você é a Gamma. O usuário pediu uma imagem e ela já foi gerada. "
+                                "Responda em 1-3 frases em português, confirmando o que foi criado, "
+                                "sem markdown de imagem e sem pedir desculpas. Seja natural."
+                            ),
+                        },
+                        {"role": "user", "content": last_user},
+                    ]
+                    async for chunk in llm.stream_chat(model=model, messages=caption_messages):
+                        yield chunk
+                    return
+                else:
+                    err = result.get("error") or "falha desconhecida"
+                    yield json.dumps(
+                        {
+                            "gama_meta": {
+                                "phase": "image_failed",
+                                "error": err,
+                            }
+                        },
+                        ensure_ascii=False,
+                    ) + "\n"
+                    # continua o chat normal com aviso no system
+                    # avisa no fluxo via token sintético
+                    yield json.dumps(
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    f"Não consegui gerar a imagem agora ({err}). "
+                                    "Pode tentar de novo com uma descrição um pouco diferente?"
+                                ),
+                            },
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ) + "\n"
+                    yield json.dumps(
+                        {"message": {"role": "assistant", "content": ""}, "done": True},
+                        ensure_ascii=False,
+                    ) + "\n"
+                    return
+
+            # --- fase: Image Analyzer ---
             if getattr(request, "images", None):
                 yield json.dumps(
                     {"gama_meta": {"phase": "image_analyzing"}},
@@ -167,7 +249,7 @@ async def chat(request: ChatRequest):
 
             # --- monta contexto ---
             try:
-                uid = (request.user_id or "default").strip() or "default"
+                uid = (x_user_id or request.user_id or "default").strip() or "default"
                 gama_messages, fact_saved, search_query, sources = await gama.build_messages(
                     messages,
                     model=model,
@@ -336,7 +418,7 @@ async def chat(request: ChatRequest):
             # Memória automática pós-turno
             if getattr(request, "auto_memory", True):
                 try:
-                    u = (getattr(request, "user_id", None) or "default")
+                    u = (x_user_id or getattr(request, "user_id", None) or "default")
                     user_txt = last_user if isinstance(last_user, str) else ""
                     if user_txt.strip():
                         store = get_store(u)

@@ -8,6 +8,7 @@ import 'models/message.dart';
 import 'screens/splash_screen.dart';
 import 'services/conversation_service.dart';
 import 'services/settings_service.dart';
+import 'services/identity_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +30,7 @@ Future<void> main() async {
   Object? startupError;
 
   try {
+    await IdentityService.instance.init();
     await SettingsService.instance.init();
     await ConversationService.instance.init();
   } catch (e, stack) {

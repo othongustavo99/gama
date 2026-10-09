@@ -858,6 +858,18 @@ class _ChatScreenState extends State<ChatScreen> {
             _pendingSources = List<WebSource>.from(event.sources!);
           }
 
+          // Imagem gerada pelo backend (GPT Image 2.5 Sunburst)
+          if (event.imageBase64 != null && event.imageBase64!.isNotEmpty) {
+            final mime = event.imageMime ?? 'image/png';
+            final block =
+                '\n[gama_image]\nmime:$mime\ndata:${event.imageBase64}\n[/gama_image]\n';
+            setState(() {
+              if (_messages.isNotEmpty && _messages.last.isAssistant) {
+                _messages.last.content = (_messages.last.content) + block;
+              }
+            });
+          }
+
           final token = event.token;
           if (token == null) return;
 
@@ -1258,6 +1270,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     ? 'Gamma ainda está respondendo...'
                     : _streamPhase == 'searching'
                     ? 'Buscando na web…'
+                    : _streamPhase == 'generating_image'
+                    ? 'Criando imagem…'
+                    : _streamPhase == 'image_analyzing'
+                    ? 'Analisando imagem…'
+                    : _streamPhase == 'project_analyzing'
+                    ? 'Analisando projeto…'
                     : _streamPhase == 'thinking'
                     ? 'Pensando…'
                     : 'Gamma está respondendo…',

@@ -40,6 +40,40 @@ class MemoryService {
     return _client;
   }
 
+  /// Após login Google: mescla memória de ids legados (google_<numeric>)
+  /// na chave estável google_email_*.
+  Future<void> migrateIfNeeded() async {
+    final from = IdentityService.instance.takeMigrateFrom();
+    if (from == null || from.isEmpty) return;
+    final to = IdentityService.instance.userId;
+    if (from == to) return;
+    try {
+      await _dio().post(
+        '/memory/migrate',
+        data: {'from_user_id': from, 'to_user_id': to},
+        options: Options(
+          headers: {'X-User-Id': to},
+        ),
+      );
+    } catch (_) {
+      // silencioso: não bloqueia o app se o endpoint ainda não existir
+    }
+    // tenta também o id numérico gravado
+    final numeric = IdentityService.instance.googleNumericId;
+    if (numeric != null && numeric.isNotEmpty) {
+      final alt = 'google_$numeric';
+      if (alt != to && alt != from) {
+        try {
+          await _dio().post(
+            '/memory/migrate',
+            data: {'from_user_id': alt, 'to_user_id': to},
+            options: Options(headers: {'X-User-Id': to}),
+          );
+        } catch (_) {}
+      }
+    }
+  }
+
   Future<List<MemoryFact>> listFacts() async {
     final res = await _dio().get('/memory');
     final data = res.data as Map<String, dynamic>;
