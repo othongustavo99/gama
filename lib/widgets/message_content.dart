@@ -262,29 +262,6 @@ class MessageContentView extends StatelessWidget {
             ),
           ),
         ],
-        if (!isUser && parsed.text.trim().length > 40) ...[
-          const SizedBox(height: 4),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              style: TextButton.styleFrom(
-                foregroundColor: GamaColors.textMuted,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                visualDensity: VisualDensity.compact,
-              ),
-              onPressed: () async {
-                try {
-                  final path = await DownloadService.instance.saveText(
-                    parsed.text,
-                  );
-                  await DownloadService.instance.openPath(path);
-                } catch (_) {}
-              },
-              icon: const Icon(Icons.download_rounded, size: 18),
-              label: const Text('Baixar texto'),
-            ),
-          ),
-        ],
       ],
     );
   }
@@ -436,49 +413,86 @@ class _CodePart {
 }
 
 List<_CodePart> _splitCodeBlocks(String text) {
+  // Split robusto: fechamento ``` só conta no início da linha.
+  // Código com ``` interno (ex.: buf.writeln('```dart')) não quebra o bloco.
   final parts = <_CodePart>[];
-  final fence = RegExp(r'```([^\r\n]*)\r?\n([\s\S]*?)```');
+  final openRe = RegExp(r'```([^\r\n]*)\r?\n');
   var cursor = 0;
+  var i = 0;
+  final src = text;
 
-  for (final match in fence.allMatches(text)) {
-    if (match.start > cursor) {
+  while (i < src.length) {
+    final open = openRe.firstMatch(src.substring(i));
+    if (open == null) break;
+    final openStart = i + open.start;
+    final openEnd = i + open.end;
+    final language = (open.group(1) ?? '').trim();
+
+    // markdown antes do fence
+    if (openStart > cursor) {
       parts.add(
         _CodePart(
           isCode: false,
-          content: text.substring(cursor, match.start),
+          content: src.substring(cursor, openStart),
         ),
       );
     }
 
-    final language = (match.group(1) ?? '').trim();
-    var code = match.group(2) ?? '';
+    // procura fechamento: linha que é só ```
+    var closeStart = -1;
+    var closeEnd = -1;
+    var j = openEnd;
+    while (j < src.length) {
+      // início de linha
+      final lineStart = j;
+      var lineEnd = src.indexOf('\n', lineStart);
+      if (lineEnd < 0) lineEnd = src.length;
+      var line = src.substring(lineStart, lineEnd);
+      if (line.endsWith('\r')) {
+        line = line.substring(0, line.length - 1);
+      }
+      if (line.trim() == '```') {
+        closeStart = lineStart;
+        closeEnd = lineEnd < src.length ? lineEnd + 1 : lineEnd;
+        break;
+      }
+      j = lineEnd < src.length ? lineEnd + 1 : src.length;
+    }
+
+    if (closeStart < 0) {
+      // fence sem fechamento: trata o resto como código
+      var code = src.substring(openEnd);
+      if (code.endsWith('\n')) {
+        code = code.substring(0, code.length - 1);
+      }
+      parts.add(
+        _CodePart(isCode: true, content: code, language: language),
+      );
+      cursor = src.length;
+      break;
+    }
+
+    var code = src.substring(openEnd, closeStart);
     if (code.endsWith('\r\n')) {
       code = code.substring(0, code.length - 2);
     } else if (code.endsWith('\n')) {
       code = code.substring(0, code.length - 1);
     }
-
     parts.add(
-      _CodePart(
-        isCode: true,
-        content: code,
-        language: language,
-      ),
+      _CodePart(isCode: true, content: code, language: language),
     );
-    cursor = match.end;
+    cursor = closeEnd;
+    i = closeEnd;
   }
 
-  if (cursor < text.length) {
+  if (cursor < src.length) {
     parts.add(
-      _CodePart(
-        isCode: false,
-        content: text.substring(cursor),
-      ),
+      _CodePart(isCode: false, content: src.substring(cursor)),
     );
   }
 
   if (parts.isEmpty) {
-    parts.add(const _CodePart(isCode: false, content: ''));
+    parts.add(const _CodePart(isCode: false, content: src));
   }
 
   return parts;
@@ -571,17 +585,30 @@ class _CopyableCodeBlock extends StatelessWidget {
               ],
             ),
           ),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-            child: SelectableText(
-              code,
-              style: textStyle.copyWith(
-                color: foreground,
-                fontSize: 13,
-                height: 1.5,
-                fontFamily: 'monospace',
-                letterSpacing: 0,
+          // Scroll vertical + horizontal; SelectionArea permite
+          // selecionar várias linhas (SelectableText sozinho no
+          // scroll horizontal só pegava 1 linha em alguns casos).
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 420),
+            child: Scrollbar(
+              thumbVisibility: true,
+              child: SelectionArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SelectableText(
+                      code,
+                      style: textStyle.copyWith(
+                        color: foreground,
+                        fontSize: 13,
+                        height: 1.55,
+                        fontFamily: 'monospace',
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
