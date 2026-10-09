@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -10,10 +11,41 @@ from ..models import ChatRequest
 from ..web_search import should_search, search_web
 from ..core.memory import get_store, extract_facts_with_llm
 from ..core.image_analyzer import analyze_images
+from ..core.code_analyzer.pipeline import build_query_context_async
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 gama = GamaCore()
+
+_PROJECT_ID_RE = re.compile(r"\[project_id:([A-Za-z0-9_-]{6,128})\]", re.IGNORECASE)
+_DEEP_PROJECT_INTENT = re.compile(
+    r"\b(analisa(?:r|e)?|revise|revisar|audita(?:r|e)?|corrija|corrigir|"
+    r"melhore|melhorar|refatora(?:r|e)?|polir|polida|c[oó]digos? completos?|"
+    r"arquivos? completos?|prontos? para substituir|projeto inteiro|zip inteiro)\b",
+    re.IGNORECASE,
+)
+
+
+def _message_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            str(part.get("text") or "")
+            for part in content
+            if isinstance(part, dict)
+        )
+    return str(content or "")
+
+
+def _attached_project_id(messages: list[dict]) -> str | None:
+    # O ID costuma estar na mensagem em que o ZIP foi anexado, não na pergunta
+    # posterior. Procuramos no histórico recebido, sem acionar análise ainda.
+    for message in reversed(messages):
+        match = _PROJECT_ID_RE.search(_message_text(message.get("content")))
+        if match:
+            return match.group(1)
+    return None
 
 
 @router.get("/models")
@@ -46,6 +78,13 @@ async def chat(request: ChatRequest):
             last_user = str(_c)
 
     will_search = bool(last_user and should_search(last_user))
+
+    # ZIPs são indexados no momento do anexo; ler o conteúdo para o modelo é
+    # deliberadamente sob demanda. Conversa comum não chama o analisador.
+    project_id = _attached_project_id(messages)
+    deep_project_review = bool(
+        project_id and _DEEP_PROJECT_INTENT.search(last_user)
+    )
 
     # Image Analyzer: faz a leitura visual eficiente antes do modelo principal.
     # Se falhar, o fluxo multimodal antigo continua como fallback.
@@ -149,6 +188,51 @@ async def chat(request: ChatRequest):
                     },
                     *messages[-12:],
                 ]
+
+            # Só faz a leitura profunda quando o usuário pede revisão/correção.
+            # O índice do ZIP fica no backend entre mensagens; não pedimos reenvio.
+            if deep_project_review and project_id:
+                yield json.dumps(
+                    {"gama_meta": {"phase": "project_analyzing", "project_id": project_id}},
+                    ensure_ascii=False,
+                ) + "\n"
+                try:
+                    project_context = await build_query_context_async(
+                        project_id,
+                        last_user,
+                        max_tokens=7000,
+                        level="deep",
+                    )
+                    if project_context.strip():
+                        gama_messages.append({
+                            "role": "system",
+                            "content": (
+                                "ANÁLISE SOB DEMANDA DO PROJETO ANEXADO. Use o contexto do Code Analyzer "
+                                "como fonte real do código. Não afirme ter lido um arquivo cujo conteúdo "
+                                "não aparece no contexto. Para devolver um arquivo completo, confirme que "
+                                "o conteúdo original necessário está disponível; se faltar, solicite/recupere "
+                                "o path antes de reescrever. Priorize achados concretos, dependências e "
+                                "correções seguras.\n\n" + project_context
+                            ),
+                        })
+                    else:
+                        gama_messages.append({
+                            "role": "system",
+                            "content": (
+                                "O usuário pediu análise profunda do ZIP, mas o Code Analyzer não retornou "
+                                "contexto utilizável. Informe a falha claramente e não invente análise nem código."
+                            ),
+                        })
+                except Exception as project_err:
+                    logger.exception("deep project analysis failed: %s", project_err)
+                    gama_messages.append({
+                        "role": "system",
+                        "content": (
+                            "A análise profunda do projeto falhou nesta rodada. Informe ao usuário que houve "
+                            "uma falha ao recuperar o contexto do projeto; não diga que leu os arquivos e não "
+                            "invente códigos completos."
+                        ),
+                    })
 
             if image_analysis_ok:
                 gama_messages.append(
