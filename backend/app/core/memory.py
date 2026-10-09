@@ -267,6 +267,9 @@ class MemoryStore:
         if _is_junk_fact(text):
             raise ValueError("Fato irrelevante / meta — não gravado")
         category = self._category(text)
+        # Apelido / nome preferido sempre identidade (pinned em todas as conversas)
+        if re.search(r"nome preferido|me chame de|me chama de|pode me chamar|apelido", text, re.I):
+            category = "identidade"
         if len(text) > 400:
             # regras de comportamento podem ser mais longas
             limit = 1200 if category == "comportamento" else 400
@@ -306,6 +309,19 @@ class MemoryStore:
                     data["facts"] = facts
                     self._write_unlocked(data)
                     return f
+
+            # Nome preferido / apelido: substitui nomes preferidos anteriores
+            if category == "identidade" and re.search(
+                r"nome preferido|me chame|me chama|pode me chamar|apelido", text, re.I
+            ):
+                for f in facts:
+                    ft = str(f.get("text") or "")
+                    if f.get("superseded_at"):
+                        continue
+                    if re.search(r"nome preferido|me chame|me chama|pode me chamar|apelido", ft, re.I):
+                        f["superseded_at"] = _utc_now()
+                        f["superseded_by"] = text
+                        f["status"] = "superseded"
 
             # Comportamento: qualquer regra nova substitui TODAS as regras de estilo anteriores
             if category == "comportamento":
@@ -668,24 +684,83 @@ class MemoryStore:
                 out.append(f)
         return out
 
+    def preferred_name_facts(self) -> List[dict]:
+        """Como o usuário quer ser chamado — sempre injetado em todas as conversas."""
+        out: List[dict] = []
+        patterns = (
+            r"nome preferido",
+            r"me chame",
+            r"me chama",
+            r"pode me chamar",
+            r"chame[- ]me",
+            r"apelido",
+            r"^nome\s*:",
+            r"meu nome",
+        )
+        for f in self.list_facts():
+            if not isinstance(f, dict):
+                continue
+            if f.get("superseded_at") or f.get("status") == "superseded":
+                continue
+            text = str(f.get("text") or "").strip()
+            if not text:
+                continue
+            cat = (f.get("category") or self._category(text) or "").casefold()
+            low = text.casefold()
+            if cat == "identidade" or any(re.search(p, low) for p in patterns):
+                # evita biografia genérica sem nome
+                if re.search(r"\b(idade|anos|moro|trabalho|gosto)\b", low) and not re.search(
+                    r"\b(nome|chame|apelido|chamo)\b", low
+                ):
+                    continue
+                out.append(f)
+        return out
+
     def as_behavior_block(self) -> str:
-        """Bloco de system prompt com prioridade de estilo sobre a persona padrão."""
+        """Bloco SEMPRE presente: como chamar o usuário + regras de estilo.
+
+        Prioridade sobre o tom padrão da persona. Vale em TODAS as conversas
+        do mesmo user_id.
+        """
+        names = self.preferred_name_facts()
         rules = self.behavior_rules()
-        if not rules:
+        if not names and not rules:
             return ""
+
         lines = [
-            "REGRAS DE COMPORTAMENTO DO USUÁRIO — PRIORIDADE MÁXIMA DE ESTILO",
-            "Estas regras foram pedidas pelo usuário e valem em TODAS as conversas.",
-            "Elas TÊM PRIORIDADE sobre o tom, formalidade, tamanho e estilo padrão da persona Gamma.",
-            "Continua valendo: nome Gamma, identidade feminina em português, honestidade, segurança e não inventar fatos.",
-            "Tom, humor, emojis, tamanho de resposta, formalidade e forma de falar: siga estritamente as regras abaixo.",
+            "PERFIL E COMPORTAMENTO DO USUÁRIO — OBRIGATÓRIO EM TODAS AS RESPOSTAS",
+            "Estas informações valem em TODAS as conversas (não só nesta).",
+            "Prioridade de estilo/tom sobre a persona padrão da Gamma.",
+            "Continua valendo: você é Gamma, feminina em PT, honesta; não invente fatos.",
             "",
         ]
-        for i, f in enumerate(rules, 1):
-            t = str(f.get("text") or "").strip()
-            t = re.sub(r"^comportamento\s*:\s*", "", t, flags=re.I).strip()
-            if t:
-                lines.append(f"{i}. {t}")
+
+        if names:
+            lines.append("COMO CHAMAR O USUÁRIO (use o apelido/nome preferido de forma natural):")
+            seen = set()
+            for f in names:
+                t = str(f.get("text") or "").strip()
+                t = re.sub(r"^(?:nome preferido do usu[aá]rio|nome preferido|nome)\s*:\s*", "", t, flags=re.I).strip()
+                key = t.casefold()
+                if not t or key in seen:
+                    continue
+                seen.add(key)
+                lines.append(f"- {t}")
+            lines.append("")
+
+        if rules:
+            lines.append("REGRAS DE ESTILO / COMPORTAMENTO (siga em toda resposta):")
+            for f in rules:
+                t = str(f.get("text") or "").strip()
+                t = re.sub(r"^comportamento\s*:\s*", "", t, flags=re.I).strip()
+                if t:
+                    lines.append(f"- {t}")
+            lines.append("")
+
+        lines.append(
+            "Se houver apelido/nome preferido acima, use-o ao se dirigir ao usuário "
+            "(não insista no nome formal se ele pediu apelido)."
+        )
         return "\n".join(lines)
 
 
@@ -924,7 +999,15 @@ def try_extract_memory(user_text: str) -> Optional[str]:
                     text,
                     re.I,
                 )
-                if name_match:
+                # Apelido / como chamar: sempre como nome preferido (pinned em todas as conversas)
+                call_me = re.search(
+                    r"\b(?:me chame de|me chama de|pode me chamar de|chame[- ]me de|me trate de)\s+([^.!?\n,]{1,80})",
+                    text,
+                    re.I,
+                )
+                if call_me:
+                    fact = f"Nome preferido do usuário: {call_me.group(1).strip()}"
+                elif name_match:
                     fact = f"Nome preferido do usuário: {name_match.group(1).strip()}"
                 elif re.search(r"cor\s+favorita", lower) and "cor favorita" not in fact.lower():
                     fact = f"Cor favorita: {fact}"
