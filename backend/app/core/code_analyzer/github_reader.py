@@ -1,4 +1,4 @@
-"""GitHub Reader — tree API + fetch seletivo de blobs (não baixa o repo inteiro)."""
+"""GitHub Reader — prioriza raw/jsDelivr (sem rate limit da API) + API com token."""
 
 from __future__ import annotations
 
@@ -14,6 +14,28 @@ logger = logging.getLogger(__name__)
 GITHUB_API = "https://api.github.com"
 DEFAULT_TIMEOUT = 30.0
 
+# Prefixo comuns em projetos Flutter / Python / Node — usados quando a tree API falha
+_COMMON_PREFIXES = (
+    "",
+    "lib/",
+    "lib/services/",
+    "lib/screens/",
+    "lib/widgets/",
+    "lib/core/",
+    "lib/models/",
+    "lib/utils/",
+    "backend/",
+    "backend/app/",
+    "backend/app/core/",
+    "backend/app/routes/",
+    "backend/app/core/code_analyzer/",
+    "src/",
+    "src/main/",
+    "app/",
+    "test/",
+    "tests/",
+)
+
 
 def _headers() -> dict[str, str]:
     h = {
@@ -27,12 +49,19 @@ def _headers() -> dict[str, str]:
     return h
 
 
+def has_github_token() -> bool:
+    return bool((os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN") or "").strip())
+
+
 async def get_repo_default_branch(owner: str, repo: str) -> str:
     url = f"{GITHUB_API}/repos/{owner}/{repo}"
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=_headers()) as client:
         r = await client.get(url)
         if r.status_code == 404:
             raise ValueError(f"Repositório não encontrado: {owner}/{repo}")
+        if r.status_code == 403:
+            logger.warning("get_repo_default_branch 403 — assumindo main")
+            return "main"
         r.raise_for_status()
         data = r.json()
         return data.get("default_branch") or "main"
@@ -41,14 +70,14 @@ async def get_repo_default_branch(owner: str, repo: str) -> str:
 async def get_tree(
     owner: str, repo: str, branch: str = "main"
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Retorna (tree_sha, lista de {path, sha, size, type})."""
-    # resolve branch → commit → tree
+    """Retorna (tree_sha, lista de {path, sha, size, type}).
+
+    Em 403 rate limit, levanta httpx.HTTPStatusError para o caller fazer fallback.
+    """
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=_headers()) as client:
-        # try branch ref
         ref_url = f"{GITHUB_API}/repos/{owner}/{repo}/git/ref/heads/{branch}"
         r = await client.get(ref_url)
         if r.status_code == 404:
-            # fallback default
             branch = await get_repo_default_branch(owner, repo)
             ref_url = f"{GITHUB_API}/repos/{owner}/{repo}/git/ref/heads/{branch}"
             r = await client.get(ref_url)
@@ -79,17 +108,54 @@ async def get_tree(
         return tree_sha, entries
 
 
-async def fetch_file_content(
+async def fetch_raw_content(
     owner: str, repo: str, path: str, *, ref: str = "main"
 ) -> str:
-    """Conteúdo de um arquivo via Contents API (base64)."""
+    """Baixa arquivo público sem usar a API (não consome rate limit de 60/h).
+
+    Ordem: raw.githubusercontent.com → jsDelivr → Contents API (se token).
+    """
+    path = (path or "").lstrip("/")
+    if not path:
+        return ""
+
+    urls = [
+        f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}",
+        f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{ref}/{path}",
+    ]
+
+    async with httpx.AsyncClient(
+        timeout=DEFAULT_TIMEOUT,
+        headers={"User-Agent": "Gama-CodeAnalyzer/1.0"},
+        follow_redirects=True,
+    ) as client:
+        for url in urls:
+            try:
+                r = await client.get(url)
+                if r.status_code == 200 and r.text and len(r.text) > 0:
+                    # jsDelivr às vezes devolve HTML de erro
+                    if r.text.lstrip().lower().startswith("<!"):
+                        continue
+                    return r.text
+            except Exception as e:
+                logger.debug("raw fetch %s: %s", url, e)
+
+    # Último recurso: API (só útil com token ou fora do rate limit)
+    return await fetch_file_content_api(owner, repo, path, ref=ref)
+
+
+async def fetch_file_content_api(
+    owner: str, repo: str, path: str, *, ref: str = "main"
+) -> str:
+    """Contents API (conta no rate limit)."""
     url = f"{GITHUB_API}/repos/{owner}/{repo}/contents/{path}"
     params = {"ref": ref}
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=_headers()) as client:
         r = await client.get(url, params=params)
-        if r.status_code == 404:
+        if r.status_code in (404, 403):
             return ""
-        r.raise_for_status()
+        if r.status_code != 200:
+            return ""
         data = r.json()
         if isinstance(data, list):
             return ""
@@ -101,6 +167,13 @@ async def fetch_file_content(
             except Exception:
                 return ""
         return str(content)
+
+
+# Compat: nome antigo usado pelo pipeline
+async def fetch_file_content(
+    owner: str, repo: str, path: str, *, ref: str = "main"
+) -> str:
+    return await fetch_raw_content(owner, repo, path, ref=ref)
 
 
 async def fetch_blob(owner: str, repo: str, sha: str) -> str:
@@ -117,3 +190,48 @@ async def fetch_blob(owner: str, repo: str, sha: str) -> str:
             except Exception:
                 return ""
         return str(content)
+
+
+async def fetch_file_with_path_guess(
+    owner: str,
+    repo: str,
+    name_or_path: str,
+    *,
+    ref: str = "main",
+    known_paths: Optional[list[str]] = None,
+) -> tuple[str, str]:
+    """Tenta achar o arquivo. Retorna (path_real, content) ou ("", "")."""
+    name_or_path = (name_or_path or "").strip().lstrip("./")
+    if not name_or_path:
+        return "", ""
+
+    candidates: list[str] = []
+    if known_paths:
+        for p in known_paths:
+            if p == name_or_path or p.endswith("/" + name_or_path) or p.endswith(name_or_path):
+                candidates.append(p)
+            elif p.lower().endswith("/" + name_or_path.lower()) or p.lower().endswith(
+                name_or_path.lower()
+            ):
+                candidates.append(p)
+
+    # path já completo
+    if "/" in name_or_path:
+        candidates.insert(0, name_or_path)
+    else:
+        for prefix in _COMMON_PREFIXES:
+            candidates.append(f"{prefix}{name_or_path}")
+
+    # dedupe
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for c in candidates:
+        if c and c not in seen:
+            seen.add(c)
+            ordered.append(c)
+
+    for path in ordered[:40]:
+        text = await fetch_raw_content(owner, repo, path, ref=ref)
+        if text:
+            return path, text
+    return "", ""

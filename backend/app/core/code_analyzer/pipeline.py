@@ -14,7 +14,7 @@ from .code_search import search_files, extract_mentioned_filenames, find_matchin
 from .context_builder import build_context
 from .dependency_resolver import resolve_dependencies
 from .extractor import safe_extract
-from .github_reader import fetch_file_content, get_tree
+from .github_reader import fetch_file_content, fetch_file_with_path_guess, get_tree, has_github_token
 from .index_store import (
     cleanup_old,
     find_github_cache,
@@ -140,15 +140,29 @@ async def ingest_github(
     branch: str = "main",
     user_id: str = "default",
 ) -> dict[str, Any]:
-    """Indexa árvore do GitHub sem baixar o repo inteiro. Arquivos sob demanda."""
-    cleanup_old()
-    tree_sha, entries = await get_tree(owner, repo, branch)
+    """Indexa árvore do GitHub sem baixar o repo inteiro. Arquivos sob demanda.
 
-    cached = find_github_cache(owner, repo, branch, tree_sha)
-    if cached:
-        summary = get_project_summary(cached)
-        if summary:
-            return {**summary, "cached": True, "source": "github"}
+    Se a API retornar 403 (rate limit), cria projeto em modo *raw-only*:
+    arquivos são buscados via raw.githubusercontent.com / jsDelivr (sem rate limit).
+    """
+    cleanup_old()
+    tree_sha = "raw"
+    entries: list[dict[str, Any]] = []
+    raw_only = False
+
+    try:
+        tree_sha, entries = await get_tree(owner, repo, branch)
+        cached = find_github_cache(owner, repo, branch, tree_sha)
+        if cached:
+            summary = get_project_summary(cached)
+            if summary:
+                return {**summary, "cached": True, "source": "github"}
+    except Exception as e:
+        msg = str(e)
+        logger.warning("github get_tree failed (%s) — modo raw-only", e)
+        raw_only = True
+        # sem árvore: ainda assim criamos projeto para fetch sob demanda
+        entries = []
 
     project_id = new_project_id()
     # materializa só metadados (sem conteúdo ainda)
@@ -208,11 +222,13 @@ async def ingest_github(
             "branch": branch,
             "tree_sha": tree_sha,
             "key": f"{owner}/{repo}@{branch}".lower(),
+            "raw_only": raw_only,
         },
         "scan_root": ".",
         "map": map_data,
         "symbols": {},  # preenchido sob demanda / partial
         "github_lazy": True,
+        "github_raw_only": raw_only,
     }
     save_meta(project_id, meta)
     # workspace vazio — conteúdo vem da API
@@ -335,14 +351,29 @@ async def _load_github_texts(
     meta: dict[str, Any],
     paths: list[str],
 ) -> dict[str, str]:
+    """Baixa via raw/jsDelivr (sem rate limit da API) com guess de path."""
     src = meta.get("source") or {}
     owner = src.get("owner")
     repo = src.get("repo")
     branch = src.get("branch") or "main"
     if not owner or not repo:
         return {}
+    files = (meta.get("map") or {}).get("files") or []
+    known = [f["path"] for f in files]
+
     out: dict[str, str] = {}
     for path in paths:
+        path = (path or "").strip().lstrip("./")
+        if not path:
+            continue
+        real, text = await fetch_file_with_path_guess(
+            owner, repo, path, ref=branch, known_paths=known or None
+        )
+        if text:
+            out[path] = text
+            if real:
+                out[real] = text
+            continue
         try:
             text = await fetch_file_content(owner, repo, path, ref=branch)
             if text:
@@ -653,6 +684,24 @@ async def build_query_context_async(
                 if m not in paths:
                     paths.insert(0, m)
 
+
+    # Sem árvore (rate limit): tenta nomes pedidos na query
+    if not paths:
+        from .code_search import extract_mentioned_filenames
+        import re as _re
+        mentioned = extract_mentioned_filenames(query)
+        paths = list(mentioned or [])
+        if extra_paths:
+            for ep in extra_paths:
+                ep = (ep or "").strip().lstrip("./")
+                if ep and ep not in paths:
+                    paths.append(ep)
+        if not paths:
+            paths = _re.findall(
+                r"\b([\w./\-]+\.(?:dart|py|js|ts|tsx|jsx|java|kt|go|rs))\b",
+                query or "",
+            )
+
     texts = await _load_github_texts(meta, paths[:24])
 
     # cache no workspace para próximas queries
@@ -670,7 +719,32 @@ async def build_query_context_async(
         text = texts.get(r["path"], "")
         if not text:
             continue
-        ranked.append({**r, "text": text, "preview": text[:400]})
+        ranked.append({**r, "text": text, "preview": text[:400], "forced": True})
+
+    # raw-only / rate limit: textos baixados sem entrada no ranked_meta
+    if texts and not ranked:
+        for path, text in texts.items():
+            if not text:
+                continue
+            ranked.append(
+                {
+                    "path": path,
+                    "score": 999,
+                    "important": True,
+                    "forced": True,
+                    "text": text,
+                    "preview": text[:400],
+                }
+            )
+        # dedupe por path
+        seen = set()
+        uniq = []
+        for r in ranked:
+            if r["path"] in seen:
+                continue
+            seen.add(r["path"])
+            uniq.append(r)
+        ranked = uniq
 
     # deps: com textos, resolver localmente
     if ranked:
