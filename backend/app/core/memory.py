@@ -65,6 +65,17 @@ _JUNK_FACT_EXACT = {
     "o que achar relevante",
 }
 
+# Trechos que, se aparecerem em qualquer lugar do texto, marcam como lixo meta.
+_JUNK_FACT_CONTAINS = (
+    r"tudo\s+que\s+(?:voc[eê]\s+)?achar\s+relevante\s+sobre\s+mim",
+    r"de\s+tudo\s+que\s+(?:voc[eê]\s+)?achar\s+relevante",
+    r"achar\s+relevante\s+sobre\s+mim",
+    r"o\s+que\s+achar\s+relevante\s+sobre\s+mim",
+    r"tudo\s+que\s+for\s+relevante\s+sobre\s+mim",
+    r"grave\s+tudo\s+que\s+(?:voc[eê]\s+)?achar",
+    r"lembre\s+tudo\s+que\s+(?:voc[eê]\s+)?achar",
+)
+
 
 def _is_junk_fact(text: str) -> bool:
     """Textos meta / instruções genéricas que não devem ficar na memória."""
@@ -73,9 +84,16 @@ def _is_junk_fact(text: str) -> bool:
         return True
     if t in _JUNK_FACT_EXACT:
         return True
+    # frase inteira só com "lembre/grave..." sem conteúdo útil
     if re.fullmatch(r"(?:lembre|grave|anote|salva|remember).{0,30}", t):
         return True
-    if re.fullmatch(r"(?:tudo|algo|o que).{0,40}(?:relevante|importante).{0,20}(?:sobre mim)?", t):
+    for pat in _JUNK_FACT_CONTAINS:
+        if re.search(pat, t, re.I):
+            return True
+    # "relevante sobre mim" + link/github sem fato concreto
+    if re.search(r"relevante\s+sobre\s+mim", t) and re.search(
+        r"(?:https?://|github\.com|acerca\s+dess[ea]|sobre\s+esse\s+link)", t
+    ):
         return True
     return False
 
