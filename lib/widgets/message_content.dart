@@ -492,7 +492,7 @@ List<_CodePart> _splitCodeBlocks(String text) {
   }
 
   if (parts.isEmpty) {
-    parts.add(const _CodePart(isCode: false, content: src));
+    parts.add(_CodePart(isCode: false, content: src));
   }
 
   return parts;
