@@ -15,9 +15,13 @@ _FULL_CONTENT_RE = re.compile(
     r"arquivo\s+completo|linha\s+por\s+linha|na\s*[ií]ntegra|"
     r"completo\s+e\s+literal|sem\s+cortar|sem\s+truncar|"
     r"full\s+content|entire\s+file|whole\s+file|"
-    r"me\s+diga\s+(?:exatamente\s+)?o\s+que\s+tem|"
-    r"o\s+que\s+tem\s+dentro|mostra(?:r)?\s+o\s+conte[uú]do|"
-    r"leia\s+o\s+arquivo|cole\s+o\s+arquivo)",
+    r"me\s+diga\s+(?:exatamente\s+)?o\s+que\s+(?:tem|est[aá])|"
+    r"o\s+que\s+(?:tem|est[aá])\s+dentro|"
+    r"exatamente\s+o\s+que\s+(?:tem|est[aá])|"
+    r"mostra(?:r)?\s+o\s+conte[uú]do|"
+    r"leia\s+o\s+arquivo|cole\s+o\s+arquivo|"
+    r"o\s+que\s+(?:tem|est[aá])\s+(?:em|no|na)\s+|"
+    r"dentro\s+de\s+[\w./\-]+)",
     re.I,
 )
 
@@ -74,9 +78,10 @@ def build_context(
     Se a pergunta pede conteúdo completo, esses arquivos NÃO são truncados
     (até um teto alto de segurança).
     """
-    full_intent = _wants_full_content(query)
     forced = [r for r in ranked_files if r.get("forced")]
     others = [r for r in ranked_files if not r.get("forced")]
+    # arquivo citado pelo nome → sempre conteúdo integral desses forced
+    full_intent = _wants_full_content(query) or bool(forced)
 
     # pedido de arquivo completo → orçamento bem maior só para esses arquivos
     if full_intent and forced:

@@ -55,10 +55,19 @@ def _wants_full_file(query: str) -> bool:
     keys = (
         "conteúdo completo", "conteudo completo", "texto integral", "texto completo",
         "texto literal", "arquivo completo", "linha por linha", "na íntegra", "na integra",
-        "completo e literal", "o que tem dentro", "me diga exatamente", "full content",
-        "entire file", "whole file",
+        "completo e literal", "o que tem dentro", "o que está dentro", "o que esta dentro",
+        "exatamente o que", "me diga exatamente", "full content",
+        "entire file", "whole file", "dentro de main", "dentro do arquivo",
     )
-    return any(k in q for k in keys)
+    if any(k in q for k in keys):
+        return True
+    # menção a arquivo específico (ex.: main.dart) → carregar integral
+    if re.search(
+        r"\b[\w./\-]+\.(?:dart|py|js|ts|tsx|jsx|java|kt|go|rs|swift|cs)\b",
+        q,
+    ):
+        return True
+    return False
 
 
 def _scan_root_for(project_id: str, meta: dict[str, Any]) -> Path:

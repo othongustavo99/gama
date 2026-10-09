@@ -843,6 +843,7 @@ class _ChatScreenState extends State<ChatScreen> {
         images: imagePayload.isEmpty ? null : imagePayload,
         voiceMode: willSpeak,
         chatMode: _mode == GamaMode.conversar ? 'conversar' : 'programar',
+        conversationId: widget.conversationId,
       );
 
       _streamSubscription = stream.listen(

@@ -180,6 +180,8 @@ class OllamaService {
           'auto_memory': true,
           'voice_mode': voiceMode,
           if (chatMode != null) 'chat_mode': chatMode,
+          if (conversationId != null && conversationId.isNotEmpty)
+            'conversation_id': conversationId,
         },
         options: Options(
           responseType: ResponseType.stream,

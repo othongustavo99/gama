@@ -139,6 +139,14 @@ def update_from_user_message(session: dict[str, Any], text: str) -> dict[str, An
         if path not in (session.get("files_mentioned") or []):
             session.setdefault("files_mentioned", []).append(path)
 
+    for path in re.findall(
+        r"\b([\w\-./]+\.(?:dart|py|ts|tsx|js|jsx|java|kt|go|rs|swift|cs|yaml|yml|json|md))\b",
+        text,
+        re.I,
+    ):
+        if path not in (session.get("files_mentioned") or []):
+            session.setdefault("files_mentioned", []).append(path)
+
     # urls genéricas
     for u in re.findall(r"https?://[^\s\)\]\>\"']+", text):
         u = u.rstrip(".,;:!?")
@@ -204,8 +212,11 @@ def as_prompt_block(session: dict[str, Any]) -> str:
         )
         lines.append(
             "Se o usuário falar em 'esse repo', 'o projeto', 'main.dart', etc., "
-            "use este project_id / Code Analyzer — não diga que não tem o arquivo "
-            "sem tentar o contexto do projeto ativo."
+            "use este project_id / Code Analyzer. "
+            "NUNCA diga que não tem o arquivo se o Code Analyzer injetou o conteúdo "
+            "ou se o project_id está ativo — leia o bloco de contexto e responda com base nele. "
+            "Se um arquivo for pedido pelo nome (ex.: main.dart), o analyzer carrega o texto; "
+            "reproduza ou explique com base nesse texto."
         )
 
     if session.get("github_url"):

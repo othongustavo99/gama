@@ -93,6 +93,21 @@ class GamaCore:
         if last_user:
             session = update_from_user_message(session, last_user)
 
+        # Recupera project_id de mensagens anteriores (ZIP já anexado nesta conversa)
+        if not session.get("active_project_id") and messages:
+            for m in reversed(messages[-12:]):
+                content = m.get("content") or ""
+                if isinstance(content, list):
+                    content = " ".join(
+                        str(p.get("text") or "") for p in content if isinstance(p, dict)
+                    )
+                pid_hist = extract_project_id(str(content))
+                if pid_hist:
+                    set_active_project(
+                        session, project_id=pid_hist, source="history"
+                    )
+                    break
+
         if auto_memory and last_user:
             extracted = try_extract_memory(last_user)
             if extracted:
@@ -238,6 +253,19 @@ class GamaCore:
 
         # paths explícitos: [need_more:a,b] ou lib/.../file.dart no texto do usuário
         extra_paths = extract_need_more_paths(last_user or "")
+        # nomes como main.dart / context.py → força carregamento integral
+        try:
+            from .code_analyzer.code_search import (
+                extract_mentioned_filenames,
+                find_matching_paths,
+            )
+            mentioned = extract_mentioned_filenames(last_user or "")
+            if mentioned:
+                for m in mentioned:
+                    if m not in extra_paths:
+                        extra_paths.append(m)
+        except Exception:
+            pass
 
         # se o usuário pede códigos completos mas não listou paths,
         # reaproveita [need_more:...] ou paths da última resposta da assistente
