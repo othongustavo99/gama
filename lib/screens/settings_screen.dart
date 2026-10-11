@@ -55,6 +55,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final models = await _api.listModels();
       if (!mounted) return;
 
+      final previousModel = SettingsService.instance.model;
+      String? replacementModel;
       setState(() {
         _models = models;
         // Mantém o modelo atual se ainda estiver na lista; senão pega o primeiro
@@ -62,9 +64,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // ok
         } else if (models.isNotEmpty) {
           _selectedModel = models.first;
+          replacementModel = _selectedModel;
         }
         _loadingModels = false;
       });
+      if (replacementModel != null && replacementModel != previousModel) {
+        await SettingsService.instance.setModel(replacementModel!);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {

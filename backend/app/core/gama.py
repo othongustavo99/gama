@@ -71,6 +71,7 @@ class GamaCore:
         voice_mode: bool = False,
         conversation_id: Optional[str] = None,
         chat_mode: Optional[str] = None,
+        force_deep_code_analysis: bool = False,
     ) -> Tuple[List[Dict[str, str]], Optional[str], Optional[str], List[Dict[str, str]]]:
         """
         Returns: prepared, fact_saved, search_query, sources
@@ -222,6 +223,7 @@ class GamaCore:
                 user_id=user_id or "default",
                 session=session,
                 messages=messages,
+                force_deep=force_deep_code_analysis,
             )
             if code_ctx:
                 prepared.append({"role": "system", "content": code_ctx})
@@ -267,6 +269,7 @@ class GamaCore:
         user_id: str = "default",
         session: Optional[dict] = None,
         messages: Optional[List[Dict[str, str]]] = None,
+        force_deep: bool = False,
     ) -> str:
         """Prepara contexto de código sem mandar o projeto inteiro ao LLM."""
         if not last_user or not isinstance(last_user, str):
@@ -276,6 +279,8 @@ class GamaCore:
             last_user = last_user or ""
 
         level = detect_level(last_user or "analise o projeto")
+        if force_deep:
+            level = "deep"
         max_tokens = {"quick": 2500, "targeted": 4500, "deep": 8000}.get(level, 4500)
 
         # paths explícitos: [need_more:a,b] ou lib/.../file.dart no texto do usuário

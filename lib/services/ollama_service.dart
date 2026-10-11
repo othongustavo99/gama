@@ -36,6 +36,7 @@ class ChatStreamEvent {
   /// Imagem gerada (base64 puro, sem data: prefix)
   final String? imageBase64;
   final String? imageMime;
+  final Map<String, dynamic>? artifact;
 
   const ChatStreamEvent._({
     this.token,
@@ -45,6 +46,7 @@ class ChatStreamEvent {
     this.sources,
     this.imageBase64,
     this.imageMime,
+    this.artifact,
   });
 
   factory ChatStreamEvent.token(String t) => ChatStreamEvent._(token: t);
@@ -59,6 +61,7 @@ class ChatStreamEvent {
     String? memorySaved,
     String? imageBase64,
     String? imageMime,
+    Map<String, dynamic>? artifact,
   }) => ChatStreamEvent._(
     phase: phase,
     webSearchQuery: webSearchQuery,
@@ -66,6 +69,7 @@ class ChatStreamEvent {
     memorySaved: memorySaved,
     imageBase64: imageBase64,
     imageMime: imageMime,
+    artifact: artifact,
   );
 }
 
@@ -251,6 +255,11 @@ class OllamaService {
         }
         String? imgB64;
         String? imgMime;
+        Map<String, dynamic>? artifact;
+        final rawArtifact = meta['artifact'];
+        if (rawArtifact is Map) {
+          artifact = Map<String, dynamic>.from(rawArtifact);
+        }
         final img = meta['image'];
         if (img is Map) {
           imgB64 = img['data']?.toString();
@@ -263,6 +272,7 @@ class OllamaService {
           memorySaved: saved,
           imageBase64: imgB64,
           imageMime: imgMime,
+          artifact: artifact,
         );
         return;
       }

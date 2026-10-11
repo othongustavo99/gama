@@ -77,13 +77,24 @@ _IMPROVE = re.compile(
     r"deixa mais nítida|deixe mais nítida|mais nitidez|"
     r"melhora a resolução|aumenta a resolução|melhor resolução|"
     r"deixa melhor|deixe melhor|fica melhor)\b"
-    r".{0,30}\b(imagem|img|foto|picture|image)?\b"
+    r".{0,30}\b(imagem|img|foto|picture|image|photo)\b"
     r"|"
     r"\b(imagem|foto|picture|image)\b.{0,20}\b(melhor|mais nítida|com mais qualidade|em alta resolução)\b"
     r"|"
     r"\b(improve|enhance|upscale|sharpen|refine|make better|higher quality|higher resolution)\b"
-    r".{0,30}\b(image|photo|picture)?\b"
+    r".{0,30}\b(image|photo|picture)\b"
     r")",
+)
+
+_IMPROVE_ACTION = re.compile(
+    r"(?i)\b(melhora|melhore|melhorar|aprimora|aprimore|aprimorar|"
+    r"upscale|enhance|refina|refine|refinar|deixa mais n[ií]tida|"
+    r"deixe mais n[ií]tida|mais nitidez|aumenta a qualidade|"
+    r"aumente a qualidade|melhora a qualidade|improve|sharpen)\b"
+)
+_CODE_TASK = re.compile(
+    r"(?i)\b(c[oó]digo|projeto|arquivo|reposit[oó]rio|fun[cç][aã]o|"
+    r"classe|bug|endpoint|widget|aplicativo|programa|script)\b"
 )
 
 _ANALYZE = re.compile(
@@ -113,9 +124,21 @@ def detect_image_intent(
     if len(text) < 4:
         return ImageRequest(intent=ImageIntent.NONE, prompt="", confidence=0.0)
 
+    explicit_image_improvement = bool(_IMPROVE.search(text))
+    shorthand_image_improvement = bool(
+        has_attached_images
+        and _IMPROVE_ACTION.search(text)
+        and not _CODE_TASK.search(text)
+    )
+
     # 1. Análise pura (só se tiver imagem anexada e não pedir edição/geração)
     if has_attached_images and _ANALYZE.search(text):
-        if not (_EDIT.search(text) or _IMPROVE.search(text) or _GENERATE.search(text)):
+        if not (
+            _EDIT.search(text)
+            or explicit_image_improvement
+            or shorthand_image_improvement
+            or _GENERATE.search(text)
+        ):
             return ImageRequest(
                 intent=ImageIntent.ANALYZE,
                 prompt=text,
@@ -123,7 +146,7 @@ def detect_image_intent(
             )
 
     # 2. Melhorar qualidade (prioridade alta se tiver imagem anexada)
-    if _IMPROVE.search(text):
+    if explicit_image_improvement or shorthand_image_improvement:
         conf = 0.92 if has_attached_images else 0.75
         return ImageRequest(
             intent=ImageIntent.IMPROVE,
@@ -244,6 +267,7 @@ async def generate_image(
     *,
     model: Optional[str] = None,
     aspect_ratio: str = "1:1",
+    reference_images: Optional[list[dict[str, str]]] = None,
     timeout: float = 120.0,
 ) -> dict[str, Any]:
     """
@@ -272,10 +296,29 @@ async def generate_image(
         "aspect_ratio": aspect_ratio,
     }
 
+    # Image-to-image uses the same endpoint as generation. Normalize the first
+    # attached image so unsupported formats (for example BMP/GIF) and very
+    # large uploads do not make an otherwise valid edit request fail.
+    if reference_images:
+        from .image_analyzer.preprocessor import prepare_many
+
+        prepared = prepare_many(reference_images[:1], prompt)
+        if not prepared:
+            return {"ok": False, "error": "A imagem anexada não pôde ser preparada", "model": model_id}
+        reference = prepared[0]
+        payload["input_references"] = [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{reference.mime};base64,{reference.data}"
+                },
+            }
+        ]
+
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(url, headers=headers, json=payload)
-            if r.status_code == 404:
+            if r.status_code == 404 and not reference_images:
                 r = await client.post(
                     f"{settings.OPENROUTER_BASE_URL}/images/generations",
                     headers=headers,
@@ -309,8 +352,8 @@ async def generate_image(
             if m:
                 mime = m.group(1)
                 b64 = m.group(2)
-        if item.get("mime"):
-            mime = str(item["mime"])
+        if item.get("mime") or item.get("media_type"):
+            mime = str(item.get("mime") or item.get("media_type"))
     if not b64 and isinstance(data.get("b64_json"), str):
         b64 = data["b64_json"]
 

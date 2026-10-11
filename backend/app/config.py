@@ -129,12 +129,14 @@ class Settings:
     @property
     def allowed_models(self) -> list[str]:
         if self.PROVIDER == "openrouter":
-            models = list(self.OPENROUTER_MODELS)
+            # The first entry is also the app's safe fallback when a saved
+            # model is no longer enabled on this server.
+            models = [self.OPENROUTER_DEFAULT_MODEL]
+            models.extend(m for m in self.OPENROUTER_MODELS if m not in models)
             for extra in (
                 self.CONVERSATION_MODEL,
                 self.CODING_MODEL,
                 self.VISION_MODEL,
-                self.OPENROUTER_DEFAULT_MODEL,
             ):
                 if extra and extra not in models:
                     models.append(extra)

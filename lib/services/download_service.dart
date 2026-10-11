@@ -3,9 +3,14 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:dio/dio.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+
+import '../core/constants.dart';
+import 'identity_service.dart';
+import 'settings_service.dart';
 
 /// Salva texto ou imagens geradas no dispositivo (Android / Windows).
 class DownloadService {
@@ -57,6 +62,39 @@ class DownloadService {
     final name = filename ?? 'gamma_img_${_stamp()}.$ext';
     final bytes = base64Decode(base64Data.replaceAll(RegExp(r'\s'), ''));
     final file = File(p.join(dir.path, name));
+    await file.writeAsBytes(bytes, flush: true);
+    return file.path;
+  }
+
+  Future<String> downloadArtifact(
+    String downloadPath, {
+    required String filename,
+  }) async {
+    if (!downloadPath.startsWith('/artifacts/')) {
+      throw ArgumentError.value(downloadPath, 'downloadPath', 'caminho inválido');
+    }
+    final safeName = p.basename(filename).replaceAll(RegExp(r'[\\/\x00-\x1F]'), '_');
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: SettingsService.instance.baseUrl,
+        connectTimeout: const Duration(seconds: 20),
+        receiveTimeout: const Duration(minutes: 2),
+        headers: {
+          ...AppConstants.authHeaders,
+          'X-User-Id': IdentityService.instance.userId,
+        },
+      ),
+    );
+    final response = await dio.get<List<int>>(
+      downloadPath,
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final bytes = response.data;
+    if (response.statusCode != 200 || bytes == null || bytes.isEmpty) {
+      throw Exception('O servidor não retornou o arquivo completo.');
+    }
+    final dir = await _targetDir();
+    final file = File(p.join(dir.path, safeName));
     await file.writeAsBytes(bytes, flush: true);
     return file.path;
   }

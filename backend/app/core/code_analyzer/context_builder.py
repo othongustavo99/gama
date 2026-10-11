@@ -120,6 +120,20 @@ def build_context(
             "específicos ou marque [need_more:path1,path2] para segunda etapa.\n"
         )
 
+    loaded = [
+        str(item.get("path") or "?")
+        for item in ranked_files
+        if (item.get("text") or item.get("preview"))
+    ]
+    indexed_count = int(map_data.get("file_count") or 0)
+    parts.append(
+        "Cobertura deste turno: "
+        f"{len(loaded)} arquivo(s)/trecho(s) com conteúdo recuperado de {indexed_count} itens indexados. "
+        "O restante do projeto não foi lido nesta resposta; não trate a seleção como revisão exaustiva."
+    )
+    if loaded:
+        parts.append("Conteúdo recuperado: " + ", ".join(loaded[:40]))
+
     # mapa de paths só quando não é foco em 1–2 arquivos completos
     if not (full_intent and forced and len(forced) <= 3):
         all_paths = [f["path"] for f in (map_data.get("files") or [])[:100]]

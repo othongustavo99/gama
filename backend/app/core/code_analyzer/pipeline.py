@@ -13,6 +13,7 @@ from typing import Any, Optional
 from .code_search import search_files, extract_mentioned_filenames, find_matching_paths
 from .context_builder import build_context
 from .dependency_resolver import resolve_dependencies
+from .document_reader import extract_docx_segments, segments_to_map
 from .extractor import safe_extract
 from .github_reader import fetch_file_content, fetch_file_with_path_guess, get_tree, has_github_token
 from .index_store import (
@@ -284,6 +285,38 @@ def ingest_pdf(
     }
 
 
+def ingest_docx(
+    docx_bytes: bytes,
+    *,
+    name: str = "document.docx",
+    user_id: str = "default",
+) -> dict[str, Any]:
+    """Index a Word document as searchable text segments."""
+    cleanup_old()
+    project_id = new_project_id()
+    segments = extract_docx_segments(docx_bytes)
+    map_data = segments_to_map(segments)
+    save_meta(project_id, {
+        "name": name,
+        "user_id": user_id,
+        "source": {"type": "docx", "name": name},
+        "scan_root": ".",
+        "map": map_data,
+        "symbols": {},
+        "document_pages": segments,
+    })
+    workspace(project_id).mkdir(parents=True, exist_ok=True)
+    return {
+        "project_id": project_id,
+        "name": name,
+        "source": "docx",
+        "file_count": len(segments),
+        "frameworks": map_data["frameworks"],
+        "languages": map_data["languages"],
+        "sample_paths": [item["path"] for item in segments[:15]],
+    }
+
+
 def ingest_direct_code(
     code: str,
     *,
@@ -403,8 +436,8 @@ def build_query_context(
     src_type = (meta.get("source") or {}).get("type", "zip")
 
     # PDF path
-    if src_type == "pdf" or meta.get("pdf_pages"):
-        pages = meta.get("pdf_pages") or []
+    if src_type in {"pdf", "docx"} or meta.get("pdf_pages") or meta.get("document_pages"):
+        pages = meta.get("document_pages") or meta.get("pdf_pages") or []
         ranked = search_pages(pages, query, top_k=18 if level == "deep" else 10)
         if extra_paths:
             have = {r["path"] for r in ranked}
@@ -428,7 +461,7 @@ def build_query_context(
             query,
             max_tokens=max_tokens,
             level=level,
-            source_label="Code Analyzer / PDF",
+            source_label="Code Analyzer / DOCX" if src_type == "docx" else "Code Analyzer / PDF",
         )
 
     map_data = meta.get("map") or {"files": [], "file_count": 0}

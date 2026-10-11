@@ -22,6 +22,7 @@ from ..core.code_analyzer import (
     get_project_summary,
     ingest_github,
     ingest_pdf,
+    ingest_docx,
     ingest_zip,
 )
 from ..core.code_analyzer.pipeline import build_query_context_async
@@ -113,6 +114,29 @@ async def project_ingest_pdf(
     except Exception as e:
         logger.exception("pdf ingest failed")
         raise HTTPException(500, f"Falha ao indexar PDF: {e}") from e
+    return {"ok": True, **summary}
+
+
+@router.post("/ingest/docx")
+async def project_ingest_docx(
+    file: UploadFile = File(...),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+):
+    name = file.filename or "document.docx"
+    if not name.lower().endswith(".docx"):
+        raise HTTPException(400, "Envie um arquivo .docx")
+    raw = await file.read()
+    if len(raw) < 32:
+        raise HTTPException(400, "DOCX inválido ou vazio")
+    try:
+        summary = ingest_docx(
+            raw, name=name, user_id=(x_user_id or "default").strip()
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        logger.exception("docx ingest failed")
+        raise HTTPException(500, f"Falha ao indexar DOCX: {e}") from e
     return {"ok": True, **summary}
 
 

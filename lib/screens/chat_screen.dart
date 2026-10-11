@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -70,6 +71,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _speakNextReply = false;
   bool _ttsEarlyStarted = false;
   bool _isSpeaking = false;
+  final Set<String> _handledArtifactIds = <String>{};
+  Future<void>? _artifactSaveFuture;
+  String? _artifactNotice;
 
   // Quando a resposta foi solicitada por voz, o texto recebido fica
   // retido até o áudio realmente começar. Depois, ele é revelado em blocos
@@ -409,6 +413,42 @@ class _ChatScreenState extends State<ChatScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(text), duration: const Duration(seconds: 2)),
     );
+  }
+
+  Future<void> _saveGeneratedArtifact(Map<String, dynamic> artifact) async {
+    final downloadPath = artifact['download_path']?.toString() ?? '';
+    final filename = artifact['filename']?.toString() ?? 'gama_arquivos.zip';
+    if (!downloadPath.startsWith('/artifacts/')) {
+      _snack('O servidor retornou um caminho de download inválido.');
+      return;
+    }
+
+    try {
+      final savedPath = await DownloadService.instance.downloadArtifact(
+        downloadPath,
+        filename: filename,
+      );
+      final file = File(savedPath);
+      await LibraryScreen.addEntry(
+        name: filename,
+        kind: artifact['kind']?.toString() ?? 'zip',
+        bytes: await file.length(),
+        sourcePath: savedPath,
+      );
+      _artifactNotice = '📦 **$filename** foi salvo na Biblioteca.';
+      _snack('Arquivo salvo na Biblioteca: $filename');
+    } catch (e) {
+      _snack('Não consegui baixar o arquivo gerado: $e');
+    }
+  }
+
+  void _appendArtifactNotice() {
+    final notice = _artifactNotice;
+    if (notice == null || _messages.isEmpty || !_messages.last.isAssistant) {
+      return;
+    }
+    _messages.last.content = '${_messages.last.content.trim()}\n\n$notice';
+    _artifactNotice = null;
   }
 
   Future<void> _showAttachMenu() async {
@@ -857,6 +897,15 @@ class _ChatScreenState extends State<ChatScreen> {
             _pendingSources = List<WebSource>.from(event.sources!);
           }
 
+          final artifact = event.artifact;
+          final artifactId = artifact?['artifact_id']?.toString() ?? '';
+          if (artifact != null &&
+              artifactId.isNotEmpty &&
+              _handledArtifactIds.add(artifactId)) {
+            _artifactSaveFuture = _saveGeneratedArtifact(artifact);
+            unawaited(_artifactSaveFuture!);
+          }
+
           // Imagem gerada pelo backend (GPT Image 2.5 Sunburst)
           if (event.imageBase64 != null && event.imageBase64!.isNotEmpty) {
             final mime = event.imageMime ?? 'image/png';
@@ -888,7 +937,24 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         },
         onDone: () async {
+          await _artifactSaveFuture;
           final isVoiceReply = _voiceResponsePending;
+          _voiceResponseBuffer = _voiceResponseBuffer.replaceAll(
+            RegExp(
+              r'\[\[GAMA_FILES\]\][\s\S]*?\[\[/GAMA_FILES\]\]',
+              caseSensitive: false,
+            ),
+            '',
+          ).trim();
+          if (_messages.isNotEmpty && _messages.last.isAssistant) {
+            _messages.last.content = _messages.last.content.replaceAll(
+              RegExp(
+                r'\[\[GAMA_FILES\]\][\s\S]*?\[\[/GAMA_FILES\]\]',
+                caseSensitive: false,
+              ),
+              '',
+            ).trim();
+          }
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
             if (isVoiceReply) {
               if (_voiceResponseBuffer.trim().isEmpty) {
@@ -932,6 +998,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 });
               }
+              _appendArtifactNotice();
               await _service.addMessage(_messages.last);
             } catch (e) {
               // Se o áudio falhar, ainda mostramos a resposta completa para
@@ -943,6 +1010,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 });
               }
+              _appendArtifactNotice();
               await _service.addMessage(_messages.last);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(

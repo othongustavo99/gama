@@ -17,10 +17,10 @@ class AppConstants {
       apiKey.isEmpty ? const <String, String>{} : {'X-API-Key': apiKey};
 
   /// Modo Programar — código, debug, arquitetura, análise de ZIP/PDF.
-  static const String modelProgramar = 'openai/gpt-4o-mini';
+  static const String modelProgramar = 'openai/gpt-5.4-mini';
 
   /// Modo Conversar — diálogo rápido, voz, memória leve.
-  static const String modelConversar = 'openai/gpt-4o-mini';
+  static const String modelConversar = 'openai/gpt-5.4-mini';
 
   static const String defaultModel = modelProgramar;
 
@@ -30,7 +30,7 @@ class AppConstants {
   ];
 
   static const Map<String, String> modelLabels = {
-    'openai/gpt-4o-mini': 'GPT-4o Mini',
+    'openai/gpt-5.4-mini': 'GPT-5.4 Mini',
     'openai/gpt-4o': 'GPT-4o',
     'google/gemini-2.0-flash-001': 'Gemini 2.0 Flash',
     'deepseek/deepseek-chat': 'DeepSeek Chat',

@@ -23,7 +23,7 @@ from ..core.context import schedule_summary_refresh
 from ..core.url_fetch import extract_urls
 from ..llm import LLMError
 from ..core.image_analyzer import analyze_images
-from ..core.code_analyzer.pipeline import build_query_context_async
+from ..core.document_builder import build_zip_from_files
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -36,6 +36,84 @@ _DEEP_PROJECT_INTENT = re.compile(
     r"arquivos? completos?|prontos? para substituir|projeto inteiro|zip inteiro)\b",
     re.IGNORECASE,
 )
+
+_GAMA_FILES_BLOCK_RE = re.compile(
+    r"\[\[GAMA_FILES\]\](.*?)\[\[/GAMA_FILES\]\]", re.IGNORECASE | re.DOTALL
+)
+_GAMA_FILE_PATH_RE = re.compile(r"^\s*path\s*:\s*(.+?)\s*$", re.IGNORECASE)
+_ZIP_DELIVERY_RE = re.compile(
+    r"\b(?:zip\s+(?:completo|corrigido|para\s+baixar)|"
+    r"(?:gerar?|criar?|montar?|devolver?|enviar?|baixar?)\s+(?:me\s+)?(?:o\s+)?zip|"
+    r"(?:me\s+)?(?:d[eê]|envie|manda|mande|devolva)\s+(?:o\s+)?zip|"
+    r"arquivos?\s+(?:completos?|para\s+baixar|prontos?\s+para\s+substituir)|"
+    r"(?:c[oó]digos?|arquivos?|projeto)\b.{0,50}\b(?:em|no\s+formato)\s+zip|"
+    r"\b(?:em|no\s+formato)\s+zip\b.{0,50}\b(?:c[oó]digos?|arquivos?|projeto)\b|"
+    r"projeto\s+(?:corrigido|completo)\s+para\s+baixar)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_zip_delivery(user_text: str) -> bool:
+    return bool(_ZIP_DELIVERY_RE.search(user_text or ""))
+
+
+def _try_build_zip_from_assistant(
+    assistant_text: str,
+    *,
+    user_id: str,
+) -> dict | None:
+    """Build a validated ZIP from the explicit GAMA_FILES response block."""
+    match = _GAMA_FILES_BLOCK_RE.search(assistant_text or "")
+    if not match:
+        return None
+
+    files: dict[str, str] = {}
+    current_path: str | None = None
+    current_lines: list[str] = []
+    in_fence = False
+
+    def save_current() -> None:
+        nonlocal current_path, current_lines
+        content = "\n".join(current_lines).rstrip("\n")
+        if current_path and content:
+            files[current_path] = content
+        current_path, current_lines = None, []
+
+    for line in match.group(1).splitlines():
+        if in_fence:
+            if line.strip().startswith("```"):
+                in_fence = False
+            else:
+                current_lines.append(line)
+            continue
+
+        path_match = _GAMA_FILE_PATH_RE.match(line)
+        if path_match:
+            save_current()
+            current_path = path_match.group(1).strip().strip("`\"")
+            continue
+        if line.strip().startswith("```"):
+            if current_path:
+                in_fence = True
+            continue
+        if current_path and line.strip():
+            current_lines.append(line)
+
+    save_current()
+    if not files:
+        return None
+    if len(files) > 500:
+        raise ValueError("A resposta excedeu o limite de 500 arquivos para o ZIP")
+
+    result = build_zip_from_files(
+        files,
+        filename="gama_arquivos_corrigidos.zip",
+        user_id=user_id,
+    )
+    validation = result.get("validation") or {}
+    if not validation.get("ok"):
+        raise ValueError("O ZIP gerado não passou na validação")
+    return result
 
 
 def _message_text(content) -> str:
@@ -189,7 +267,14 @@ async def chat(
                     return
 
                 prompt = build_image_prompt(last_user, intent=intent)
-                result = await generate_image(prompt)
+                result = await generate_image(
+                    prompt,
+                    reference_images=(
+                        [{"mime": i.mime, "data": i.data, "name": i.name} for i in request.images]
+                        if intent in (ImageIntent.EDIT, ImageIntent.IMPROVE) and request.images
+                        else None
+                    ),
+                )
 
                 if result.get("ok") and result.get("base64"):
                     yield json.dumps(
@@ -337,6 +422,12 @@ async def chat(
             except Exception as forget_err:
                 logger.warning("forget: %s", forget_err)
 
+            if deep_project_review and project_id:
+                yield json.dumps(
+                    {"gama_meta": {"phase": "project_analyzing", "project_id": project_id}},
+                    ensure_ascii=False,
+                ) + "\n"
+
             # --- monta contexto ---
             try:
                 uid = (x_user_id or request.user_id or "default").strip() or "default"
@@ -352,6 +443,7 @@ async def chat(
                     voice_mode=bool(getattr(request, "voice_mode", False)),
                     chat_mode=getattr(request, "chat_mode", None),
                     conversation_id=getattr(request, "conversation_id", None),
+                    force_deep_code_analysis=deep_project_review,
                 )
             except Exception as e:
                 logger.exception("build_messages: %s", e)
@@ -372,50 +464,31 @@ async def chat(
                     *messages[-12:],
                 ]
 
-            # Só faz a leitura profunda quando o usuário pede revisão/correção.
-            # O índice do ZIP fica no backend entre mensagens; não pedimos reenvio.
+            # The Code Analyzer already injects project context inside
+            # build_messages. Keep one retrieval per turn and only add guidance
+            # here; a second fetch duplicated context and consumed model budget.
             if deep_project_review and project_id:
-                yield json.dumps(
-                    {"gama_meta": {"phase": "project_analyzing", "project_id": project_id}},
-                    ensure_ascii=False,
-                ) + "\n"
-                try:
-                    project_context = await build_query_context_async(
-                        project_id,
-                        last_user,
-                        max_tokens=7000,
-                        level="deep",
-                    )
-                    if project_context.strip():
-                        gama_messages.append({
-                            "role": "system",
-                            "content": (
-                                "ANÁLISE SOB DEMANDA DO PROJETO ANEXADO. Use o contexto do Code Analyzer "
-                                "como fonte real do código. Não afirme ter lido um arquivo cujo conteúdo "
-                                "não aparece no contexto. Para devolver um arquivo completo, confirme que "
-                                "o conteúdo original necessário está disponível; se faltar, solicite/recupere "
-                                "o path antes de reescrever. Priorize achados concretos, dependências e "
-                                "correções seguras.\n\n" + project_context
-                            ),
-                        })
-                    else:
-                        gama_messages.append({
-                            "role": "system",
-                            "content": (
-                                "O usuário pediu análise profunda do ZIP, mas o Code Analyzer não retornou "
-                                "contexto utilizável. Informe a falha claramente e não invente análise nem código."
-                            ),
-                        })
-                except Exception as project_err:
-                    logger.exception("deep project analysis failed: %s", project_err)
-                    gama_messages.append({
-                        "role": "system",
-                        "content": (
-                            "A análise profunda do projeto falhou nesta rodada. Informe ao usuário que houve "
-                            "uma falha ao recuperar o contexto do projeto; não diga que leu os arquivos e não "
-                            "invente códigos completos."
-                        ),
-                    })
+                has_project_context = any(
+                    item.get("role") == "system"
+                    and "[Code Analyzer" in str(item.get("content") or "")
+                    and "Cobertura deste turno:" in str(item.get("content") or "")
+                    for item in gama_messages
+                )
+                gama_messages.append({
+                    "role": "system",
+                    "content": (
+                        "O usuário pediu uma revisão ampla do projeto. "
+                        + (
+                            "Baseie os achados nos arquivos que aparecem no contexto do Code Analyzer. "
+                            "Diga quando um arquivo relevante não foi lido e peça o caminho específico "
+                            "antes de afirmar detalhes ou devolver uma versão completa desse arquivo. "
+                            "Separe evidências do código e recomendações."
+                            if has_project_context
+                            else "O Code Analyzer não retornou contexto utilizável. Informe essa falha "
+                            "claramente e não afirme que leu ou analisou os arquivos."
+                        )
+                    ),
+                })
 
             if image_analysis_ok:
                 gama_messages.append(
@@ -589,7 +662,6 @@ async def chat(
                 if "[[GAMA_FILES]]" in full_assistant or _wants_zip_delivery(last_user):
                     artifact_meta = _try_build_zip_from_assistant(
                         full_assistant,
-                        last_user=last_user,
                         user_id=(x_user_id or getattr(request, "user_id", None) or "default"),
                     )
                     if artifact_meta:
@@ -597,8 +669,30 @@ async def chat(
                             {"gama_meta": {"phase": "artifact_ready", "artifact": artifact_meta}},
                             ensure_ascii=False,
                         ) + "\n"
+                    elif _wants_zip_delivery(last_user):
+                        yield json.dumps(
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "\n\nNão consegui montar o ZIP porque a resposta não trouxe arquivos completos no formato esperado.",
+                                },
+                                "done": False,
+                            },
+                            ensure_ascii=False,
+                        ) + "\n"
             except Exception as zip_err:
                 logger.warning("zip from assistant: %s", zip_err)
+                if _wants_zip_delivery(last_user):
+                    yield json.dumps(
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "\n\nNão consegui montar o ZIP; confira os caminhos e o conteúdo dos arquivos e tente novamente.",
+                            },
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ) + "\n"
 
             # Memória automática pós-turno
             if getattr(request, "auto_memory", True):

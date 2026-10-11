@@ -9,7 +9,7 @@ import '../core/constants.dart';
 import 'settings_service.dart';
 import 'identity_service.dart';
 
-enum AttachmentKind { text, zip, pdf, image, audio, other }
+enum AttachmentKind { text, zip, pdf, document, image, audio, other }
 
 class ProcessedAttachment {
   final String name;
@@ -93,6 +93,7 @@ class AttachmentService {
     final e = ext.toLowerCase();
     if (e == '.zip') return AttachmentKind.zip;
     if (e == '.pdf') return AttachmentKind.pdf;
+    if (e == '.docx') return AttachmentKind.document;
     if (imageExts.contains(e)) return AttachmentKind.image;
     if (audioExts.contains(e)) return AttachmentKind.audio;
     if (textExts.contains(e)) return AttachmentKind.text;
@@ -173,13 +174,29 @@ class AttachmentService {
         }
 
       case AttachmentKind.pdf:
-        final text = await _extractViaApi(path, name);
+      case AttachmentKind.document:
+        String text;
+        try {
+          final summary = await _ingestProjectDocument(path, name, ext);
+          final id = summary['project_id']?.toString() ?? '';
+          if (id.isEmpty) throw Exception('O servidor não retornou o ID do documento.');
+          final typeLabel = ext == '.docx' ? 'DOCX' : 'PDF';
+          text = '[project_id:$id]\n'
+              'Documento anexado: $name ($typeLabel). Use o Code Analyzer com este project_id; '
+              'não peça o arquivo de novo.';
+        } catch (e) {
+          // Preserve the existing searchable-text fallback for PDFs. DOCX has
+          // no legacy /extract path, so report the indexing failure explicitly.
+          text = ext == '.pdf'
+              ? await _extractViaApi(path, name)
+              : '[DOCX: $name]\nA indexação do documento falhou: $e';
+        }
         return ProcessedAttachment(
           name: name,
           ext: ext,
-          kind: kind,
+          kind: ext == '.docx' ? AttachmentKind.document : AttachmentKind.pdf,
           contentForModel: text,
-          label: '$name (PDF)',
+          label: '$name (${ext == '.docx' ? 'DOCX' : 'PDF'})',
           bytes: bytes,
         );
 
@@ -302,6 +319,33 @@ class AttachmentService {
     return Map<String, dynamic>.from(data as Map);
   }
 
+  Future<Map<String, dynamic>> _ingestProjectDocument(
+    String path,
+    String name,
+    String ext,
+  ) async {
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: SettingsService.instance.baseUrl,
+        headers: AppConstants.authHeaders,
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 180),
+      ),
+    );
+    final form = FormData.fromMap({
+      'file': await MultipartFile.fromFile(path, filename: name),
+    });
+    final route = ext == '.docx' ? '/project/ingest/docx' : '/project/ingest/pdf';
+    final res = await dio.post(
+      route,
+      data: form,
+      options: Options(headers: {'X-User-Id': IdentityService.instance.userId}),
+    );
+    final data = res.data;
+    if (data is Map<String, dynamic>) return data;
+    return Map<String, dynamic>.from(data as Map);
+  }
+
   Future<String> _extractViaApi(String path, String name) async {
     try {
       final dio = Dio(
@@ -384,6 +428,8 @@ class AttachmentService {
         kind = 'ZIP';
       else if (a.kind == AttachmentKind.pdf)
         kind = 'PDF';
+      else if (a.kind == AttachmentKind.document)
+        kind = 'DOCX';
       else if (a.kind == AttachmentKind.image)
         kind = 'imagem';
       else if (a.kind == AttachmentKind.audio)
