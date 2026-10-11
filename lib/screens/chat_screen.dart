@@ -1165,66 +1165,101 @@ class _ChatScreenState extends State<ChatScreen> {
           child: SafeArea(
             bottom: false,
             child: SizedBox(
-              height: 56,
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(
-                      Icons.menu_rounded,
-                      color: GamaColors.textPrimary,
-                    ),
-                    onPressed: () => Scaffold.of(context).openDrawer(),
-                  ),
-                  const Expanded(
-                    child: Center(
-                      child: Text(
-                        'Gamma 2.0',
-                        style: TextStyle(
-                          color: GamaColors.textPrimary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: -0.2,
+                  height: 64,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          style: IconButton.styleFrom(
+                            backgroundColor: GamaColors.surfaceCard,
+                            foregroundColor: GamaColors.textPrimary,
+                          ),
+                          icon: const Icon(Icons.menu_rounded, size: 20),
+                          onPressed: () => Scaffold.of(context).openDrawer(),
                         ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                  if (_isLoading || _isSpeaking)
-                    IconButton(
-                      icon: const Icon(
-                        Icons.stop_circle_outlined,
-                        color: GamaColors.accent,
-                      ),
-                      tooltip: 'Parar geração',
-                      onPressed: _stopGeneration,
-                    ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.settings_outlined,
-                      color: GamaColors.textSecondary,
-                      size: 22,
-                    ),
-                    tooltip: 'Configurações',
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const SettingsScreen(),
+                        const SizedBox(width: 5),
+                        Container(
+                          width: 36,
+                          height: 36,
+                          padding: const EdgeInsets.all(5),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [GamaColors.surfaceHover, GamaColors.surfaceCard],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: GamaColors.border),
+                          ),
+                          child: Image.asset(
+                            'assets/images/image3.png',
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.auto_awesome_rounded,
+                              color: GamaColors.accent,
+                              size: 22,
+                            ),
+                          ),
                         ),
-                      );
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.delete_outline_rounded,
-                      color: GamaColors.textSecondary,
-                      size: 22,
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Gamma 2.0',
+                                style: TextStyle(
+                                  color: GamaColors.textPrimary,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: -0.25,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'ASSISTENTE PESSOAL',
+                                style: TextStyle(
+                                  color: GamaColors.textMuted,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1.1,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (_isLoading || _isSpeaking)
+                          IconButton(
+                            style: IconButton.styleFrom(
+                              backgroundColor: GamaColors.accentSoft,
+                              foregroundColor: GamaColors.accentBright,
+                            ),
+                            icon: const Icon(Icons.stop_rounded, size: 19),
+                            tooltip: 'Parar geração',
+                            onPressed: _stopGeneration,
+                          ),
+                        IconButton(
+                          icon: const Icon(Icons.settings_outlined, size: 20),
+                          tooltip: 'Configurações',
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const SettingsScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                          tooltip: 'Limpar conversa',
+                          onPressed: _clearCurrentConversation,
+                        ),
+                      ],
                     ),
-                    tooltip: 'Limpar conversa',
-                    onPressed: _clearCurrentConversation,
                   ),
-                ],
-              ),
             ),
           ),
         ),
@@ -1237,11 +1272,11 @@ class _ChatScreenState extends State<ChatScreen> {
               Positioned.fill(
                 child: IgnorePointer(
                   child: Opacity(
-                    opacity: 0.20,
+                    opacity: 0.055,
                     child: Center(
                       child: Image.asset(
                         'assets/images/image2.png',
-                        width: 280,
+                        width: 340,
                         fit: BoxFit.contain,
                         errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                       ),
@@ -1259,10 +1294,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       )
                     : ListView.builder(
                         controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 16,
-                        ),
+                        padding: const EdgeInsets.fromLTRB(16, 22, 16, 26),
                         itemCount: _messages.length,
                         itemBuilder: (context, index) {
                           final msg = _messages[index];
@@ -1382,52 +1414,97 @@ class _ChatScreenState extends State<ChatScreen> {
                               },
                               child: Container(
                                 constraints: BoxConstraints(
-                                  maxWidth:
-                                      MediaQuery.of(context).size.width * 0.82,
+                                  maxWidth: MediaQuery.of(context).size.width *
+                                      (isUser ? 0.86 : 0.94),
                                 ),
-                                margin: const EdgeInsets.only(bottom: 12),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 15,
-                                  vertical: 12,
+                                margin: const EdgeInsets.only(bottom: 16),
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: isUser ? 16 : 14,
+                                  vertical: isUser ? 12 : 14,
                                 ),
                                 decoration: BoxDecoration(
                                   color: isUser
-                                      ? GamaColors.bubbleUser
+                                      ? null
                                       : GamaColors.bubbleAssistant,
+                                  gradient: isUser
+                                      ? const LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: [
+                                            GamaColors.bubbleUserSoft,
+                                            GamaColors.bubbleUser,
+                                          ],
+                                        )
+                                      : null,
                                   borderRadius: BorderRadius.only(
-                                    topLeft: const Radius.circular(20),
-                                    topRight: const Radius.circular(20),
-                                    bottomLeft: Radius.circular(
-                                      isUser ? 20 : 6,
-                                    ),
-                                    bottomRight: Radius.circular(
-                                      isUser ? 6 : 20,
-                                    ),
+                                    topLeft: const Radius.circular(22),
+                                    topRight: const Radius.circular(22),
+                                    bottomLeft: Radius.circular(isUser ? 22 : 7),
+                                    bottomRight: Radius.circular(isUser ? 7 : 22),
                                   ),
                                   boxShadow: [
                                     BoxShadow(
                                       color: isUser
-                                          ? GamaColors.accent.withOpacity(0.22)
-                                          : Colors.black.withOpacity(0.30),
-                                      blurRadius: isUser ? 14 : 10,
-                                      offset: const Offset(0, 3),
+                                          ? GamaColors.accent.withOpacity(0.10)
+                                          : Colors.black.withOpacity(0.16),
+                                      blurRadius: isUser ? 18 : 12,
+                                      offset: const Offset(0, 5),
                                     ),
                                   ],
                                   border: isUser
-                                      ? null
+                                      ? Border.all(
+                                          color: GamaColors.accent.withOpacity(0.20),
+                                        )
                                       : Border.all(
-                                          color: GamaColors.border.withOpacity(0.85),
-                                          width: 0.8,
+                                          color: GamaColors.borderSoft,
+                                          width: 0.9,
                                         ),
                                 ),
-                                child:
-                                    msg.content.isEmpty && !isUser && _isLoading
-                                    ? const _TypingDots()
-                                    : MessageContentView(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (!isUser) ...[
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Container(
+                                            width: 22,
+                                            height: 22,
+                                            decoration: BoxDecoration(
+                                              color: GamaColors.accentSoft,
+                                              borderRadius: BorderRadius.circular(7),
+                                            ),
+                                            child: const Icon(
+                                              Icons.auto_awesome_rounded,
+                                              size: 13,
+                                              color: GamaColors.accentBright,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          const Text(
+                                            'GAMMA',
+                                            style: TextStyle(
+                                              color: GamaColors.textMuted,
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w700,
+                                              letterSpacing: 1.1,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 10),
+                                    ],
+                                    if (msg.content.isEmpty && !isUser && _isLoading)
+                                      const _TypingDots()
+                                    else
+                                      MessageContentView(
                                         content: msg.content,
                                         isUser: isUser,
                                         onTapLink: _openLink,
                                       ),
+                                  ],
+                                ),
                               ),
                             ),
                           );
@@ -1588,82 +1665,176 @@ class _EmptyState extends StatelessWidget {
     'Vamos iniciar um Projeto',
     '/memoria listar',
   ];
+  static const _suggestionTitles = [
+    'Analisar um projeto',
+    'Planejar uma ideia',
+    'Consultar minha memória',
+  ];
+  static const _suggestionDescriptions = [
+    'Revise arquivos, documentação ou código.',
+    'Organize os próximos passos com a Gamma.',
+    'Veja o que a assistente lembra sobre você.',
+  ];
+  static const _suggestionIcons = [
+    Icons.code_rounded,
+    Icons.lightbulb_outline_rounded,
+    Icons.psychology_alt_outlined,
+  ];
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Image.asset(
-              'assets/images/image3.png',
-              width: 72,
-              height: 72,
-              fit: BoxFit.contain,
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Como posso te ajudar?',
-              style: TextStyle(
-                color: GamaColors.textPrimary,
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.4,
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 94,
+                height: 94,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [GamaColors.surfaceHover, GamaColors.surfaceCard],
+                  ),
+                  borderRadius: BorderRadius.circular(30),
+                  border: Border.all(color: GamaColors.border),
+                  boxShadow: [
+                    BoxShadow(
+                      color: GamaColors.accent.withOpacity(0.12),
+                      blurRadius: 36,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Image.asset(
+                  'assets/images/image3.png',
+                  fit: BoxFit.contain,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Anexe código, peça para lembrar algo ou use /memoria',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: GamaColors.textMuted,
-                fontSize: 14,
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 28),
-            ..._suggestions.map((s) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Material(
+              const SizedBox(height: 22),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                decoration: BoxDecoration(
                   color: GamaColors.surfaceCard,
-                  borderRadius: BorderRadius.circular(16),
-                  child: InkWell(
-                    onTap: () => onSuggestion(s),
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 15,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: GamaColors.borderSoft),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.circle, color: GamaColors.success, size: 7),
+                    SizedBox(width: 7),
+                    Text(
+                      'SEU ESPAÇO DE TRABALHO',
+                      style: TextStyle(
+                        color: GamaColors.textSecondary,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.0,
                       ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: GamaColors.border),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Text(
-                        s,
-                        style: const TextStyle(
-                          color: GamaColors.textSecondary,
-                          fontSize: 13.5,
-                          height: 1.35,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 15),
+              const Text(
+                'O que vamos criar hoje?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: GamaColors.textPrimary,
+                  fontSize: 26,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.8,
+                  height: 1.12,
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Converse, programe ou explore uma ideia.\nA Gamma ajuda você a dar o próximo passo.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: GamaColors.textMuted,
+                  fontSize: 14,
+                  height: 1.55,
+                ),
+              ),
+              const SizedBox(height: 27),
+              ..._suggestions.asMap().entries.map((entry) {
+                final index = entry.key;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Material(
+                    color: GamaColors.surfaceCard,
+                    borderRadius: BorderRadius.circular(18),
+                    child: InkWell(
+                      onTap: () => onSuggestion(entry.value),
+                      borderRadius: BorderRadius.circular(18),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(13, 13, 14, 13),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: GamaColors.borderSoft),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                color: GamaColors.accentSoft,
+                                borderRadius: BorderRadius.circular(13),
+                              ),
+                              child: Icon(
+                                _suggestionIcons[index],
+                                color: GamaColors.accentBright,
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 13),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _suggestionTitles[index],
+                                    style: const TextStyle(
+                                      color: GamaColors.textPrimary,
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _suggestionDescriptions[index],
+                                    style: const TextStyle(
+                                      color: GamaColors.textMuted,
+                                      fontSize: 11.5,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(
+                              Icons.arrow_forward_rounded,
+                              color: GamaColors.textMuted,
+                              size: 18,
+                            ),
+                          ],
                         ),
                       ),
                     ),
                   ),
-                ),
-              );
-            }),
-          ],
+                );
+              }),
+            ],
+          ),
         ),
       ),
     );

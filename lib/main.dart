@@ -74,7 +74,7 @@ class GamaApp extends StatelessWidget {
         scaffoldBackgroundColor: GamaColors.background,
         colorScheme: const ColorScheme.dark(
           primary: GamaColors.accent,
-          secondary: GamaColors.accent,
+          secondary: GamaColors.accentCool,
           surface: GamaColors.surface,
           error: GamaColors.error,
           onPrimary: Colors.white,
@@ -93,6 +93,22 @@ class GamaApp extends StatelessWidget {
             fontWeight: FontWeight.w600,
             letterSpacing: -0.3,
           ),
+        ),
+        iconTheme: const IconThemeData(color: GamaColors.textSecondary),
+        bottomSheetTheme: const BottomSheetThemeData(
+          backgroundColor: GamaColors.surfaceElevated,
+          modalBackgroundColor: GamaColors.surfaceElevated,
+          surfaceTintColor: Colors.transparent,
+          dragHandleColor: GamaColors.textMuted,
+        ),
+        progressIndicatorTheme: const ProgressIndicatorThemeData(
+          color: GamaColors.accent,
+          linearTrackColor: GamaColors.borderSoft,
+        ),
+        textSelectionTheme: const TextSelectionThemeData(
+          cursorColor: GamaColors.accent,
+          selectionColor: GamaColors.accentSoft,
+          selectionHandleColor: GamaColors.accent,
         ),
         dividerColor: GamaColors.divider,
         snackBarTheme: SnackBarThemeData(
@@ -145,6 +161,18 @@ class GamaApp extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
             ),
           ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: GamaColors.textPrimary,
+            side: const BorderSide(color: GamaColors.border),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(foregroundColor: GamaColors.accentBright),
         ),
         chipTheme: ChipThemeData(
           backgroundColor: GamaColors.surfaceCard,

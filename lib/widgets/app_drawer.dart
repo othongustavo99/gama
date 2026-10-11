@@ -33,98 +33,110 @@ class AppDrawer extends StatelessWidget {
     final service = ConversationService.instance;
 
     return Drawer(
-      backgroundColor: GamaColors.surfaceElevated,
+      backgroundColor: GamaColors.surface,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // ===== MINI PERFIL =====
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
-              child: Row(
-                children: [
-                  const _ProfileAvatar(size: 44),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          IdentityService.instance.displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: GamaColors.textPrimary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          IdentityService.instance.email ??
-                              (IdentityService.instance.provider == 'google'
-                                  ? 'Conta Google'
-                                  : 'Convidado'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: GamaColors.textMuted,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 14, 8, 14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [GamaColors.surfaceCard, GamaColors.surfaceElevated],
                   ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.edit_square,
-                      color: GamaColors.textSecondary,
-                      size: 22,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: GamaColors.borderSoft),
+                ),
+                child: Row(
+                  children: [
+                    const _ProfileAvatar(size: 44),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            IdentityService.instance.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: GamaColors.textPrimary,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            IdentityService.instance.email ??
+                                (IdentityService.instance.provider == 'google'
+                                    ? 'Conta Google'
+                                    : 'Conta de convidado'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: GamaColors.textMuted,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    tooltip: 'Nova conversa',
-                    onPressed: onNewChat,
-                  ),
-                ],
+                    IconButton(
+                      icon: const Icon(Icons.edit_square, size: 20),
+                      tooltip: 'Nova conversa',
+                      onPressed: onNewChat,
+                    ),
+                  ],
+                ),
               ),
             ),
             // Botão nova conversa
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
               child: Material(
-                color: GamaColors.surfaceCard,
-                borderRadius: BorderRadius.circular(14),
+                color: GamaColors.accent,
+                borderRadius: BorderRadius.circular(16),
                 child: InkWell(
                   onTap: onNewChat,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(16),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 13,
-                    ),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: GamaColors.border),
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [GamaColors.accentBright, GamaColors.accentMuted],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
+                          color: GamaColors.accent.withOpacity(0.18),
+                          blurRadius: 16,
+                          offset: const Offset(0, 5),
                         ),
                       ],
                     ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.add, color: GamaColors.accent, size: 20),
-                        SizedBox(width: 10),
-                        Text(
-                          'Nova conversa',
-                          style: TextStyle(
-                            color: GamaColors.textPrimary,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                      child: Row(
+                        children: [
+                          Icon(Icons.add_rounded, color: Colors.white, size: 21),
+                          SizedBox(width: 10),
+                          Text(
+                            'Nova conversa',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.1,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -444,7 +456,16 @@ class _DrawerItem extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: ListTile(
-        leading: Icon(icon, color: GamaColors.textSecondary, size: 20),
+      leading: Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(
+          color: GamaColors.surfaceCard,
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: GamaColors.borderSoft),
+        ),
+        child: Icon(icon, color: GamaColors.textSecondary, size: 18),
+      ),
         title: Text(
           label,
           style: const TextStyle(

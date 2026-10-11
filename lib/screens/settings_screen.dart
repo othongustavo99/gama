@@ -487,14 +487,27 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text.toUpperCase(),
-      style: const TextStyle(
-        color: GamaColors.textMuted,
-        fontSize: 12,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 0.6,
-      ),
+    return Row(
+      children: [
+        Container(
+          width: 3,
+          height: 14,
+          decoration: BoxDecoration(
+            color: GamaColors.accent,
+            borderRadius: BorderRadius.circular(3),
+          ),
+        ),
+        const SizedBox(width: 9),
+        Text(
+          text.toUpperCase(),
+          style: const TextStyle(
+            color: GamaColors.textSecondary,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.9,
+          ),
+        ),
+      ],
     );
   }
 }

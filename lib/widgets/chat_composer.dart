@@ -31,9 +31,18 @@ class ChatComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: GamaColors.surface,
-      elevation: 0,
+    return Container(
+      decoration: BoxDecoration(
+        color: GamaColors.surface,
+        border: const Border(top: BorderSide(color: GamaColors.divider)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.18),
+            blurRadius: 18,
+            offset: const Offset(0, -5),
+          ),
+        ],
+      ),
       child: SafeArea(
         top: false,
         child: Padding(
@@ -70,7 +79,7 @@ class ChatComposer extends StatelessWidget {
                 curve: Curves.easeOutCubic,
                 decoration: BoxDecoration(
                   color: GamaColors.surfaceCard,
-                  borderRadius: BorderRadius.circular(26),
+                  borderRadius: BorderRadius.circular(22),
                   border: Border.all(
                     color: isListening
                         ? GamaColors.accent.withOpacity(0.55)
@@ -88,9 +97,9 @@ class ChatComposer extends StatelessWidget {
                         ]
                       : [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.35),
-                            blurRadius: 12,
-                            offset: const Offset(0, 4),
+                      color: Colors.black.withOpacity(0.18),
+                      blurRadius: 16,
+                      offset: const Offset(0, 5),
                           ),
                         ],
                 ),
@@ -176,11 +185,11 @@ class ChatComposer extends StatelessWidget {
                         color: isLoading
                             ? GamaColors.accent.withOpacity(0.45)
                             : GamaColors.accent,
-                        shape: const CircleBorder(),
+                        borderRadius: BorderRadius.circular(14),
                         elevation: isLoading ? 0 : 2,
                         shadowColor: GamaColors.accentGlow,
                         child: InkWell(
-                          customBorder: const CircleBorder(),
+                          borderRadius: BorderRadius.circular(14),
                           onTap: isLoading ? null : onSend,
                           child: const SizedBox(
                             width: 42,
