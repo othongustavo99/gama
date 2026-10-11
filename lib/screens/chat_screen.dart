@@ -1081,11 +1081,18 @@ class _ChatScreenState extends State<ChatScreen> {
       children: [
         // App bar
         Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: GamaColors.surface,
-            border: Border(
+            border: const Border(
               bottom: BorderSide(color: GamaColors.divider, width: 1),
             ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.25),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           child: SafeArea(
             bottom: false,
@@ -1312,35 +1319,38 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                                 margin: const EdgeInsets.only(bottom: 12),
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 11,
+                                  horizontal: 15,
+                                  vertical: 12,
                                 ),
                                 decoration: BoxDecoration(
                                   color: isUser
                                       ? GamaColors.bubbleUser
                                       : GamaColors.bubbleAssistant,
                                   borderRadius: BorderRadius.only(
-                                    topLeft: const Radius.circular(18),
-                                    topRight: const Radius.circular(18),
+                                    topLeft: const Radius.circular(20),
+                                    topRight: const Radius.circular(20),
                                     bottomLeft: Radius.circular(
-                                      isUser ? 18 : 6,
+                                      isUser ? 20 : 6,
                                     ),
                                     bottomRight: Radius.circular(
-                                      isUser ? 6 : 18,
+                                      isUser ? 6 : 20,
                                     ),
                                   ),
                                   boxShadow: [
                                     BoxShadow(
                                       color: isUser
-                                          ? GamaColors.accent.withOpacity(0.18)
-                                          : Colors.black.withOpacity(0.25),
-                                      blurRadius: isUser ? 12 : 8,
+                                          ? GamaColors.accent.withOpacity(0.22)
+                                          : Colors.black.withOpacity(0.30),
+                                      blurRadius: isUser ? 14 : 10,
                                       offset: const Offset(0, 3),
                                     ),
                                   ],
                                   border: isUser
                                       ? null
-                                      : Border.all(color: GamaColors.border),
+                                      : Border.all(
+                                          color: GamaColors.border.withOpacity(0.85),
+                                          width: 0.8,
+                                        ),
                                 ),
                                 child:
                                     msg.content.isEmpty && !isUser && _isLoading
@@ -1530,8 +1540,9 @@ class _EmptyState extends StatelessWidget {
               'Como posso te ajudar?',
               style: TextStyle(
                 color: GamaColors.textPrimary,
-                fontSize: 20,
+                fontSize: 22,
                 fontWeight: FontWeight.w600,
+                letterSpacing: -0.4,
               ),
             ),
             const SizedBox(height: 8),
@@ -1550,25 +1561,33 @@ class _EmptyState extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Material(
                   color: GamaColors.surfaceCard,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(16),
                   child: InkWell(
                     onTap: () => onSuggestion(s),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(16),
                     child: Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
-                        vertical: 14,
+                        vertical: 15,
                       ),
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(16),
                         border: Border.all(color: GamaColors.border),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
                       child: Text(
                         s,
                         style: const TextStyle(
                           color: GamaColors.textSecondary,
                           fontSize: 13.5,
+                          height: 1.35,
                         ),
                       ),
                     ),
@@ -1625,10 +1644,10 @@ class _TypingDotsState extends State<_TypingDots>
               child: Opacity(
                 opacity: opacity,
                 child: Container(
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: GamaColors.textSecondary,
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: GamaColors.accent.withOpacity(0.85),
                     shape: BoxShape.circle,
                   ),
                 ),

@@ -5,6 +5,7 @@ import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
 import 'package:path/path.dart' as p;
 
+import '../core/constants.dart';
 import 'settings_service.dart';
 import 'identity_service.dart';
 
@@ -283,6 +284,7 @@ class AttachmentService {
     final dio = Dio(
       BaseOptions(
         baseUrl: SettingsService.instance.baseUrl,
+        headers: AppConstants.authHeaders,
         connectTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 180),
       ),
@@ -305,6 +307,7 @@ class AttachmentService {
       final dio = Dio(
         BaseOptions(
           baseUrl: SettingsService.instance.baseUrl,
+          headers: AppConstants.authHeaders,
           connectTimeout: const Duration(seconds: 20),
           receiveTimeout: const Duration(seconds: 120),
         ),

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../core/constants.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import 'conversation_service.dart';
@@ -30,6 +31,7 @@ class ConversationSyncService {
     _dio.options.baseUrl = SettingsService.instance.baseUrl;
     _dio.options.headers['X-User-Id'] = IdentityService.instance.userId;
     _dio.options.headers['Accept'] = 'application/json';
+    _dio.options.headers.addAll(AppConstants.authHeaders);
     return _dio;
   }
 

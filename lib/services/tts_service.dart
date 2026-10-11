@@ -6,6 +6,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../core/constants.dart';
 import 'settings_service.dart';
 
 class TtsService {
@@ -305,6 +306,7 @@ class TtsService {
     // Reutiliza o mesmo cliente HTTP durante toda a sessão para aproveitar
     // keep-alive e reduzir o custo de cada pedido de TTS.
     _dio.options.baseUrl = SettingsService.instance.baseUrl;
+    _dio.options.headers.addAll(AppConstants.authHeaders);
 
     final res = await _dio.post('/tts', data: body);
     final status = res.statusCode ?? 0;

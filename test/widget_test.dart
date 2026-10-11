@@ -1,30 +1,48 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
+// Testes unitários do app. O teste padrão do `flutter create` (contador) não
+// se aplica a este projeto e quebrava `flutter test`.
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:gamma/main.dart';
+import 'package:gamma/utils/message_sanitize.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('MessageSanitize.forApi', () {
+    test('troca imagem gerada (base64) por marcador curto', () {
+      final out = MessageSanitize.forApi(
+        'oi\n[gama_image]\nmime:image/png\ndata:AAAABBBB\n[/gama_image]\ntchau',
+      );
+      expect(out.contains('AAAABBBB'), isFalse);
+      expect(out.contains('imagem gerada'), isTrue);
+      expect(out.contains('oi'), isTrue);
+      expect(out.contains('tchau'), isTrue);
+    });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    test('corta mensagens enormes', () {
+      final out = MessageSanitize.forApi('a' * 20000);
+      expect(out.length, lessThan(12200));
+      expect(out.contains('cortado'), isTrue);
+    });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    test('mensagens curtas passam intactas', () {
+      expect(MessageSanitize.forApi('  olá  '), 'olá');
+    });
+  });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  group('MessageSanitize.historyForApi', () {
+    test('descarta mensagens vazias', () {
+      final out = MessageSanitize.historyForApi([
+        {'role': 'user', 'content': 'oi'},
+        {'role': 'assistant', 'content': '   '},
+      ]);
+      expect(out.length, 1);
+    });
+
+    test('respeita o orçamento e mantém as mais recentes', () {
+      final msgs = [
+        for (var i = 0; i < 40; i++)
+          {'role': 'user', 'content': 'msg$i ${'x' * 13000}'},
+      ];
+      final out = MessageSanitize.historyForApi(msgs);
+      expect(out.length, lessThan(40));
+      expect((out.last['content'] as String).startsWith('msg39'), isTrue);
+    });
   });
 }

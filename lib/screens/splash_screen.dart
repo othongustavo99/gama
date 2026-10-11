@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/gama_colors.dart';
+
 import '../services/identity_service.dart';
 import 'home_screen.dart';
 import 'login_screen.dart';
@@ -44,7 +46,7 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: GamaColors.background,
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -64,7 +66,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 child: CircularProgressIndicator(
                   strokeWidth: 3,
                   valueColor: const AlwaysStoppedAnimation<Color>(
-                    Color(0xFFFF7A00),
+                    GamaColors.accent,
                   ),
                 ),
               ),

@@ -85,27 +85,40 @@ class GamaApp extends StatelessWidget {
           backgroundColor: GamaColors.surface,
           foregroundColor: GamaColors.textPrimary,
           elevation: 0,
+          scrolledUnderElevation: 0,
           centerTitle: false,
+          titleTextStyle: TextStyle(
+            color: GamaColors.textPrimary,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.3,
+          ),
         ),
         dividerColor: GamaColors.divider,
         snackBarTheme: SnackBarThemeData(
           backgroundColor: GamaColors.surfaceCard,
           contentTextStyle: const TextStyle(color: GamaColors.textPrimary),
           behavior: SnackBarBehavior.floating,
+          elevation: 8,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: GamaColors.border, width: 0.5),
           ),
         ),
         dialogTheme: DialogThemeData(
           backgroundColor: GamaColors.surfaceCard,
+          elevation: 12,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: GamaColors.border, width: 0.5),
           ),
         ),
         popupMenuTheme: PopupMenuThemeData(
           color: GamaColors.surfaceCard,
+          elevation: 10,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: GamaColors.border, width: 0.5),
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(
@@ -113,17 +126,34 @@ class GamaApp extends StatelessWidget {
           fillColor: GamaColors.surfaceInput,
           hintStyle: const TextStyle(color: GamaColors.textMuted),
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(14),
             borderSide: const BorderSide(color: GamaColors.border),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(14),
             borderSide: const BorderSide(color: GamaColors.border),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: GamaColors.accent, width: 1.2),
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: GamaColors.accent, width: 1.4),
           ),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
+        chipTheme: ChipThemeData(
+          backgroundColor: GamaColors.surfaceCard,
+          selectedColor: GamaColors.accentSoft,
+          side: const BorderSide(color: GamaColors.border),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          labelStyle: const TextStyle(color: GamaColors.textSecondary),
         ),
       ),
       home: const SplashScreen(),
@@ -149,12 +179,23 @@ class GamaStartupError extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
-                  Icons.warning_amber_rounded,
-                  color: GamaColors.accent,
-                  size: 48,
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    color: GamaColors.accentSoft,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: GamaColors.accent.withOpacity(0.35),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.warning_amber_rounded,
+                    color: GamaColors.accent,
+                    size: 36,
+                  ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 const Text(
                   'Não foi possível iniciar a Gamma',
                   textAlign: TextAlign.center,
@@ -162,6 +203,7 @@ class GamaStartupError extends StatelessWidget {
                     color: GamaColors.textPrimary,
                     fontSize: 19,
                     fontWeight: FontWeight.w600,
+                    letterSpacing: -0.3,
                   ),
                 ),
                 const SizedBox(height: 10),

@@ -92,8 +92,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 'Gamma 2.0',
                 style: TextStyle(
                   color: GamaColors.textPrimary,
-                  fontSize: 28,
+                  fontSize: 30,
                   fontWeight: FontWeight.w700,
+                  letterSpacing: -0.6,
                 ),
               ),
               const SizedBox(height: 8),
@@ -125,9 +126,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     foregroundColor: Colors.black87,
                     disabledBackgroundColor: Colors.white24,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(16),
                     ),
                     elevation: 0,
+                    shadowColor: Colors.transparent,
                   ),
                   child: _loading
                       ? const SizedBox(

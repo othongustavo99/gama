@@ -4,6 +4,7 @@ import '../core/gama_colors.dart';
 import '../services/settings_service.dart';
 
 /// Barra: modo · + · mic (STT com texto ao vivo) · campo · ondas (TTS) · enviar
+/// Polimento visual moderno — input glass, chips mais suaves e botão de envio com glow.
 class ChatComposer extends StatelessWidget {
   final TextEditingController controller;
   final bool isLoading;
@@ -36,7 +37,7 @@ class ChatComposer extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -63,16 +64,35 @@ class ChatComposer extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-              Container(
+              const SizedBox(height: 10),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
                 decoration: BoxDecoration(
                   color: GamaColors.surfaceCard,
-                  borderRadius: BorderRadius.circular(28),
+                  borderRadius: BorderRadius.circular(26),
                   border: Border.all(
                     color: isListening
                         ? GamaColors.accent.withOpacity(0.55)
                         : GamaColors.border,
+                    width: isListening ? 1.2 : 1,
                   ),
+                  boxShadow: isListening
+                      ? [
+                          BoxShadow(
+                            color: GamaColors.accentGlow,
+                            blurRadius: 16,
+                            spreadRadius: 0,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.35),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                 ),
                 padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
                 child: Row(
@@ -81,9 +101,13 @@ class ChatComposer extends StatelessWidget {
                     IconButton(
                       onPressed: isLoading ? null : onAttach,
                       tooltip: 'Anexar',
+                      style: IconButton.styleFrom(
+                        foregroundColor: GamaColors.textSecondary,
+                        disabledForegroundColor: GamaColors.textHint,
+                      ),
                       icon: const Icon(
                         Icons.add_circle_outline_rounded,
-                        color: GamaColors.textSecondary,
+                        size: 24,
                       ),
                     ),
                     IconButton(
@@ -91,11 +115,15 @@ class ChatComposer extends StatelessWidget {
                       tooltip: isListening
                           ? 'Parar gravação'
                           : 'Gravar voz → texto',
-                      icon: Icon(
-                        isListening ? Icons.mic : Icons.mic_none_rounded,
-                        color: isListening
+                      style: IconButton.styleFrom(
+                        foregroundColor: isListening
                             ? GamaColors.accent
                             : GamaColors.textSecondary,
+                        disabledForegroundColor: GamaColors.textHint,
+                      ),
+                      icon: Icon(
+                        isListening ? Icons.mic : Icons.mic_none_rounded,
+                        size: 24,
                       ),
                     ),
                     Expanded(
@@ -103,7 +131,9 @@ class ChatComposer extends StatelessWidget {
                         controller: controller,
                         style: const TextStyle(
                           color: GamaColors.textPrimary,
-                          fontSize: 15,
+                          fontSize: 15.5,
+                          height: 1.35,
+                          letterSpacing: 0.1,
                         ),
                         maxLines: 5,
                         minLines: 1,
@@ -114,12 +144,12 @@ class ChatComposer extends StatelessWidget {
                               : 'Fazer uma pergunta',
                           hintStyle: const TextStyle(
                             color: GamaColors.textMuted,
-                            fontSize: 14,
+                            fontSize: 14.5,
                           ),
                           border: InputBorder.none,
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 4,
+                            horizontal: 6,
                             vertical: 12,
                           ),
                         ),
@@ -131,26 +161,34 @@ class ChatComposer extends StatelessWidget {
                     IconButton(
                       onPressed: isLoading ? null : onSpeakSend,
                       tooltip: 'Enviar e ouvir a resposta',
+                      style: IconButton.styleFrom(
+                        foregroundColor: GamaColors.textSecondary,
+                        disabledForegroundColor: GamaColors.textHint,
+                      ),
                       icon: const Icon(
                         Icons.graphic_eq_rounded,
-                        color: GamaColors.textSecondary,
+                        size: 22,
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 4, right: 4),
+                      padding: const EdgeInsets.only(bottom: 3, right: 3),
                       child: Material(
-                        color: GamaColors.accent,
+                        color: isLoading
+                            ? GamaColors.accent.withOpacity(0.45)
+                            : GamaColors.accent,
                         shape: const CircleBorder(),
+                        elevation: isLoading ? 0 : 2,
+                        shadowColor: GamaColors.accentGlow,
                         child: InkWell(
                           customBorder: const CircleBorder(),
                           onTap: isLoading ? null : onSend,
                           child: const SizedBox(
-                            width: 40,
-                            height: 40,
+                            width: 42,
+                            height: 42,
                             child: Icon(
                               Icons.arrow_upward_rounded,
                               color: Colors.white,
-                              size: 20,
+                              size: 21,
                             ),
                           ),
                         ),
@@ -188,15 +226,26 @@ class _ModeChip extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: selected
                   ? GamaColors.accent.withOpacity(0.55)
                   : GamaColors.border,
+              width: selected ? 1.1 : 1,
             ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: GamaColors.accentGlow.withOpacity(0.35),
+                      blurRadius: 8,
+                      offset: const Offset(0, 1),
+                    ),
+                  ]
+                : null,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -211,10 +260,11 @@ class _ModeChip extends StatelessWidget {
                 label,
                 style: TextStyle(
                   color: selected
-                      ? GamaColors.accent
+                      ? GamaColors.accentBright
                       : GamaColors.textSecondary,
                   fontSize: 12.5,
                   fontWeight: FontWeight.w600,
+                  letterSpacing: 0.1,
                 ),
               ),
             ],
