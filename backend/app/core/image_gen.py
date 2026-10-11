@@ -1,9 +1,11 @@
-"""Geração de imagens via OpenRouter Image API — GPT Image 2.5 Sunburst."""
+"""Geração e edição de imagens via OpenRouter Image API — GPT Image 2.5 Sunburst."""
 
 from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Optional
 
 import httpx
@@ -12,53 +14,229 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-# Modelo pedido pelo produto
 DEFAULT_IMAGE_MODEL = "openai/gpt-image-2.5-sunburst"
 
-# Intenção explícita de criar/imaginar imagem (pt/en)
-_IMAGE_INTENT = re.compile(
+
+class ImageIntent(str, Enum):
+    GENERATE = "generate"   # criar imagem do zero (text-to-image)
+    EDIT = "edit"           # editar/modificar imagem anexada
+    IMPROVE = "improve"     # melhorar qualidade / upscale / enhance
+    ANALYZE = "analyze"     # só analisar (não gerar)
+    NONE = "none"           # sem intenção de imagem
+
+
+@dataclass
+class ImageRequest:
+    intent: ImageIntent
+    prompt: str
+    confidence: float  # 0.0 a 1.0
+
+
+# ── Regexes de intenção ──────────────────────────────────────────────────────
+
+_GENERATE = re.compile(
     r"(?i)("
-    r"\b(cria|crie|gere|gera|gerar|criar|desenhe|desenha|imagine|imagina)\b.{0,40}\b(imagem|img|figura|ilustra\w*|foto|picture|image)\b"
+    r"\b(cria|crie|gere|gera|gerar|criar|desenhe|desenha|imagine|imagina|faz|faça|faz uma)\b"
+    r".{0,50}\b(imagem|img|figura|ilustra\w*|foto|picture|image|arte|desenho)\b"
     r"|"
-    r"\b(imagem|ilustra\w*|figura)\b.{0,20}\b(de|do|da|com|sobre)\b"
+    r"\b(imagem|ilustra\w*|figura|foto|picture)\b.{0,25}\b(de|do|da|com|sobre|mostrando)\b"
     r"|"
-    r"\b(generate|create|draw|imagine|make)\b.{0,40}\b(image|picture|illustration|art)\b"
+    r"\b(generate|create|draw|imagine|make|paint)\b.{0,50}\b(image|picture|illustration|art|photo|drawing)\b"
     r"|"
-    r"\b(text[\s-]?to[\s-]?image|txt2img)\b"
+    r"\b(text[\s-]?to[\s-]?image|txt2img|text2img)\b"
+    r"|"
+    r"\b(quero uma imagem|quero uma foto|quero uma ilustração|quero um desenho)\b"
     r")",
 )
 
-# Evita falso positivo em análise de imagem anexada
-_ANALYZE_ONLY = re.compile(
-    r"(?i)\b(analise|analisa|analyze|descreva|descreve|o que (tem|há) na imagem|what('s| is) in the (image|photo))\b",
+_EDIT = re.compile(
+    r"(?i)("
+    r"\b(edita|edite|editar|modifica|modifique|modificar|altera|altere|alterar|"
+    r"muda|mude|mudar|troca|troque|trocar|remove|remova|remover|"
+    r"adiciona|adicione|adicionar|coloca|coloque|colocar|"
+    r"substitui|substitua|substituir|apaga|apague|apagar)\b"
+    r".{0,40}\b(imagem|img|foto|picture|image|nessa|nessa imagem|dessa imagem|da imagem)\b"
+    r"|"
+    r"\b(nessa imagem|nessa foto|dessa imagem|da imagem|na imagem|na foto)\b"
+    r".{0,40}\b(muda|mude|troca|troque|remove|remova|adiciona|adicione|coloca|coloque|"
+    r"edita|edite|modifica|modifique|altera|altere|substitui)\b"
+    r"|"
+    r"\b(edit|modify|change|replace|remove|add|put)\b.{0,40}\b(image|photo|picture|this image)\b"
+    r"|"
+    r"\b(this image|the image|the photo)\b.{0,40}\b(edit|modify|change|replace|remove|add)\b"
+    r"|"
+    r"\b(image[\s-]?to[\s-]?image|img2img)\b"
+    r")",
+)
+
+_IMPROVE = re.compile(
+    r"(?i)("
+    r"\b(melhora|melhore|melhorar|aprimora|aprimore|aprimorar|"
+    r"aumenta a qualidade|aumente a qualidade|melhora a qualidade|"
+    r"upscale|enhance|refina|refine|refinar|"
+    r"deixa mais nítida|deixe mais nítida|mais nitidez|"
+    r"melhora a resolução|aumenta a resolução|melhor resolução|"
+    r"deixa melhor|deixe melhor|fica melhor)\b"
+    r".{0,30}\b(imagem|img|foto|picture|image)?\b"
+    r"|"
+    r"\b(imagem|foto|picture|image)\b.{0,20}\b(melhor|mais nítida|com mais qualidade|em alta resolução)\b"
+    r"|"
+    r"\b(improve|enhance|upscale|sharpen|refine|make better|higher quality|higher resolution)\b"
+    r".{0,30}\b(image|photo|picture)?\b"
+    r")",
+)
+
+_ANALYZE = re.compile(
+    r"(?i)\b("
+    r"analise|analisa|analyze|descreva|descreve|describe|"
+    r"o que (tem|há|aparece) (na|nessa|dessa) (imagem|foto)|"
+    r"what('s| is) in (the|this) (image|photo)|"
+    r"explique (a|essa|desta) (imagem|foto)|"
+    r"me diga o que (tem|há) (na|nessa) (imagem|foto)"
+    r")\b",
+)
+
+_WEAK_GENERATE = re.compile(
+    r"(?i)\b(imagem de|foto de|ilustração de|desenho de|picture of|image of)\b",
 )
 
 
-def wants_image_generation(user_text: str, has_attached_images: bool = False) -> bool:
+def detect_image_intent(
+    user_text: str,
+    has_attached_images: bool = False,
+) -> ImageRequest:
+    """
+    Detecta a intenção do usuário em relação a imagens.
+    Retorna ImageRequest com intent, prompt limpo e confidence.
+    """
     text = (user_text or "").strip()
-    if len(text) < 6:
-        return False
-    if has_attached_images and _ANALYZE_ONLY.search(text) and not _IMAGE_INTENT.search(text):
-        return False
-    return bool(_IMAGE_INTENT.search(text))
+    if len(text) < 4:
+        return ImageRequest(intent=ImageIntent.NONE, prompt="", confidence=0.0)
+
+    # 1. Análise pura (só se tiver imagem anexada e não pedir edição/geração)
+    if has_attached_images and _ANALYZE.search(text):
+        if not (_EDIT.search(text) or _IMPROVE.search(text) or _GENERATE.search(text)):
+            return ImageRequest(
+                intent=ImageIntent.ANALYZE,
+                prompt=text,
+                confidence=0.95,
+            )
+
+    # 2. Melhorar qualidade (prioridade alta se tiver imagem anexada)
+    if _IMPROVE.search(text):
+        conf = 0.92 if has_attached_images else 0.75
+        return ImageRequest(
+            intent=ImageIntent.IMPROVE,
+            prompt=_clean_prompt(text, mode="improve"),
+            confidence=conf,
+        )
+
+    # 3. Editar
+    if _EDIT.search(text):
+        conf = 0.90 if has_attached_images else 0.70
+        return ImageRequest(
+            intent=ImageIntent.EDIT,
+            prompt=_clean_prompt(text, mode="edit"),
+            confidence=conf,
+        )
+
+    # 4. Gerar do zero
+    if _GENERATE.search(text):
+        return ImageRequest(
+            intent=ImageIntent.GENERATE,
+            prompt=_clean_prompt(text, mode="generate"),
+            confidence=0.88,
+        )
+
+    # 5. Sinal fraco + sem imagem anexada → provavelmente gerar
+    if not has_attached_images and _WEAK_GENERATE.search(text):
+        return ImageRequest(
+            intent=ImageIntent.GENERATE,
+            prompt=_clean_prompt(text, mode="generate"),
+            confidence=0.65,
+        )
+
+    return ImageRequest(intent=ImageIntent.NONE, prompt="", confidence=0.0)
 
 
-def build_image_prompt(user_text: str) -> str:
-    """Usa o pedido do usuário como prompt; reforça qualidade visual."""
-    base = (user_text or "").strip()
-    # Remove verbos de comando genéricos no início para o prompt ficar descritivo
-    cleaned = re.sub(
-        r"(?i)^(por\s+favor\s+)?(cria|crie|gere|gera|gerar|criar|desenhe|desenha|imagine|imagina|generate|create|draw|make)\s+"
-        r"((uma?|an?)\s+)?(imagem|image|picture|illustration|foto)?\s*(de|do|da|of|with)?\s*",
-        "",
-        base,
-    ).strip()
-    if len(cleaned) < 4:
-        cleaned = base
+def wants_image_generation(user_text: str, has_attached_images: bool = False) -> bool:
+    """Compatibilidade: True se for GENERATE, EDIT ou IMPROVE."""
+    req = detect_image_intent(user_text, has_attached_images)
+    return req.intent in (ImageIntent.GENERATE, ImageIntent.EDIT, ImageIntent.IMPROVE)
+
+
+def build_image_prompt(user_text: str, intent: Optional[ImageIntent] = None) -> str:
+    """Monta o prompt final conforme a intenção."""
+    if intent is None:
+        intent = detect_image_intent(user_text).intent
+
+    cleaned = _clean_prompt(user_text, mode=intent.value if intent != ImageIntent.NONE else "generate")
+
+    if intent == ImageIntent.IMPROVE:
+        return (
+            f"Improve and enhance this image: {cleaned}. "
+            f"Higher resolution, sharper details, better lighting, natural colors, "
+            f"professional quality, no artifacts."
+        )
+
+    if intent == ImageIntent.EDIT:
+        return (
+            f"{cleaned}. "
+            f"Edit the provided image accordingly. Keep the original composition and style "
+            f"unless the user asked to change them. High quality, coherent result."
+        )
+
+    # GENERATE (padrão)
     return (
         f"{cleaned}. High quality, detailed, coherent composition, "
         f"natural lighting, no text overlays unless requested."
     )
+
+
+def _clean_prompt(text: str, mode: str = "generate") -> str:
+    """Remove verbos de comando e deixa o prompt descritivo."""
+    base = (text or "").strip()
+
+    patterns = {
+        "generate": (
+            r"(?i)^(por\s+favor\s+)?"
+            r"(cria|crie|gere|gera|gerar|criar|desenhe|desenha|imagine|imagina|"
+            r"faz|faça|generate|create|draw|make|paint)\s+"
+            r"((uma?|an?)\s+)?"
+            r"(imagem|image|picture|illustration|foto|desenho|arte)?\s*"
+            r"(de|do|da|of|with|showing)?\s*"
+        ),
+        "edit": (
+            r"(?i)^(por\s+favor\s+)?"
+            r"(edita|edite|editar|modifica|modifique|modificar|altera|altere|"
+            r"muda|mude|troca|troque|remove|remova|adiciona|adicione|"
+            r"edit|modify|change|replace|remove|add)\s+"
+            r"((a|essa|desta|nessa|the|this)\s+)?"
+            r"(imagem|image|foto|picture|photo)?\s*"
+            r"(e\s+)?(para\s+)?"
+        ),
+        "improve": (
+            r"(?i)^(por\s+favor\s+)?"
+            r"(melhora|melhore|melhorar|aprimora|aprimore|upscale|enhance|"
+            r"improve|refine)\s+"
+            r"((a|essa|desta|nessa|the|this)\s+)?"
+            r"(imagem|image|foto|picture|photo|qualidade|qualidade da imagem)?\s*"
+        ),
+    }
+
+    pattern = patterns.get(mode, patterns["generate"])
+    cleaned = re.sub(pattern, "", base).strip()
+
+    cleaned = re.sub(
+        r"(?i)^(a|uma|an|the)\s+(imagem|image|foto|picture)\s+(de|of|com|with)\s+",
+        "",
+        cleaned,
+    ).strip()
+
+    if len(cleaned) < 3:
+        cleaned = base
+
+    return cleaned
 
 
 async def generate_image(
@@ -82,7 +260,6 @@ async def generate_image(
 
     model_id = (model or getattr(settings, "IMAGE_GEN_MODEL", None) or DEFAULT_IMAGE_MODEL).strip()
     url = f"{settings.OPENROUTER_BASE_URL}/images"
-    # Alguns deployments usam /images/generations — tentamos o endpoint unificado
     headers = {
         "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -99,7 +276,6 @@ async def generate_image(
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(url, headers=headers, json=payload)
             if r.status_code == 404:
-                # fallback OpenAI-style
                 r = await client.post(
                     f"{settings.OPENROUTER_BASE_URL}/images/generations",
                     headers=headers,
@@ -124,13 +300,11 @@ async def generate_image(
 
     b64 = None
     mime = "image/png"
-    # Formatos possíveis: data[].b64_json | data[].url | images[]
     items = data.get("data") or data.get("images") or []
     if isinstance(items, list) and items:
         item = items[0] if isinstance(items[0], dict) else {}
         b64 = item.get("b64_json") or item.get("b64") or item.get("base64")
         if not b64 and item.get("url") and str(item["url"]).startswith("data:"):
-            # data:image/png;base64,....
             m = re.match(r"data:([^;]+);base64,(.+)", str(item["url"]), re.S)
             if m:
                 mime = m.group(1)

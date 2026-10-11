@@ -8,7 +8,13 @@ from fastapi.responses import StreamingResponse
 from ..core.gama import GamaCore
 from ..llm import llm, LLMClient
 from ..models import ChatRequest
-from ..core.image_gen import wants_image_generation, build_image_prompt, generate_image
+from ..core.image_gen import (
+    wants_image_generation,
+    build_image_prompt,
+    generate_image,
+    detect_image_intent,
+    ImageIntent,
+)
 from ..config import settings as app_settings
 from ..web_search import should_search, search_web
 from ..core.memory import get_store, extract_facts_with_llm, try_forget
@@ -108,10 +114,12 @@ async def chat(
     )
 
     has_imgs = bool(getattr(request, "images", None))
+    image_req = detect_image_intent(last_user, has_attached_images=has_imgs) if last_user else None
     want_image_gen = bool(
         getattr(app_settings, "IMAGE_GEN_ENABLED", True)
         and last_user
-        and wants_image_generation(last_user, has_attached_images=has_imgs)
+        and image_req is not None
+        and image_req.intent in (ImageIntent.GENERATE, ImageIntent.EDIT, ImageIntent.IMPROVE)
     )
 
     # Image Analyzer: faz a leitura visual eficiente antes do modelo principal.
@@ -135,18 +143,60 @@ async def chat(
         try:
             nonlocal image_analysis_context, image_analysis_ok
             # --- fase: geração de imagem (quando o usuário pede para criar/imaginar) ---
-            if want_image_gen:
+                        # --- fase: geração / edição / melhoria de imagem ---
+            if want_image_gen and image_req is not None:
+                intent = image_req.intent
+                phase_label = {
+                    ImageIntent.GENERATE: "generating_image",
+                    ImageIntent.EDIT: "editing_image",
+                    ImageIntent.IMPROVE: "improving_image",
+                }.get(intent, "generating_image")
+
                 yield json.dumps(
-                    {"gama_meta": {"phase": "generating_image"}},
+                    {
+                        "gama_meta": {
+                            "phase": phase_label,
+                            "image_intent": intent.value,
+                        }
+                    },
                     ensure_ascii=False,
                 ) + "\n"
-                prompt = build_image_prompt(last_user)
+
+                # EDIT/IMPROVE sem imagem anexada → avisa e não tenta gerar do zero
+                if intent in (ImageIntent.EDIT, ImageIntent.IMPROVE) and not has_imgs:
+                    msg = (
+                        "Para editar ou melhorar uma imagem, anexe a foto primeiro e depois "
+                        "diga o que quer mudar ou melhorar."
+                        if intent == ImageIntent.EDIT
+                        else
+                        "Para melhorar a qualidade de uma imagem, anexe a foto primeiro e peça "
+                        "para melhorar/upscale."
+                    )
+                    yield json.dumps(
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": msg,
+                            },
+                            "done": False,
+                        },
+                        ensure_ascii=False,
+                    ) + "\n"
+                    yield json.dumps(
+                        {"message": {"role": "assistant", "content": ""}, "done": True},
+                        ensure_ascii=False,
+                    ) + "\n"
+                    return
+
+                prompt = build_image_prompt(last_user, intent=intent)
                 result = await generate_image(prompt)
+
                 if result.get("ok") and result.get("base64"):
                     yield json.dumps(
                         {
                             "gama_meta": {
                                 "phase": "image_ready",
+                                "image_intent": intent.value,
                                 "image": {
                                     "mime": result.get("mime") or "image/png",
                                     "data": result["base64"],
@@ -157,16 +207,29 @@ async def chat(
                         },
                         ensure_ascii=False,
                     ) + "\n"
-                    # legenda curta via modelo de texto
+
+                    # Legenda adaptada à intenção
+                    if intent == ImageIntent.EDIT:
+                        caption_system = (
+                            "Você é a Gamma. O usuário pediu uma edição de imagem e ela já foi feita. "
+                            "Responda em 1-3 frases em português, confirmando a alteração, "
+                            "sem markdown de imagem e sem pedir desculpas. Seja natural."
+                        )
+                    elif intent == ImageIntent.IMPROVE:
+                        caption_system = (
+                            "Você é a Gamma. O usuário pediu para melhorar a qualidade de uma imagem "
+                            "e ela já foi aprimorada. Responda em 1-3 frases em português, "
+                            "confirmando a melhoria, sem markdown de imagem. Seja natural."
+                        )
+                    else:
+                        caption_system = (
+                            "Você é a Gamma. O usuário pediu uma imagem e ela já foi gerada. "
+                            "Responda em 1-3 frases em português, confirmando o que foi criado, "
+                            "sem markdown de imagem e sem pedir desculpas. Seja natural."
+                        )
+
                     caption_messages = [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Você é a Gamma. O usuário pediu uma imagem e ela já foi gerada. "
-                                "Responda em 1-3 frases em português, confirmando o que foi criado, "
-                                "sem markdown de imagem e sem pedir desculpas. Seja natural."
-                            ),
-                        },
+                        {"role": "system", "content": caption_system},
                         {"role": "user", "content": last_user},
                     ]
                     async for chunk in llm.stream_chat(model=model, messages=caption_messages):
@@ -178,19 +241,18 @@ async def chat(
                         {
                             "gama_meta": {
                                 "phase": "image_failed",
+                                "image_intent": intent.value,
                                 "error": err,
                             }
                         },
                         ensure_ascii=False,
                     ) + "\n"
-                    # continua o chat normal com aviso no system
-                    # avisa no fluxo via token sintético
                     yield json.dumps(
                         {
                             "message": {
                                 "role": "assistant",
                                 "content": (
-                                    f"Não consegui gerar a imagem agora ({err}). "
+                                    f"Não consegui processar a imagem agora ({err}). "
                                     "Pode tentar de novo com uma descrição um pouco diferente?"
                                 ),
                             },
