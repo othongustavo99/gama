@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 GITHUB_API = "https://api.github.com"
 DEFAULT_TIMEOUT = 30.0
+MAX_TREE_ENTRIES = 25_000  # proteção contra repos gigantes
 
 # Prefixo comuns em projetos Flutter / Python / Node — usados quando a tree API falha
 _COMMON_PREFIXES = (
@@ -59,8 +60,8 @@ async def get_repo_default_branch(owner: str, repo: str) -> str:
         r = await client.get(url)
         if r.status_code == 404:
             raise ValueError(f"Repositório não encontrado: {owner}/{repo}")
-        if r.status_code == 403:
-            logger.warning("get_repo_default_branch 403 — assumindo main")
+        if r.status_code in (403, 429):
+            logger.warning("get_repo_default_branch %s — assumindo main", r.status_code)
             return "main"
         r.raise_for_status()
         data = r.json()
@@ -72,29 +73,36 @@ async def get_tree(
 ) -> tuple[str, list[dict[str, Any]]]:
     """Retorna (tree_sha, lista de {path, sha, size, type}).
 
-    Em 403 rate limit, levanta httpx.HTTPStatusError para o caller fazer fallback.
+    Em 403/429 rate limit, levanta httpx.HTTPStatusError para o caller fazer fallback.
     """
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=_headers()) as client:
+        # tenta a branch pedida; se 404 tenta default
         ref_url = f"{GITHUB_API}/repos/{owner}/{repo}/git/ref/heads/{branch}"
         r = await client.get(ref_url)
         if r.status_code == 404:
             branch = await get_repo_default_branch(owner, repo)
             ref_url = f"{GITHUB_API}/repos/{owner}/{repo}/git/ref/heads/{branch}"
             r = await client.get(ref_url)
+        if r.status_code in (403, 429):
+            r.raise_for_status()  # deixa o caller cair no raw-only
         r.raise_for_status()
         commit_sha = r.json()["object"]["sha"]
 
         commit_url = f"{GITHUB_API}/repos/{owner}/{repo}/git/commits/{commit_sha}"
         rc = await client.get(commit_url)
+        if rc.status_code in (403, 429):
+            rc.raise_for_status()
         rc.raise_for_status()
         tree_sha = rc.json()["tree"]["sha"]
 
         tree_url = f"{GITHUB_API}/repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1"
         rt = await client.get(tree_url)
+        if rt.status_code in (403, 429):
+            rt.raise_for_status()
         rt.raise_for_status()
         tree = rt.json()
         entries = []
-        for item in tree.get("tree") or []:
+        for item in (tree.get("tree") or [])[:MAX_TREE_ENTRIES]:
             if item.get("type") != "blob":
                 continue
             entries.append(
@@ -152,7 +160,7 @@ async def fetch_file_content_api(
     params = {"ref": ref}
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=_headers()) as client:
         r = await client.get(url, params=params)
-        if r.status_code in (404, 403):
+        if r.status_code in (404, 403, 429):
             return ""
         if r.status_code != 200:
             return ""
@@ -222,7 +230,7 @@ async def fetch_file_with_path_guess(
         for prefix in _COMMON_PREFIXES:
             candidates.append(f"{prefix}{name_or_path}")
 
-    # dedupe
+    # dedupe preservando ordem
     seen: set[str] = set()
     ordered: list[str] = []
     for c in candidates:

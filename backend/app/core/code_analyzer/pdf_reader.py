@@ -9,9 +9,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+MAX_CHARS_PER_PAGE = 50_000
+
 _CODE_HINT = re.compile(
     r"(?:def |class |function |import |package |void |public |private |fn |func |"
-    r"\{\s*$|;\s*$|=>|:=|#include|console\.|print\()",
+    r"\{\s*$|;\s*$|=>|:=|#include|console\.|print\(|"
+    r"@override|Widget |Future<|async |await |return |"
+    r"from \w+ import|require\(|module\.exports|"
+    r"public class |interface |enum |struct |type )",
     re.M,
 )
 
@@ -22,7 +27,18 @@ def extract_pages(pdf_bytes: bytes, *, max_pages: int = 200) -> list[dict[str, A
     except ImportError as e:
         raise RuntimeError("pypdf não instalado") from e
 
-    reader = PdfReader(io.BytesIO(pdf_bytes))
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+    except Exception as e:
+        raise ValueError(f"PDF inválido ou corrompido: {e}") from e
+
+    if getattr(reader, "is_encrypted", False):
+        try:
+            # tenta senha vazia (comum em PDFs “protegidos” só contra edição)
+            reader.decrypt("")
+        except Exception:
+            raise ValueError("PDF criptografado; não é possível extrair texto")
+
     pages: list[dict[str, Any]] = []
     for i, page in enumerate(reader.pages[:max_pages]):
         try:
@@ -32,8 +48,19 @@ def extract_pages(pdf_bytes: bytes, *, max_pages: int = 200) -> list[dict[str, A
         text = text.strip()
         if not text:
             continue
-        has_code = bool(_CODE_HINT.search(text)) or text.count("\n") > 8 and (
-            "{" in text or ";" in text or "def " in text or "class " in text
+        if len(text) > MAX_CHARS_PER_PAGE:
+            text = text[:MAX_CHARS_PER_PAGE] + " …"
+
+        has_code = bool(_CODE_HINT.search(text)) or (
+            text.count("\n") > 8
+            and (
+                "{" in text
+                or ";" in text
+                or "def " in text
+                or "class " in text
+                or "function " in text
+                or "import " in text
+            )
         )
         pages.append(
             {

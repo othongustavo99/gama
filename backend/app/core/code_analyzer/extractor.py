@@ -21,6 +21,24 @@ MAX_ZIP_BYTES = 100 * 1024 * 1024  # 100 MiB
 MAX_FILES = 30_000
 MAX_SINGLE_FILE = 25 * 1024 * 1024  # evita arquivos binários enormes
 MAX_TOTAL_UNCOMPRESSED = 1024 * 1024 * 1024  # proteção contra ZIP bombs
+MAX_COMPRESSION_RATIO = 200  # proteção extra contra ZIP bombs extremos
+MAX_PATH_DEPTH = 40
+
+
+def _decode_zip_filename(info: zipfile.ZipInfo) -> str:
+    """Decodifica nome de arquivo do ZIP respeitando a flag UTF-8 (bit 11)."""
+    raw = info.filename
+    # Flag 0x800 = UTF-8
+    if info.flag_bits & 0x800:
+        try:
+            return raw.encode("cp437").decode("utf-8")
+        except Exception:
+            pass
+    # fallback clássico
+    try:
+        return raw.encode("cp437").decode("utf-8")
+    except Exception:
+        return raw
 
 
 def safe_extract(zip_bytes: bytes, dest: Path) -> int:
@@ -51,10 +69,19 @@ def safe_extract(zip_bytes: bytes, dest: Path) -> int:
                     f"O ZIP contém mais de {MAX_FILES} arquivos extraíveis; remova caches e dependências geradas"
                 )
 
-            normalized = info.filename.replace("\\", "/")
+            # Nome com encoding correto
+            try:
+                normalized = _decode_zip_filename(info).replace("\\", "/")
+            except Exception:
+                normalized = info.filename.replace("\\", "/")
+
             rel = PurePosixPath(normalized)
             if rel.is_absolute() or not rel.parts or any(part in ("..", "") for part in rel.parts):
                 logger.warning("ZIP: caminho inseguro ignorado: %r", info.filename)
+                continue
+
+            if len(rel.parts) > MAX_PATH_DEPTH:
+                logger.warning("ZIP: profundidade excessiva ignorada: %s", rel)
                 continue
 
             # Ignora dependências, caches e artefatos que não ajudam a revisar
@@ -69,14 +96,29 @@ def safe_extract(zip_bytes: bytes, dest: Path) -> int:
             unix_mode = (info.external_attr >> 16) & 0o170000
             if unix_mode == 0o120000:
                 continue
-            if info.file_size > MAX_SINGLE_FILE:
-                logger.warning("ZIP: arquivo individual grande ignorado (%s bytes): %s", info.file_size, rel)
+
+            file_size = info.file_size
+            if file_size > MAX_SINGLE_FILE:
+                logger.warning("ZIP: arquivo individual grande ignorado (%s bytes): %s", file_size, rel)
                 continue
-            total_uncompressed += info.file_size
+
+            # Proteção contra ZIP bomb (ratio)
+            if info.compress_size > 0 and file_size / max(info.compress_size, 1) > MAX_COMPRESSION_RATIO:
+                logger.warning("ZIP: ratio de compressão suspeito ignorado: %s", rel)
+                continue
+
+            total_uncompressed += file_size
             if total_uncompressed > MAX_TOTAL_UNCOMPRESSED:
                 raise ValueError("O conteúdo descompactado excede 1 GiB; ZIP recusado por segurança")
 
             target = dest.joinpath(*rel.parts)
+            # Garante que o target final fica dentro de dest (proteção extra)
+            try:
+                target.resolve().relative_to(dest.resolve())
+            except ValueError:
+                logger.warning("ZIP: path traversal detectado após resolve: %s", rel)
+                continue
+
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 with zf.open(info) as source, target.open("wb") as output:

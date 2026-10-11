@@ -75,7 +75,9 @@ def _html_to_text(raw: str) -> str:
     text = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", raw)
     text = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", text)
     text = re.sub(r"(?is)<!--.*?-->", " ", text)
+    text = re.sub(r"(?is)<noscript[^>]*>.*?</noscript>", " ", text)
     text = re.sub(r"(?is)<[^>]+>", " ", text)
+    text = re.sub(r"&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -115,9 +117,13 @@ async def fetch_url_text(url: str, max_chars: int = 24_000) -> Tuple[str, str]:
                         return name, raw
                     if isinstance(data, list):
                         lines = [f"Conteúdo do diretório ({url}):"]
-                        for item in data[:80]:
+                        for item in data[:100]:  # um pouco mais generoso
                             if isinstance(item, dict):
-                                lines.append(f"- {item.get('type', '?')}: {item.get('path') or item.get('name')}")
+                                t = item.get("type", "?")
+                                p = item.get("path") or item.get("name")
+                                size = item.get("size")
+                                extra = f" ({size} bytes)" if size is not None and t == "file" else ""
+                                lines.append(f"- {t}: {p}{extra}")
                         return urlparse(url).path or url, "\n".join(lines)
                     if isinstance(data, dict) and "full_name" in data:
                         return data.get("full_name", url), (
@@ -136,7 +142,11 @@ async def fetch_url_text(url: str, max_chars: int = 24_000) -> Tuple[str, str]:
                 if tm:
                     title = re.sub(r"\s+", " ", tm.group(1)).strip()
 
-                is_html = "html" in ctype or raw.lstrip().lower().startswith("<!doctype") or "<html" in raw[:200].lower()
+                is_html = (
+                    "html" in ctype
+                    or raw.lstrip().lower().startswith("<!doctype")
+                    or "<html" in raw[:200].lower()
+                )
                 text = _html_to_text(raw) if is_html else raw
 
                 if len(text) > max_chars:
