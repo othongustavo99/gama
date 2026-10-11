@@ -1,7 +1,7 @@
 from typing import List, Dict, Optional, Tuple, Any
 import logging
 
-from .context import ContextManager
+from .context import ContextManager, SummaryStore, _text_of
 from .memory import get_store, try_extract_memories
 from .url_fetch import build_url_context
 from .code_analyzer import build_query_context, detect_and_prepare
@@ -85,7 +85,7 @@ class GamaCore:
         if messages:
             last = messages[-1]
             if last.get("role") == "user":
-                last_user = last.get("content") or ""
+                last_user = _text_of(last.get("content"))
 
         # ── Sessão desta conversa (projeto, links, arquivos, ações) ──
         skey = session_key(user_id, conversation_id, messages)
@@ -132,10 +132,16 @@ class GamaCore:
                     sources = []
             web_block = _format_results(sources, query)
 
+        # Memória v2: bloco CORE estável no system prompt (bom para cache) e fatos
+        # RELEVANTES à pergunta logo antes dela — sem duplicar o mesmo texto 2x.
         try:
-            memory_block = store.as_prompt_block()
-        except Exception:
-            memory_block = ""
+            memory_block = store.core_block()
+            relevant_block, relevant_ids = store.relevant_block(last_user)
+            if relevant_ids:
+                store.mark_used(relevant_ids)
+        except Exception as e:
+            logger.warning("memory block: %s", e)
+            memory_block, relevant_block = "", ""
 
         mode = (chat_mode or "").strip().lower()
         conversational_mode = mode in {"conversar", "conversation", "conversational"} or (
@@ -176,12 +182,16 @@ class GamaCore:
             talk_mode=talk_mode,
         )
 
-        # Resume localmente: chamar o modelo de novo aqui pode bloquear o turno por até 60 s.
+        # Resumo persistente da conversa (atualizado em background após cada resposta longa).
         try:
-            context = await self.context_manager.prepare(messages)
+            summary_state = SummaryStore(user_id).get(conversation_id)
+            context, _ctx_info = self.context_manager.prepare_with_summary(messages, summary_state)
         except Exception as e:
             logger.warning("context: %s", e)
-            context = messages[-16:]
+            context = [
+                {"role": m.get("role", "user"), "content": _text_of(m.get("content"))}
+                for m in messages[-16:]
+            ]
 
         url_block = ""
         # Se for GitHub de código, o Code Analyzer cuida — evita duplicar fetch genérico
@@ -236,8 +246,8 @@ class GamaCore:
 
         # Memória também logo ANTES da última mensagem do usuário: modelos pequenos
         # dão mais peso ao que está perto da pergunta do que ao fim de um system longo.
-        if memory_block:
-            reminder = {"role": "system", "content": memory_block}
+        if relevant_block:
+            reminder = {"role": "system", "content": relevant_block}
             idx = None
             for i in range(len(prepared) - 1, -1, -1):
                 if prepared[i].get("role") == "user":

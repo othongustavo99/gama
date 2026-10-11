@@ -70,9 +70,6 @@ class Settings:
         if m.strip()
     ]
 
-    if PROVIDER == "openrouter" and not OPENROUTER_API_KEY:
-        pass
-
     DATA_DIR = os.getenv("DATA_DIR", "/data")
     APP_URL = os.getenv("APP_URL", "")
     APP_NAME = os.getenv("APP_NAME", "Frequencia40-Gamma")
@@ -96,6 +93,32 @@ class Settings:
 
     # Limite de tokens de SAÍDA (evita OpenRouter 402 reservando 65k)
     MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
+
+    # ── LLM ───────────────────────────────────────────────────────────
+    TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.6"))
+    LLM_RETRIES = max(0, min(int(os.getenv("LLM_RETRIES", "3")), 6))
+
+    # ── Agente com ferramentas (o MODELO decide quando buscar na web etc.) ──
+    # Só vale para OpenRouter. Se o modelo não suportar tools, cai no modo antigo.
+    AGENT_TOOLS_ENABLED = env_bool("AGENT_TOOLS_ENABLED", True)
+    MAX_TOOL_ROUNDS = max(1, min(int(os.getenv("MAX_TOOL_ROUNDS", "4")), 8))
+    MAX_TOOL_CALLS = max(1, min(int(os.getenv("MAX_TOOL_CALLS", "6")), 20))
+
+    # ── Segurança ─────────────────────────────────────────────────────
+    # Chave do app (enviada em X-API-Key). Sem ela configurada, a API fica aberta
+    # (compatibilidade) e um aviso aparece no log. Em produção: defina SEMPRE.
+    GAMA_API_KEY = os.getenv("GAMA_API_KEY", "").strip()
+    REQUIRE_API_KEY = env_bool("GAMA_REQUIRE_API_KEY", False)
+    CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+    RATE_LIMIT_CHAT_PER_MIN = int(os.getenv("RATE_LIMIT_CHAT_PER_MIN", "20"))
+    RATE_LIMIT_DEFAULT_PER_MIN = int(os.getenv("RATE_LIMIT_DEFAULT_PER_MIN", "120"))
+    # Quantos proxies confiáveis existem na frente (Railway/Render = 1).
+    TRUSTED_PROXY_HOPS = max(0, int(os.getenv("TRUSTED_PROXY_HOPS", "1")))
+    MAX_BODY_MB = int(os.getenv("MAX_BODY_MB", "60"))
+    MAX_CHAT_MESSAGES = int(os.getenv("MAX_CHAT_MESSAGES", "120"))
+    MAX_IMAGES = int(os.getenv("MAX_IMAGES", "4"))
+    MAX_IMAGE_B64_CHARS = int(os.getenv("MAX_IMAGE_B64_CHARS", str(14_000_000)))
+    HEALTH_CACHE_SECONDS = int(os.getenv("HEALTH_CACHE_SECONDS", "30"))
 
     @property
     def default_model(self) -> str:

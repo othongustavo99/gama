@@ -2,7 +2,7 @@ import json
 import logging
 import re
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..core.gama import GamaCore
@@ -11,7 +11,11 @@ from ..models import ChatRequest
 from ..core.image_gen import wants_image_generation, build_image_prompt, generate_image
 from ..config import settings as app_settings
 from ..web_search import should_search, search_web
-from ..core.memory import get_store, extract_facts_with_llm
+from ..core.memory import get_store, extract_facts_with_llm, try_forget
+from ..core.agent import ToolsUnsupported, run_agent
+from ..core.context import schedule_summary_refresh
+from ..core.url_fetch import extract_urls
+from ..llm import LLMError
 from ..core.image_analyzer import analyze_images
 from ..core.code_analyzer.pipeline import build_query_context_async
 
@@ -67,6 +71,16 @@ async def chat(
       2) gama_meta.phase = thinking + sources
       3) tokens da resposta
     """
+    if not request.messages:
+        raise HTTPException(422, "messages vazio")
+    if len(request.messages) > app_settings.MAX_CHAT_MESSAGES:
+        raise HTTPException(413, f"Histórico acima de {app_settings.MAX_CHAT_MESSAGES} mensagens")
+    if request.images:
+        if len(request.images) > app_settings.MAX_IMAGES:
+            raise HTTPException(413, f"Máximo de {app_settings.MAX_IMAGES} imagens por mensagem")
+        if any(len(i.data or "") > app_settings.MAX_IMAGE_B64_CHARS for i in request.images):
+            raise HTTPException(413, "Imagem grande demais")
+
     messages = [
         {"role": m.role, "content": m.content} for m in request.messages
     ]
@@ -82,7 +96,9 @@ async def chat(
         else:
             last_user = str(_c)
 
-    will_search = bool(last_user and should_search(last_user))
+    # Agente: o modelo decide quando pesquisar (tool calling). Só com OpenRouter.
+    use_agent = bool(app_settings.AGENT_TOOLS_ENABLED and llm.provider == "openrouter")
+    will_search = bool(last_user and not use_agent and should_search(last_user))
 
     # ZIPs são indexados no momento do anexo; ler o conteúdo para o modelo é
     # deliberadamente sob demanda. Conversa comum não chama o analisador.
@@ -247,6 +263,18 @@ async def chat(
                     ensure_ascii=False,
                 ) + "\n"
 
+            # --- pedido para esquecer algo ---
+            forgotten: list[str] = []
+            try:
+                _uid_forget = (x_user_id or request.user_id or "default").strip() or "default"
+                _target = try_forget(last_user) if last_user else None
+                if _target:
+                    forgotten = [f["text"] for f in get_store(_uid_forget).forget(_target)]
+                    if forgotten:
+                        yield json.dumps({"gama_meta": {"memory_forgotten": forgotten}}, ensure_ascii=False) + "\n"
+            except Exception as forget_err:
+                logger.warning("forget: %s", forget_err)
+
             # --- monta contexto ---
             try:
                 uid = (x_user_id or request.user_id or "default").strip() or "default"
@@ -255,6 +283,7 @@ async def chat(
                     model=model,
                     ollama_client=llm,
                     prefetched_sources=sources if will_search else None,
+                    enable_web_search=not use_agent,
                     prefetched_query=search_query,
                     user_id=uid,
                     auto_memory=getattr(request, "auto_memory", True),
@@ -334,6 +363,13 @@ async def chat(
                     }
                 )
 
+            if forgotten:
+                gama_messages.append({
+                    "role": "system",
+                    "content": "O sistema APAGOU da memória: " + "; ".join(forgotten) +
+                               ". Confirme em uma frase curta e não use mais esses fatos.",
+                })
+
             if fact_saved:
                 yield json.dumps(
                     {"gama_meta": {"memory_saved": fact_saved}},
@@ -353,10 +389,11 @@ async def chat(
                 ) + "\n"
 
             # --- tokens ---
-            yield json.dumps(
-                {"gama_meta": {"phase": "typing"}},
-                ensure_ascii=False,
-            ) + "\n"
+            if not use_agent:
+                yield json.dumps(
+                    {"gama_meta": {"phase": "typing"}},
+                    ensure_ascii=False,
+                ) + "\n"
 
             img_payload = None
             if getattr(request, "images", None) and not image_analysis_ok:
@@ -410,20 +447,78 @@ async def chat(
                 ) + "\n"
 
             assistant_acc: list[str] = []
-            async for chunk in llm.stream_chat(
-                model=active_model,
-                messages=gama_messages,
-            ):
+
+            def _tok(text: str) -> str:
+                return json.dumps(
+                    {"message": {"role": "assistant", "content": text}, "done": False},
+                    ensure_ascii=False,
+                ) + "\n"
+
+            agent_done = False
+            if use_agent:
+                _typing_sent = False
+                _uid_agent = (x_user_id or request.user_id or "default").strip() or "default"
                 try:
-                    line = chunk.strip()
-                    if line:
-                        obj = json.loads(line)
-                        c = ((obj.get("message") or {}).get("content")) or ""
-                        if c:
-                            assistant_acc.append(c)
-                except Exception:
-                    pass
-                yield chunk
+                    async for ev in run_agent(
+                        llm,
+                        active_model,
+                        gama_messages,
+                        user_id=_uid_agent,
+                        user_text=last_user,
+                        web_enabled=bool(app_settings.WEB_SEARCH_ENABLED),
+                        user_urls=extract_urls(" ".join(_message_text(m.get("content")) for m in messages)),
+                    ):
+                        kind = ev["type"]
+                        if kind == "token":
+                            if not _typing_sent:
+                                _typing_sent = True
+                                yield json.dumps({"gama_meta": {"phase": "typing"}}, ensure_ascii=False) + "\n"
+                            assistant_acc.append(ev["text"])
+                            yield _tok(ev["text"])
+                        elif kind == "phase":
+                            _typing_sent = False if ev["phase"] != "typing" else _typing_sent
+                            meta = {"phase": ev["phase"]}
+                            if ev.get("query"):
+                                meta["web_search"] = ev["query"]
+                            yield json.dumps({"gama_meta": meta}, ensure_ascii=False) + "\n"
+                        elif kind == "sources":
+                            sources = ev["sources"]
+                            search_query = ev.get("query")
+                            yield json.dumps(
+                                {"gama_meta": {"phase": "thinking", "web_search": search_query, "sources": sources}},
+                                ensure_ascii=False,
+                            ) + "\n"
+                        elif kind == "memory_saved":
+                            yield json.dumps({"gama_meta": {"memory_saved": ev["text"]}}, ensure_ascii=False) + "\n"
+                        elif kind == "memory_forgotten":
+                            yield json.dumps({"gama_meta": {"memory_forgotten": ev["items"]}}, ensure_ascii=False) + "\n"
+                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
+                    agent_done = True
+                except ToolsUnsupported:
+                    logger.warning("modelo %s sem tool calling; usando fluxo clássico", active_model)
+                    if last_user and should_search(last_user):
+                        try:
+                            _srcs = await search_web(last_user.strip()[:200], max_results=5)
+                            from ..web_search import _format_results
+                            gama_messages.insert(1, {"role": "system", "content": _format_results(_srcs, last_user[:200])})
+                        except Exception as _e:
+                            logger.warning("fallback search: %s", _e)
+
+            if not agent_done:
+                async for chunk in llm.stream_chat(
+                    model=active_model,
+                    messages=gama_messages,
+                ):
+                    try:
+                        line = chunk.strip()
+                        if line:
+                            obj = json.loads(line)
+                            c = ((obj.get("message") or {}).get("content")) or ""
+                            if c:
+                                assistant_acc.append(c)
+                    except Exception:
+                        pass
+                    yield chunk
 
 
             # ── ZIP automático a partir de [[GAMA_FILES]] ──
@@ -472,15 +567,29 @@ async def chat(
                 except Exception as mem_err:
                     logger.warning("auto memory: %s", mem_err)
 
+            # Resumo rolante da conversa (não bloqueia; só roda se o histórico for longo)
+            try:
+                schedule_summary_refresh(
+                    llm,
+                    model,
+                    messages,
+                    user_id=(x_user_id or getattr(request, "user_id", None) or "default"),
+                    conversation_id=getattr(request, "conversation_id", None),
+                )
+            except Exception as sum_err:
+                logger.warning("summary schedule: %s", sum_err)
+
         except Exception as e:
             logger.exception("chat stream: %s", e)
+            public = (
+                e.public_message
+                if isinstance(e, LLMError)
+                else "Não consegui completar a resposta agora. Tente de novo em instantes."
+            )
             yield json.dumps(
                 {
-                    "error": str(e),
-                    "message": {
-                        "role": "assistant",
-                        "content": f"Não consegui completar a resposta ({e}).",
-                    },
+                    "error": public,
+                    "message": {"role": "assistant", "content": public},
                     "done": True,
                 },
                 ensure_ascii=False,
