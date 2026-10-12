@@ -1,6 +1,8 @@
 """Regressões para as correções de ZIP, edição de arquivos e materialização GitHub."""
 
 import asyncio
+import importlib
+import importlib.util
 import io
 import os
 import shutil
@@ -260,6 +262,21 @@ class GitHubRawFallbackTests(unittest.TestCase):
                     os.environ[k] = v
         self.assertEqual(result, "")
         self.assertFalse(any(isinstance(c, tuple) for c in calls))
+
+
+class RouteImportTests(unittest.TestCase):
+    """Garante que os módulos de rota carregam (um NameError no import derruba o app inteiro)."""
+
+    @unittest.skipUnless(importlib.util.find_spec("fastapi"), "fastapi não instalado")
+    def test_route_modules_import(self):
+        for mod in (
+            "app.routes.artifacts",
+            "app.routes.project",
+            "app.routes.extract",
+            "app.routes._upload",
+        ):
+            with self.subTest(module=mod):
+                importlib.import_module(mod)
 
 
 if __name__ == "__main__":
