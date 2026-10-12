@@ -27,7 +27,9 @@ from fastapi import Header, HTTPException
 logger = logging.getLogger(__name__)
 
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
-USER_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+# IDs de conta podem incluir e-mail normalizado pelo app (google_email_nome@dominio).
+# O valor continua limitado a caracteres seguros e não é usado como caminho de arquivo.
+USER_ID_RE = re.compile(r"^[A-Za-z0-9_.@\-]{1,128}$")
 _TOKEN_TTL_SEC = 300
 _token_cache: dict[str, tuple[float, str]] = {}
 _warned_legacy = False

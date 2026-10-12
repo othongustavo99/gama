@@ -106,6 +106,21 @@ class DownloadService {
       }
       if (await file.exists()) await file.delete();
       await partial.rename(file.path);
+    } on DioException catch (e) {
+      if (await partial.exists()) await partial.delete();
+      // Mostra a mensagem real da API (por exemplo, identidade inválida),
+      // em vez de deixar o usuário apenas com o status HTTP 400.
+      final body = e.response?.data;
+      String detail = '';
+      if (body is Map) {
+        detail = (body['detail'] ?? body['message'] ?? '').toString();
+      } else if (body is String) {
+        detail = body.trim();
+      }
+      if (detail.isNotEmpty) {
+        throw Exception('Falha ao baixar arquivo (HTTP ${e.response?.statusCode}): $detail');
+      }
+      rethrow;
     } catch (_) {
       if (await partial.exists()) await partial.delete();
       rethrow;
