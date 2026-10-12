@@ -157,6 +157,17 @@ async def ingest_github(
     Se a API retornar 403 (rate limit), cria projeto em modo *raw-only*:
     arquivos são buscados via raw.githubusercontent.com / jsDelivr (sem rate limit).
     """
+    # These values come from a URL or directly from the API request. Validate
+    # them before constructing GitHub URLs or filesystem cache paths.
+    slug_pattern = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+    if (
+        not slug_pattern.fullmatch(owner or "")
+        or not slug_pattern.fullmatch(repo or "")
+        or owner in {".", ".."}
+        or repo in {".", ".."}
+    ):
+        raise ValueError("Owner ou nome do repositório GitHub inválido")
+
     cleanup_old()
     path_prefix = (path_prefix or "").replace("\\", "/").strip(" /")
     if any(part in {".", ".."} for part in path_prefix.split("/") if part):

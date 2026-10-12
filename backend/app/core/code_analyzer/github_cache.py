@@ -87,7 +87,15 @@ def publish(tmp_dir: Path, final_dir: Path, manifest: dict) -> Path:
 
 
 def new_tmp_dir(owner: str, repo: str) -> Path:
+    # Defense in depth: callers must not be able to introduce separators or
+    # traversal segments into the cache's temporary directory name.
+    if not _OWNER_REPO_RE.fullmatch(owner or "") or not _OWNER_REPO_RE.fullmatch(repo or ""):
+        raise ValueError("owner/repo inválidos")
     d = cache_root() / ".tmp" / f"{owner}__{repo}-{uuid.uuid4().hex[:12]}"
+    try:
+        d.resolve().relative_to(cache_root().resolve())
+    except ValueError as exc:
+        raise ValueError("diretório temporário fora do cache") from exc
     d.mkdir(parents=True, exist_ok=True)
     return d
 
