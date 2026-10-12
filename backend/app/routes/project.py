@@ -44,6 +44,7 @@ class GitHubIngestRequest(BaseModel):
     owner: Optional[str] = None
     repo: Optional[str] = None
     branch: Optional[str] = "main"
+    path: Optional[str] = None
 
 
 @router.post("/ingest")
@@ -75,23 +76,33 @@ async def project_ingest_github(
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
 ):
     owner, repo, branch = body.owner, body.repo, body.branch or "main"
+    path_prefix = body.path or ""
+    linked_path = ""
     if body.url:
         gh = parse_github_url(body.url)
         if not gh:
             raise HTTPException(400, "URL GitHub inválida")
         owner, repo, branch = gh["owner"], gh["repo"], gh.get("branch") or branch
+        if gh.get("object_type") == "tree":
+            path_prefix = gh.get("path") or path_prefix
+        elif gh.get("object_type") == "blob":
+            linked_path = gh.get("path") or ""
     if not owner or not repo:
         raise HTTPException(400, "Informe url ou owner/repo")
     try:
         summary = await ingest_github(
-            owner, repo, branch=branch, user_id=(x_user_id or "default").strip()
+            owner,
+            repo,
+            branch=branch,
+            path_prefix=path_prefix,
+            user_id=(x_user_id or "default").strip(),
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
         logger.exception("github ingest failed")
         raise HTTPException(500, f"Falha ao indexar GitHub: {e}") from e
-    return {"ok": True, **summary}
+    return {"ok": True, **summary, "linked_path": linked_path}
 
 
 @router.post("/ingest/pdf")

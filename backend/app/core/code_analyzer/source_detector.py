@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import re
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlsplit
 
-_GITHUB_RE = re.compile(
-    r"https?://(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?(?:/tree/([A-Za-z0-9_.\-/]+))?(?:/|$|\s|#|\?)",
+_GITHUB_URL_RE = re.compile(
+    r"https?://(?:www\.)?(?:github\.com|raw\.githubusercontent\.com)/[^\s<>\"'`]+",
     re.I,
 )
 _PROJECT_ID_RE = re.compile(r"\[project_id:([a-zA-Z0-9_\-]{6,32})\]")
@@ -20,21 +20,50 @@ _INLINE_CODE_HINT = re.compile(
 
 
 def parse_github_url(text: str) -> Optional[dict[str, str]]:
-    m = _GITHUB_RE.search(text or "")
-    if not m:
-        return None
-    owner, repo, branch_path = m.group(1), m.group(2), m.group(3)
-    branch = "main"
-    if branch_path:
-        # /tree/main/lib/... → branch=main
-        parts = branch_path.strip("/").split("/")
-        branch = parts[0] if parts else "main"
-    return {
-        "owner": owner,
-        "repo": repo.rstrip(".git"),
-        "branch": branch,
-        "url": f"https://github.com/{owner}/{repo}",
-    }
+    """Parse repository, ref, and optional file/directory from GitHub URLs.
+
+    Supported forms include repository roots, ``/tree/<ref>/<path>``,
+    ``/blob/<ref>/<path>``, and ``raw.githubusercontent.com`` links. A slash
+    inside a ref is unambiguous when URL-encoded (``feature%2Fbranch``).
+    """
+    for match in _GITHUB_URL_RE.finditer(text or ""):
+        raw_url = match.group(0).rstrip(".,;!?:)]}")
+        parsed = urlsplit(raw_url)
+        parts = [unquote(part) for part in parsed.path.split("/") if part]
+        if parsed.hostname and parsed.hostname.lower() == "raw.githubusercontent.com":
+            if len(parts) < 4:
+                continue
+            owner, repo, branch = parts[:3]
+            path = "/".join(parts[3:])
+            object_type = "blob"
+        else:
+            if len(parts) < 2:
+                continue
+            owner, repo = parts[:2]
+            object_type = "repository"
+            branch = "main"
+            path = ""
+            if len(parts) >= 4 and parts[2].lower() in {"tree", "blob"}:
+                object_type = parts[2].lower()
+                branch = parts[3]
+                path = "/".join(parts[4:])
+            elif len(parts) >= 4 and parts[2].lower() == "commit":
+                object_type = "commit"
+                branch = parts[3]
+
+        if repo.lower().endswith(".git"):
+            repo = repo[:-4]
+        if not owner or not repo:
+            continue
+        return {
+            "owner": owner,
+            "repo": repo,
+            "branch": branch,
+            "path": path,
+            "object_type": object_type,
+            "url": f"https://github.com/{owner}/{repo}",
+        }
+    return None
 
 
 def extract_project_id(text: str) -> Optional[str]:

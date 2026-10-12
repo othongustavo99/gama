@@ -6,9 +6,12 @@ Fontes: zip | github | pdf | direct
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Optional
+
+import httpx
 
 from .code_search import search_files, extract_mentioned_filenames, find_matching_paths
 from .context_builder import build_context
@@ -139,27 +142,45 @@ async def ingest_github(
     repo: str,
     *,
     branch: str = "main",
+    path_prefix: str = "",
     user_id: str = "default",
 ) -> dict[str, Any]:
-    """Indexa árvore do GitHub sem baixar o repo inteiro. Arquivos sob demanda.
+    """Indexa a árvore GitHub e baixa blobs relevantes somente sob demanda.
 
     Se a API retornar 403 (rate limit), cria projeto em modo *raw-only*:
     arquivos são buscados via raw.githubusercontent.com / jsDelivr (sem rate limit).
     """
     cleanup_old()
+    path_prefix = (path_prefix or "").replace("\\", "/").strip(" /")
+    if any(part in {".", ".."} for part in path_prefix.split("/") if part):
+        raise ValueError("Caminho GitHub inválido")
     tree_sha = "raw"
     entries: list[dict[str, Any]] = []
     raw_only = False
+    tree_partial = False
 
     try:
-        tree_sha, entries = await get_tree(owner, repo, branch)
-        cached = find_github_cache(owner, repo, branch, tree_sha)
+        tree_sha, entries, branch, tree_partial = await get_tree(owner, repo, branch)
+        if path_prefix:
+            entries = [
+                item for item in entries
+                if item["path"] == path_prefix or item["path"].startswith(path_prefix + "/")
+            ]
+            if not entries:
+                raise ValueError(f"Caminho '{path_prefix}' não encontrado em {owner}/{repo}@{branch}")
+        cached = find_github_cache(owner, repo, branch, tree_sha) if not path_prefix else None
         if cached:
             summary = get_project_summary(cached)
             if summary:
                 return {**summary, "cached": True, "source": "github"}
     except Exception as e:
-        msg = str(e)
+        if isinstance(e, ValueError):
+            raise
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        if status not in {403, 429} and not isinstance(
+            e, (httpx.TimeoutException, httpx.TransportError)
+        ):
+            raise
         logger.warning("github get_tree failed (%s) — modo raw-only", e)
         raw_only = True
         # sem árvore: ainda assim criamos projeto para fetch sob demanda
@@ -221,6 +242,7 @@ async def ingest_github(
             "owner": owner,
             "repo": repo,
             "branch": branch,
+            "path_prefix": path_prefix,
             "tree_sha": tree_sha,
             "key": f"{owner}/{repo}@{branch}".lower(),
             "raw_only": raw_only,
@@ -230,6 +252,7 @@ async def ingest_github(
         "symbols": {},  # preenchido sob demanda / partial
         "github_lazy": True,
         "github_raw_only": raw_only,
+        "github_tree_partial": tree_partial,
     }
     save_meta(project_id, meta)
     # workspace vazio — conteúdo vem da API
@@ -240,6 +263,8 @@ async def ingest_github(
         "name": f"{owner}/{repo}",
         "source": "github",
         "branch": branch,
+        "path_prefix": path_prefix,
+        "tree_partial": tree_partial,
         "file_count": map_data["file_count"],
         "frameworks": map_data["frameworks"],
         "languages": map_data["languages"],
@@ -395,24 +420,30 @@ async def _load_github_texts(
     known = [f["path"] for f in files]
 
     out: dict[str, str] = {}
-    for path in paths:
+    semaphore = asyncio.Semaphore(6)
+
+    async def _load_one(path: str) -> tuple[str, str, str]:
         path = (path or "").strip().lstrip("./")
         if not path:
-            continue
-        real, text = await fetch_file_with_path_guess(
-            owner, repo, path, ref=branch, known_paths=known or None
-        )
+            return "", "", ""
+        async with semaphore:
+            try:
+                real, text = await fetch_file_with_path_guess(
+                    owner, repo, path, ref=branch, known_paths=known or None
+                )
+                if not text:
+                    text = await fetch_file_content(owner, repo, path, ref=branch)
+                return path, real, text
+            except Exception as e:
+                logger.warning("github fetch %s: %s", path, e)
+                return path, "", ""
+
+    results = await asyncio.gather(*(_load_one(path) for path in dict.fromkeys(paths)))
+    for path, real, text in results:
         if text:
             out[path] = text
             if real:
                 out[real] = text
-            continue
-        try:
-            text = await fetch_file_content(owner, repo, path, ref=branch)
-            if text:
-                out[path] = text
-        except Exception as e:
-            logger.warning("github fetch %s: %s", path, e)
     return out
 
 
@@ -640,22 +671,32 @@ async def build_query_context_async(
 
     terms = expand_query(query)
     ranked_meta = []
+    scope_prefix = str((meta.get("source") or {}).get("path_prefix") or "").strip(" /")
     for fm in files:
         sc = score_file(fm["path"], "", terms, bool(fm.get("important")), symbol_index.get(fm["path"]))
         pl = fm["path"].lower()
         for t in terms:
             if t in pl:
                 sc += 4.0
+        if scope_prefix and (pl == scope_prefix.lower() or pl.startswith(scope_prefix.lower() + "/")):
+            sc += 12.0
         if sc > 0 or fm.get("important"):
             ranked_meta.append({**fm, "score": sc})
     ranked_meta.sort(key=lambda x: -x["score"])
     ranked_meta = rank_for_query(ranked_meta, query, level=level)
 
     # Resolve nomes soltos (attachment_service.dart) → path completo no tree
-    if extra_paths:
-        from .code_search import find_matching_paths, extract_mentioned_filenames
+    forced_paths: set[str] = set()
+    from .code_search import find_matching_paths, extract_mentioned_filenames
+
+    requested_paths = list(extra_paths or [])
+    requested_paths.extend(extract_mentioned_filenames(query))
+    from .source_detector import extract_need_more_paths
+
+    requested_paths.extend(extract_need_more_paths(query))
+    if requested_paths:
         resolved: list[str] = []
-        for ep in extra_paths:
+        for ep in requested_paths:
             ep = (ep or "").strip().lstrip("./")
             if not ep:
                 continue
@@ -663,18 +704,16 @@ async def build_query_context_async(
             exact = [f["path"] for f in files if f["path"] == ep or f["path"].endswith("/" + ep)]
             if exact:
                 resolved.extend(exact)
+                forced_paths.update(exact)
                 continue
             # basename / fuzzy
             matches = find_matching_paths(files, [ep])
             if matches:
                 resolved.extend(matches)
+                forced_paths.update(matches)
             else:
                 resolved.append(ep)  # tenta path cru mesmo assim
-
-        # também nomes mencionados na query
-        mentioned = extract_mentioned_filenames(query)
-        if mentioned:
-            resolved.extend(find_matching_paths(files, mentioned))
+                forced_paths.add(ep)
 
         # dedupe preservando ordem
         seen = set()
@@ -701,14 +740,15 @@ async def build_query_context_async(
 
     # sempre prioriza forced / high score no fetch
     paths = []
+    candidate_limit = 18 if level == "deep" else 12
     for r in ranked_meta:
         if r["path"] not in paths:
             paths.append(r["path"])
-        if len(paths) >= 18:
+        if len(paths) >= candidate_limit:
             break
     # garante extra_paths no fetch mesmo se ranking os empurrou
-    if extra_paths:
-        for ep in extra_paths:
+    if requested_paths:
+        for ep in requested_paths:
             ep = (ep or "").strip().lstrip("./")
             if not ep:
                 continue
@@ -752,7 +792,23 @@ async def build_query_context_async(
         text = texts.get(r["path"], "")
         if not text:
             continue
-        ranked.append({**r, "text": text, "preview": text[:400], "forced": True})
+        content_score = score_file(
+            r["path"],
+            text,
+            terms,
+            bool(r.get("important")),
+            symbol_index.get(r["path"]),
+        )
+        is_forced = r["path"] in forced_paths or bool(r.get("forced"))
+        ranked.append(
+            {
+                **r,
+                "score": 999.0 if is_forced else content_score,
+                "text": text,
+                "preview": text[:400],
+                "forced": is_forced,
+            }
+        )
 
     # raw-only / rate limit: textos baixados sem entrada no ranked_meta
     if texts and not ranked:
@@ -762,9 +818,9 @@ async def build_query_context_async(
             ranked.append(
                 {
                     "path": path,
-                    "score": 999,
-                    "important": True,
-                    "forced": True,
+                    "score": 999.0 if path in forced_paths else score_file(path, text, terms),
+                    "important": path in forced_paths,
+                    "forced": path in forced_paths,
                     "text": text,
                     "preview": text[:400],
                 }
@@ -798,9 +854,10 @@ async def build_query_context_async(
                     r["text"] = texts[r["path"]]
 
     ranked = rank_for_query(ranked, query, level=level)
+    ranked.sort(key=lambda item: (0 if item.get("forced") else 1, -float(item.get("score") or 0)))
     follow = suggest_followup_paths(ranked, files, query)
 
-    return build_context(
+    context = build_context(
         map_data,
         ranked,
         query,
@@ -809,6 +866,26 @@ async def build_query_context_async(
         source_label="Code Analyzer / GitHub",
         followup_paths=follow,
     )
+    missing_requested = sorted(path for path in forced_paths if path not in texts)
+    if missing_requested:
+        context += (
+            "\n\n[GitHub: não consegui carregar os caminhos solicitados: "
+            + ", ".join(missing_requested[:12])
+            + ". Não afirme ter lido esses arquivos. Verifique branch/permissão ou peça um link acessível.]"
+        )
+    elif paths and not texts:
+        context += (
+            "\n\n[GitHub: não foi possível baixar nenhum dos arquivos candidatos neste turno. "
+            "A árvore pode estar acessível enquanto o conteúdo está bloqueado por rate limit, "
+            "permissão, referência ou indisponibilidade do raw/CDN. Não afirme ter lido o código; "
+            "peça um link direto ou o arquivo enviado pelo usuário.]"
+        )
+    if meta.get("github_tree_partial"):
+        context += (
+            "\n\n[GitHub: a árvore foi limitada por tamanho; os paths indexados são uma amostra. "
+            "Use um link direto para arquivo/pasta quando faltar contexto.]"
+        )
+    return context
 
 
 async def detect_and_prepare(
@@ -822,7 +899,11 @@ async def detect_and_prepare(
         return None
     try:
         return await ingest_github(
-            gh["owner"], gh["repo"], branch=gh.get("branch") or "main", user_id=user_id
+            gh["owner"],
+            gh["repo"],
+            branch=gh.get("branch") or "main",
+            path_prefix=(gh.get("path") or "") if gh.get("object_type") == "tree" else "",
+            user_id=user_id,
         )
     except Exception as e:
         logger.warning("github ingest failed: %s", e)

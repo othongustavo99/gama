@@ -232,7 +232,7 @@ class _ChatScreenState extends State<ChatScreen> {
         listenFor: const Duration(minutes: 30),
         // O Android pode ignorar valores longos e encerrar por silêncio.
         // onStatus faz a reabertura automática enquanto _micArmed == true.
-        pauseFor: const Duration(seconds: 2),
+        pauseFor: const Duration(seconds: 5),
         onResult: (result) => _onSpeechResult(result, sessionId),
       );
     }

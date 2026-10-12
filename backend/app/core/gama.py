@@ -400,6 +400,9 @@ class GamaCore:
         # 1) URL GitHub NA MENSAGEM ATUAL → prioridade (não ficar preso no ZIP antigo)
         gh_now = parse_github_url(last_user)
         if gh_now:
+            linked_path = (gh_now.get("path") or "").strip(" /")
+            if gh_now.get("object_type") == "blob" and linked_path:
+                extra_paths = [linked_path, *[p for p in extra_paths if p != linked_path]]
             summary = await detect_and_prepare(last_user, user_id=user_id)
             if summary and summary.get("project_id"):
                 pid = summary["project_id"]
@@ -423,11 +426,22 @@ class GamaCore:
                 header = (
                     f"[Code Analyzer] Repositório {summary.get('name')} indexado "
                     f"({summary.get('file_count', '?')} arquivos, "
-                    f"frameworks={summary.get('frameworks')}). "
+                    f"frameworks={summary.get('frameworks')}, "
+                    f"branch/ref={summary.get('branch', 'main')}). "
                     f"project_id={pid}\n"
-                    "Instrução: o contexto abaixo contém arquivos deste GitHub. "
-                    "Se o usuário pediu um arquivo pelo nome, o conteúdo está (ou deveria estar) "
-                    "neste bloco — responda com base nele e NÃO diga que não tem o arquivo.\n"
+                    + (
+                        f"Escopo indexado: {summary.get('path_prefix')}.\n"
+                        if summary.get("path_prefix")
+                        else ""
+                    )
+                    + (
+                        "AVISO: o GitHub informou uma árvore parcial; não trate a amostra como projeto completo.\n"
+                        if summary.get("tree_partial")
+                        else ""
+                    )
+                    + "Instrução: use apenas o conteúdo realmente carregado no contexto abaixo. "
+                    "Se o arquivo do link não aparecer ou a busca não o recuperar, informe isso com clareza "
+                    "e solicite o caminho/trecho específico; não afirme que leu um arquivo ausente.\n"
                 )
                 return header + (ctx or "")
             if summary and summary.get("error"):
