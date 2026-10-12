@@ -27,9 +27,11 @@ from ..core.document_builder import (
     get_artifact,
     list_artifacts,
 )
-from ..core.document_builder.pipeline import prepare_project
-from ._upload import read_upload_limited
 from ..core.document_builder.store import ArtifactStorageLimitError
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/artifacts", tags=["artifacts", "document-builder"])
+
 
 class ZipFromProjectRequest(BaseModel):
     project_id: str = Field(min_length=6, max_length=32)
@@ -96,8 +98,6 @@ async def zip_from_project(
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
 ):
     try:
-        # Projetos GitHub só têm metadados até aqui: baixa os arquivos antes do ZIP.
-        await prepare_project(body.project_id)
         return build_zip_from_project(
             body.project_id,
             filename=body.filename,
@@ -143,8 +143,6 @@ async def zip_edit(
     if not body.project_id and not body.edits and not body.extra_files:
         raise HTTPException(400, "Informe project_id e/ou edits")
     try:
-        if body.project_id:
-            await prepare_project(body.project_id)
         edits = [e.model_dump() for e in body.edits]
         return apply_edits_and_zip(
             project_id=body.project_id,
@@ -175,7 +173,7 @@ async def zip_edit_upload(
     name = file.filename or "upload.zip"
     if not name.lower().endswith(".zip"):
         raise HTTPException(400, "Envie um .zip")
-    raw = await read_upload_limited(file)
+    raw = await file.read()
     if len(raw) < 64:
         raise HTTPException(400, "ZIP inválido")
     try:
