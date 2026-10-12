@@ -16,6 +16,7 @@ from .routes.project import router as project_router
 from .routes.tts import router as tts_router
 from .routes.artifacts import router as artifacts_router
 from .security import body_too_large, rate_limit_chat, rate_limit_default, require_api_key
+from .storage_status import inspect_data_storage
 
 logger = logging.getLogger("gama")
 VERSION = "0.13.0"
@@ -23,6 +24,24 @@ VERSION = "0.13.0"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    storage = inspect_data_storage()
+    if storage["status"] == "persistent":
+        logger.info("Armazenamento persistente confirmado no volume Railway.")
+    elif storage["status"] == "volume_not_attached":
+        logger.error(
+            "Railway Volume não detectado. Memória e conversas podem ser perdidas "
+            "em um redeploy; conecte um volume ao serviço da API."
+        )
+    elif storage["status"] == "path_mismatch":
+        logger.error(
+            "DATA_DIR não corresponde ao mount do Railway Volume; "
+            "verifique o mount path do serviço."
+        )
+    elif storage["status"] == "not_writable":
+        logger.error("DATA_DIR não permite escrita; memória não poderá ser persistida.")
+    else:
+        logger.info("Armazenamento local ativo; volume persistente não verificado.")
+
     if settings.PROVIDER == "openrouter" and not settings.OPENROUTER_API_KEY:
         logger.warning("OPENROUTER_API_KEY ausente: /chat vai falhar até ser configurada.")
     if not settings.GAMA_API_KEY:
@@ -80,6 +99,7 @@ async def health():
         "llm": "online" if ok else "offline",
         "ollama": "online" if ok and settings.PROVIDER == "ollama" else ("n/a" if settings.PROVIDER != "ollama" else "offline"),
         "openrouter": "online" if ok and settings.PROVIDER == "openrouter" else ("n/a" if settings.PROVIDER != "openrouter" else "offline"),
+        "storage": inspect_data_storage(),
         "features": [
             "chat", "memory", "memory_v2", "conversations", "rolling_summary", "extract",
             "multi_provider", "web_search", "agent_tools", "project_analyzer", "code_analyzer",

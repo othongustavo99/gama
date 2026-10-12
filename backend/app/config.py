@@ -70,7 +70,12 @@ class Settings:
         if m.strip()
     ]
 
-    DATA_DIR = os.getenv("DATA_DIR", "/data")
+    # Railway injeta este valor quando um Volume está conectado. Ele é a fonte
+    # da verdade, mesmo que DATA_DIR tenha ficado com um mount antigo.
+    RAILWAY_VOLUME_MOUNT_PATH = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+    DATA_DIR = RAILWAY_VOLUME_MOUNT_PATH or os.getenv("DATA_DIR", "/data")
+    if RAILWAY_VOLUME_MOUNT_PATH:
+        os.environ["DATA_DIR"] = RAILWAY_VOLUME_MOUNT_PATH
     APP_URL = os.getenv("APP_URL", "")
     APP_NAME = os.getenv("APP_NAME", "Frequencia40-Gamma")
 

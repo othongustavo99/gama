@@ -73,7 +73,10 @@ class Settings:
     if PROVIDER == "openrouter" and not OPENROUTER_API_KEY:
         pass
 
-    DATA_DIR = os.getenv("DATA_DIR", "/data")
+    RAILWAY_VOLUME_MOUNT_PATH = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+    DATA_DIR = RAILWAY_VOLUME_MOUNT_PATH or os.getenv("DATA_DIR", "/data")
+    if RAILWAY_VOLUME_MOUNT_PATH:
+        os.environ["DATA_DIR"] = RAILWAY_VOLUME_MOUNT_PATH
     APP_URL = os.getenv("APP_URL", "")
     APP_NAME = os.getenv("APP_NAME", "Frequencia40-Gamma")
 

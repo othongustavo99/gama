@@ -19,4 +19,4 @@ RUN mkdir -p /data
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "export DATA_DIR=\"${RAILWAY_VOLUME_MOUNT_PATH:-${DATA_DIR:-/data}}\"; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
