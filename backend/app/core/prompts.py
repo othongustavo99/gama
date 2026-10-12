@@ -166,6 +166,7 @@ path: outro/arquivo.ext
 [[/GAMA_FILES]]
 
 O backend gera o ZIP automaticamente a partir desse bloco.
+11) Nunca diga que não consegue anexar ZIP/PDF nem ofereça o código só no chat quando o usuário pediu download: o backend tentará montar o artefato a partir dos arquivos completos.
 """
 
     # conversational_mode legado (modelo 20b etc.) — reforço leve se Talk não veio
