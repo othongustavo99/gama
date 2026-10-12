@@ -451,30 +451,36 @@ async def _load_github_texts(
     out: dict[str, str] = {}
     semaphore = asyncio.Semaphore(6)
 
+    # SHA do commit primeiro (mesma versão da materialização); branch como fallback.
+    refs = [ref] + ([branch] if branch != ref else [])
+
+    async def _fetch_once(path: str, r: str) -> tuple[str, str]:
+        if meta.get("github_raw_only") and not known:
+            # Sem a árvore da API não há basenames para procurar. Os candidatos
+            # raw-only já são paths completos e são consultados diretamente.
+            text = await fetch_file_content(owner, repo, path, ref=r)
+            return (path if text else ""), text
+        real, text = await fetch_file_with_path_guess(
+            owner, repo, path, ref=r, known_paths=known or None
+        )
+        if not text:
+            text = await fetch_file_content(owner, repo, path, ref=r)
+        return real, text
+
     async def _load_one(path: str) -> tuple[str, str, str]:
         path = (path or "").strip().lstrip("./")
         if not path:
             return "", "", ""
         async with semaphore:
-            try:
-                if meta.get("github_raw_only") and not known:
-                    # Sem a árvore da API não há basenames para procurar. Os
-                    # candidatos raw-only já são paths completos e devem ser
-                    # consultados diretamente, sem sondar dezenas de pastas.
-                    real = path
-                    text = await fetch_file_content(owner, repo, path, ref=ref)
-                    if not text:
-                        real = ""
-                else:
-                    real, text = await fetch_file_with_path_guess(
-                        owner, repo, path, ref=ref, known_paths=known or None
-                    )
-                    if not text:
-                        text = await fetch_file_content(owner, repo, path, ref=ref)
-                return path, real, text
-            except Exception as e:
-                logger.warning("github fetch %s: %s", path, e)
-                return path, "", ""
+            for r in refs:
+                try:
+                    real, text = await _fetch_once(path, r)
+                except Exception as e:
+                    logger.warning("github fetch %s@%s: %s", path, r, e)
+                    continue
+                if text:
+                    return path, real, text
+            return path, "", ""
 
     results = await asyncio.gather(*(_load_one(path) for path in dict.fromkeys(paths)))
     for path, real, text in results:
@@ -482,6 +488,12 @@ async def _load_github_texts(
             out[path] = text
             if real:
                 out[real] = text
+    if not out:
+        logger.warning(
+            "github: nenhum arquivo carregado para %s/%s (ref=%s, branch=%s, raw_only=%s); "
+            "verifique rate limit da API e conectividade com raw/jsDelivr",
+            owner, repo, ref, branch, bool(meta.get("github_raw_only")),
+        )
     return out
 
 

@@ -228,3 +228,123 @@ class EndToEndServiceTests(_Env):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnalysisFetchRegressionTests(unittest.TestCase):
+    """Regressões do fluxo de análise: erro de rede deve cair na API; SHA sem resultado cai no branch."""
+
+    def test_network_error_on_raw_still_falls_back_to_api(self):
+        import base64
+
+        from app.core.code_analyzer import github_reader
+
+        api_calls = []
+
+        class R:
+            def __init__(self, status=200, payload=None):
+                self.status_code, self._p, self.headers = status, payload or {}, {}
+
+            def json(self):
+                return self._p
+
+        class Stream:
+            async def __aenter__(self):
+                raise RuntimeError("connect timeout")
+
+            async def __aexit__(self, *a):
+                return False
+
+        class Client:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def stream(self, method, url):
+                return Stream()
+
+            async def get(self, url, params=None, **k):
+                api_calls.append(url)
+                return R(payload={"content": base64.b64encode(b"print(1)\n").decode(), "encoding": "base64"})
+
+        env = {k: os.environ.pop(k, None) for k in ("GITHUB_TOKEN", "GH_TOKEN")}
+        try:
+            with patch.object(github_reader.httpx, "AsyncClient", Client):
+                text = asyncio.run(github_reader.fetch_raw_content("o", "r", "a.py", ref="main"))
+        finally:
+            for k, v in env.items():
+                if v is not None:
+                    os.environ[k] = v
+        self.assertEqual(text, "print(1)\n")
+        self.assertTrue(api_calls, "erro de rede precisa cair na API, não virar arquivo vazio")
+
+    def test_clean_404_everywhere_skips_api(self):
+        from app.core.code_analyzer import github_reader
+
+        api_calls = []
+
+        class R:
+            status_code = 404
+            headers = {}
+
+        class Stream:
+            async def __aenter__(self):
+                return R()
+
+            async def __aexit__(self, *a):
+                return False
+
+        class Client:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def stream(self, method, url):
+                return Stream()
+
+            async def get(self, url, params=None, **k):
+                api_calls.append(url)
+                raise AssertionError("não deveria chamar a API")
+
+        env = {k: os.environ.pop(k, None) for k in ("GITHUB_TOKEN", "GH_TOKEN")}
+        try:
+            with patch.object(github_reader.httpx, "AsyncClient", Client):
+                text = asyncio.run(github_reader.fetch_raw_content("o", "r", "nao_existe.py", ref="main"))
+        finally:
+            for k, v in env.items():
+                if v is not None:
+                    os.environ[k] = v
+        self.assertEqual(text, "")
+        self.assertEqual(api_calls, [])
+
+    def test_analysis_falls_back_to_branch_when_sha_returns_nothing(self):
+        from app.core.code_analyzer import pipeline as ca_pipeline
+
+        meta = {
+            "source": {"owner": "o", "repo": "r", "branch": "main", "commit_sha": SHA_A},
+            "map": {"files": [{"path": "src/x.py"}]},
+        }
+        seen = []
+
+        async def guess(owner, repo, path, *, ref, known_paths=None):
+            seen.append(ref)
+            return ("src/x.py", "code") if ref == "main" else ("", "")
+
+        async def plain(owner, repo, path, *, ref):
+            return ""
+
+        with patch.object(ca_pipeline, "fetch_file_with_path_guess", side_effect=guess), \
+                patch.object(ca_pipeline, "fetch_file_content", side_effect=plain):
+            out = asyncio.run(ca_pipeline._load_github_texts(meta, ["src/x.py"]))
+        self.assertEqual(out.get("src/x.py"), "code")
+        self.assertEqual(seen[0], SHA_A, "SHA deve ser tentado primeiro")
+        self.assertIn("main", seen)

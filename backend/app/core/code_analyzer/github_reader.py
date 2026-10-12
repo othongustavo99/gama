@@ -226,6 +226,10 @@ async def fetch_raw_content(
     ]
 
     rate_limited = False
+    # Falha incerta = erro de rede ou status diferente de 200/404. Nesse caso a API
+    # continua sendo tentada (comportamento anterior). Só um 404 limpo em todas as
+    # URLs prova que o arquivo não existe e dispensa a API.
+    uncertain = False
     async with httpx.AsyncClient(
         timeout=DEFAULT_TIMEOUT,
         headers={"User-Agent": "Gama-CodeAnalyzer/1.0"},
@@ -236,6 +240,8 @@ async def fetch_raw_content(
                 async with client.stream("GET", url) as response:
                     if response.status_code in (403, 429):
                         rate_limited = True
+                    if response.status_code not in (200, 404):
+                        uncertain = True
                     if response.status_code != 200:
                         continue
                     content_length = int(response.headers.get("content-length") or 0)
@@ -258,12 +264,13 @@ async def fetch_raw_content(
                         continue
                     return text
             except Exception as e:
+                uncertain = True
                 logger.debug("raw fetch %s: %s", url, e)
 
-    # 404 em raw/jsDelivr significa "arquivo não existe": não gastar a cota
-    # da API (60 req/h sem token) em cada candidato de path. A API só entra
-    # como fallback quando há token ou quando o raw/jsDelivr deu rate limit.
-    if not (has_github_token() or rate_limited):
+    # 404 limpo em raw/jsDelivr = arquivo inexistente: não gastar a cota da API
+    # (60 req/h sem token) em cada candidato de path. Qualquer outra falha segue
+    # para a API, como antes.
+    if not (has_github_token() or rate_limited or uncertain):
         return ""
     return await fetch_file_content_api(owner, repo, path, ref=ref)
 
