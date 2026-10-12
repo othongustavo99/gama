@@ -98,6 +98,10 @@ class Settings:
 
     # Limite de tokens de SAÍDA (evita OpenRouter 402 reservando 65k)
     MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
+    # Saídas de arquivos completos precisam de mais espaço que respostas comuns.
+    ARTIFACT_MAX_OUTPUT_TOKENS = int(
+        os.getenv("ARTIFACT_MAX_OUTPUT_TOKENS", "8192")
+    )
 
     # ── LLM ───────────────────────────────────────────────────────────
     TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.6"))

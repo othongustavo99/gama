@@ -230,9 +230,25 @@ def _try_build_zip_from_assistant(
 
 def _parse_gama_files(assistant_text: str) -> dict[str, str]:
     """Extrai arquivos completos; recusa blocos e fences que foram truncados."""
-    match = _GAMA_FILES_BLOCK_RE.search(assistant_text or "")
+    text = assistant_text or ""
+    match = _GAMA_FILES_BLOCK_RE.search(text)
     if not match:
-        return {}
+        opening = text.find("[[GAMA_FILES]]")
+        if opening < 0 or "[[/GAMA_FILES]]" in text[opening:]:
+            return {}
+
+        # Alguns modelos encerram o conteúdo completo e omitem só o marcador
+        # externo. Aceitamos isso apenas se a resposta terminou numa fence
+        # fechada; um arquivo truncado dentro do bloco continua sendo rejeitado.
+        incomplete_block = text[opening + len("[[GAMA_FILES]]"):].rstrip()
+        if not re.search(r"(?:`{3,}|~{3,})\s*$", incomplete_block):
+            return {}
+        recovered_text = text + "\n[[/GAMA_FILES]]"
+        match = _GAMA_FILES_BLOCK_RE.search(recovered_text)
+        if not match:
+            return {}
+        text = recovered_text
+        logger.info("Recovered outer GAMA_FILES marker after a closed file fence")
     files: dict[str, str] = {}
     current_path: str | None = None
     current_lines: list[str] = []
@@ -281,20 +297,18 @@ def _gama_files_parse_issue(assistant_text: str) -> str | None:
     """Descreve por que uma resposta não contém um pacote de arquivos válido."""
     if "[[GAMA_FILES]]" not in (assistant_text or ""):
         return "marcador_de_abertura_ausente"
-    match = _GAMA_FILES_BLOCK_RE.search(assistant_text or "")
-    if not match:
-        return "marcador_de_fechamento_ausente"
-    if not any(
-        _GAMA_FILE_PATH_RE.match(line)
-        for line in match.group(1).splitlines()
-    ):
-        return "caminhos_path_ausentes"
     try:
-        if not _parse_gama_files(assistant_text):
-            return "conteudo_de_arquivo_vazio"
+        if _parse_gama_files(assistant_text):
+            return None
     except ValueError as error:
         return f"estrutura_invalida:{error}"
-    return None
+
+    match = _GAMA_FILES_BLOCK_RE.search(assistant_text or "")
+    if not match:
+        return "marcador_de_fechamento_ausente_ou_arquivo_truncado"
+    if not any(_GAMA_FILE_PATH_RE.match(line) for line in match.group(1).splitlines()):
+        return "caminhos_path_ausentes"
+    return "conteudo_de_arquivo_vazio"
 
 
 def _try_build_pdf_from_assistant(
@@ -392,7 +406,7 @@ triplas dentro de arquivos Markdown não encerrem o conteúdo.
     return await llm.chat_once(
         model=model,
         messages=messages,
-        max_tokens=app_settings.MAX_OUTPUT_TOKENS,
+        max_tokens=app_settings.ARTIFACT_MAX_OUTPUT_TOKENS,
         temperature=0.1,
         timeout=180,
     )
