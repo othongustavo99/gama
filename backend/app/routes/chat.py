@@ -25,6 +25,7 @@ from ..core.url_fetch import extract_urls
 from ..llm import LLMError
 from ..core.image_analyzer import analyze_images
 from ..core.document_builder import build_pdf, build_zip_from_files
+from ..core.conversation_session import load_session, session_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -528,7 +529,20 @@ async def chat(
     wants_zip_request = _wants_zip_delivery(last_user)
     wants_pdf_request = _wants_pdf_delivery(last_user)
     download_requested = wants_zip_request or wants_pdf_request
-    has_existing_code_project = bool(_attached_project_id(messages)) or any(
+    project_id = _attached_project_id(messages)
+    if not project_id and getattr(request, "conversation_id", None):
+        try:
+            session_user = (x_user_id or request.user_id or "default").strip() or "default"
+            session = load_session(
+                session_key(session_user, request.conversation_id, messages)
+            )
+            active_project_id = str(session.get("active_project_id") or "")
+            if re.fullmatch(r"[A-Za-z0-9_-]{6,128}", active_project_id):
+                project_id = active_project_id
+        except Exception:
+            logger.exception("Could not recover project id from conversation session")
+
+    has_existing_code_project = bool(project_id) or any(
         "github.com/" in _message_text(message.get("content")).lower()
         for message in messages
     )
@@ -553,7 +567,6 @@ async def chat(
 
     # ZIPs são indexados no momento do anexo; ler o conteúdo para o modelo é
     # deliberadamente sob demanda. Conversa comum não chama o analisador.
-    project_id = _attached_project_id(messages)
     deep_project_review = bool(
         project_id and (_DEEP_PROJECT_INTENT.search(last_user) or wants_zip_request)
     )

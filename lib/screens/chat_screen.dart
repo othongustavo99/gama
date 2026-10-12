@@ -1840,7 +1840,7 @@ class _EmptyState extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
                 decoration: BoxDecoration(
-                  color: GamaColors.surfaceCard,
+                  color: const Color.fromARGB(126, 25, 31, 41),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: GamaColors.borderSoft),
                 ),

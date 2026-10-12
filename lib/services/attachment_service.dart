@@ -439,6 +439,12 @@ class AttachmentService {
       // só metadados — sem contentForModel
       buf.writeln('### ${a.name} ($kind)');
       buf.writeln('[arquivo:${a.ext}|${a.bytes}]');
+      // O marcador é pequeno e precisa sobreviver no histórico local para que
+      // pedidos posteriores ("altere e me mande em ZIP") encontrem o projeto.
+      final projectId = RegExp(
+        r'\[project_id:([A-Za-z0-9_-]{6,128})\]',
+      ).firstMatch(a.contentForModel);
+      if (projectId != null) buf.writeln(projectId.group(0));
     }
     return buf.toString().trim();
   }

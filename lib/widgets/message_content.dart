@@ -117,6 +117,7 @@ ParsedMessage parseMessageContent(String content) {
     var body = t;
     body = body.replaceFirst(RegExp(r'^###[^\n]*\n'), '');
     body = body.replaceAll(RegExp(r'\[arquivo:[^\]]+\]'), '').trim();
+    body = body.replaceAll(RegExp(r'\[project_id:[^\]]+\]'), '').trim();
     if (body.length < 8) body = '';
 
     attachments.add(
