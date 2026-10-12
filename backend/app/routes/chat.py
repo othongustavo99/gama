@@ -49,7 +49,16 @@ _GAMA_SUMMARY_BLOCK_RE = re.compile(
     r"\[\[GAMA_SUMMARY\]\](.*?)\[\[/GAMA_SUMMARY\]\]",
     re.IGNORECASE | re.DOTALL,
 )
-_GAMA_FILE_PATH_RE = re.compile(r"^\s*path\s*:\s*(.+?)\s*$", re.IGNORECASE)
+_GAMA_FILE_PATH_RE = re.compile(
+    r"^\s*(?:[-*+]\s*)?(?:"
+    r"(?:\*\*)?(?:path|caminho|arquivo|file)(?:\*\*)?\s*[:=]|"
+    r"\*\*(?:path|caminho|arquivo|file):\*\*"
+    r")\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+_GAMA_FILE_HEADING_RE = re.compile(
+    r"^\s*#{1,6}\s+`?([\w./-]+\.[A-Za-z0-9]{1,12})`?\s*$"
+)
 _ZIP_DELIVERY_RE = re.compile(
     r"(?:"
     # Entrega direta: "me manda em ZIP", "devolve os arquivos como .zip".
@@ -303,9 +312,14 @@ def _parse_gama_files(assistant_text: str) -> dict[str, str]:
             continue
 
         path_match = _GAMA_FILE_PATH_RE.match(line)
+        heading_match = _GAMA_FILE_HEADING_RE.match(line)
         if path_match:
             save_current()
             current_path = path_match.group(1).strip().strip("`\"")
+            continue
+        if heading_match:
+            save_current()
+            current_path = heading_match.group(1).strip()
             continue
         fence_match = re.match(r"^\s*(`{3,}|~{3,})", line)
         if fence_match:
@@ -337,7 +351,8 @@ def _gama_files_parse_issue(assistant_text: str) -> str | None:
     if not match:
         return "marcador_de_fechamento_ausente_ou_arquivo_truncado"
     if not any(_GAMA_FILE_PATH_RE.match(line) for line in match.group(1).splitlines()):
-        return "caminhos_path_ausentes"
+        if not any(_GAMA_FILE_HEADING_RE.match(line) for line in match.group(1).splitlines()):
+            return "caminhos_path_ausentes"
     return "conteudo_de_arquivo_vazio"
 
 
