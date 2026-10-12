@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from urllib.parse import quote
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
@@ -990,18 +991,22 @@ async def chat(
                                 ensure_ascii=False,
                             ) + "\n"
                     delivered = [
-                        item["filename"]
+                        item
                         for item in (artifact_meta, pdf_meta)
-                        if item and item.get("filename")
+                        if item and item.get("filename") and item.get("artifact_id")
                     ]
                     if delivered:
+                        links = " · ".join(
+                            f"[📦 {item['filename']}](gama-artifact://download/"
+                            f"{item['artifact_id']}?filename={quote(item['filename'], safe='')})"
+                            for item in delivered
+                        )
                         yield json.dumps(
                             {
                                 "message": {
                                     "role": "assistant",
-                                    "content": "Pronto — gerei "
-                                    + " e ".join(delivered)
-                                    + " e anexei para baixar. Também salvei o arquivo na Biblioteca.",
+                                    "content": "Pronto — o arquivo está pronto. Clique no nome para baixar: "
+                                    + links,
                                 },
                                 "done": False,
                             },
