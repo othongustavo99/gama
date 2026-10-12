@@ -53,6 +53,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// True enquanto um anexo (esp. ZIP) está sendo processado/indexado.
   bool _processingAttachment = false;
+  bool _attachmentProcessingFailed = false;
+  int _attachmentsInProgress = 0;
+  Completer<void>? _attachmentsReady;
+  bool _waitingForAttachment = false;
   String? _processingLabel;
   final _attachmentService = AttachmentService();
   final SpeechToText _speech = SpeechToText();
@@ -524,7 +528,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _showAttachMenu() async {
-    if (_isLoading) return;
+    if (_isLoading || _waitingForAttachment) return;
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: GamaColors.surfaceElevated,
@@ -670,14 +674,16 @@ class _ChatScreenState extends State<ChatScreen> {
       final result = await FilePicker.pickFiles(type: FileType.any);
       if (result == null || result.isEmpty) return;
       // file_picker 13.x devolve List<PlatformFile>? (sem .files)
+      final processing = <Future<void>>[];
       for (final f in result) {
         final path = f.path;
         if (path == null || path.isEmpty) {
           _snack('${f.name}: caminho indisponível');
           continue;
         }
-        await _addPath(path);
+        processing.add(_addPath(path));
       }
+      await Future.wait(processing);
     } catch (e) {
       _snack('Arquivos: $e');
     }
@@ -686,17 +692,20 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _addPath(String path) async {
     final name = path.split(RegExp(r'[/\\]')).last;
     final isZip = name.toLowerCase().endsWith('.zip');
+    if (_attachmentsInProgress == 0) {
+      _attachmentsReady = Completer<void>();
+      _attachmentProcessingFailed = false;
+    }
+    _attachmentsInProgress++;
     setState(() {
       _processingAttachment = true;
-      _processingLabel = isZip ? 'Anexando $name…' : 'Anexando $name…';
+      _processingLabel = isZip ? 'Indexando $name…' : 'Anexando $name…';
     });
     try {
       final processed = await _attachmentService.processFile(path);
       if (!mounted) return;
       setState(() {
         _attachments.add(processed);
-        _processingAttachment = false;
-        _processingLabel = null;
       });
       await LibraryScreen.addEntry(
         name: processed.name,
@@ -705,12 +714,22 @@ class _ChatScreenState extends State<ChatScreen> {
         sourcePath: path,
       );
     } catch (e) {
+      _attachmentProcessingFailed = true;
       if (!mounted) return;
-      setState(() {
-        _processingAttachment = false;
-        _processingLabel = null;
-      });
       _snack('$e');
+    } finally {
+      _attachmentsInProgress--;
+      if (_attachmentsInProgress == 0) {
+        final ready = _attachmentsReady;
+        _attachmentsReady = null;
+        if (mounted) {
+          setState(() {
+            _processingAttachment = false;
+            _processingLabel = null;
+          });
+        }
+        if (ready != null && !ready.isCompleted) ready.complete();
+      }
     }
   }
 
@@ -849,6 +868,30 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendMessage() async {
+    if (_isLoading || _waitingForAttachment) return;
+
+    // A seleção do arquivo pode terminar antes da indexação no servidor.
+    // Só envie depois que o project_id estiver pronto e incluído no anexo.
+    if (_processingAttachment) {
+      final ready = _attachmentsReady;
+      if (ready != null) {
+        setState(() => _waitingForAttachment = true);
+        _snack('Aguarde a indexação do anexo para enviar a mensagem.');
+        try {
+          await ready.future;
+        } finally {
+          if (mounted) setState(() => _waitingForAttachment = false);
+        }
+      }
+      if (!mounted) return;
+    }
+    if (_attachmentProcessingFailed) {
+      _snack(
+        'O anexo não foi processado. Tente anexá-lo novamente antes de enviar.',
+      );
+      return;
+    }
+
     final rawText = _controller.text.trim();
     if ((rawText.isEmpty && _attachments.isEmpty) || _isLoading) return;
 
@@ -1712,7 +1755,7 @@ class _ChatScreenState extends State<ChatScreen> {
         // Input
         ChatComposer(
           controller: _controller,
-          isLoading: _isLoading,
+          isLoading: _isLoading || _waitingForAttachment,
           isListening: _isListening,
           mode: _mode,
           onAttach: _showAttachMenu,

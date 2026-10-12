@@ -51,7 +51,7 @@ class _SplashScreenState extends State<SplashScreen> {
         fit: StackFit.expand,
         children: [
           Image.asset(
-            'assets/images/image.jpg',
+            'assets/images/image.png',
             fit: BoxFit.cover,
             errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
           ),

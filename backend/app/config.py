@@ -102,6 +102,14 @@ class Settings:
     ARTIFACT_MAX_OUTPUT_TOKENS = int(
         os.getenv("ARTIFACT_MAX_OUTPUT_TOKENS", "8192")
     )
+    # Uma recuperação pode precisar de mais espaço que a geração inicial,
+    # especialmente quando um arquivo grande foi cortado no limite de saída.
+    ARTIFACT_REPAIR_MAX_OUTPUT_TOKENS = int(
+        os.getenv(
+            "ARTIFACT_REPAIR_MAX_OUTPUT_TOKENS",
+            str(min(max(ARTIFACT_MAX_OUTPUT_TOKENS * 2, 16384), 32768)),
+        )
+    )
 
     # ── LLM ───────────────────────────────────────────────────────────
     TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.6"))
