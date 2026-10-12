@@ -102,7 +102,10 @@ def detect_level(query: str) -> str:
     q = (query or "").lower()
     deep_hints = (
         "arquitetura inteira", "arquitetura completa", "revisão completa",
+        "revisão geral", "analise geral", "análise geral",
         "analise o projeto", "analise completa", "análise completa",
+        "pontos de melhoria", "pontos de melhorias", "melhorias no projeto",
+        "polimentos no projeto",
         "todo o projeto", "code review", "revisão de código",
         "problemas no projeto", "deep", "full analysis",
         "conteúdo completo", "conteudo completo", "texto integral",

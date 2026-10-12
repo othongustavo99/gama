@@ -32,8 +32,11 @@ gama = GamaCore()
 
 _PROJECT_ID_RE = re.compile(r"\[project_id:([A-Za-z0-9_-]{6,128})\]", re.IGNORECASE)
 _DEEP_PROJECT_INTENT = re.compile(
-    r"\b(analisa(?:r|e)?|revise|revisar|audita(?:r|e)?|corrija|corrigir|"
-    r"melhore|melhorar|refatora(?:r|e)?|polir|polida|c[oó]digos? completos?|"
+    r"\b(analisa(?:r|e)?|an[aá]lise\s+(?:geral|completa)|revise|revisar|"
+    r"revis[aã]o\s+(?:geral|completa)|audita(?:r|e)?|corrija|corrigir|"
+    r"melhore|melhorar|melhoria(?:s)?|pontos?\s+de\s+melhoria(?:s)?|"
+    r"refatora(?:r|e)?|polir|polida|polimentos?|"
+    r"c[oó]digos? completos?|"
     r"arquivos? completos?|prontos? para substituir|projeto inteiro|zip inteiro)\b",
     re.IGNORECASE,
 )
@@ -961,6 +964,16 @@ async def chat(
                             logger.warning("structured file generation failed: %s", bundle_err)
                             bundle_text = ""
                             files = {}
+                        if not files:
+                            logger.warning(
+                                "structured file generation returned no parseable files "
+                                "(marker_present=%s, response_chars=%d, project_id_present=%s, "
+                                "deep_project_review=%s)",
+                                "[[GAMA_FILES]]" in bundle_text,
+                                len(bundle_text),
+                                bool(project_id),
+                                deep_project_review,
+                            )
 
                     artifact_meta = None
                     pdf_meta = None
