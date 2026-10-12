@@ -255,7 +255,7 @@ def _try_build_zip_from_assistant(
     if not match:
         return None
 
-    files = _parse_gama_files(assistant_text)
+    files = _filter_real_files(_parse_gama_files(assistant_text))
     if not files:
         return None
     result = build_zip_from_files(
@@ -338,6 +338,44 @@ def _parse_gama_files(assistant_text: str) -> dict[str, str]:
         raise ValueError("A resposta excedeu o limite de 500 arquivos para o ZIP")
     return files
 
+
+
+
+_STUB_CONTENT_RE = re.compile(
+    r"(?i)^\s*(?:#\s*)?(?:"
+    r"arquivo n[aã]o dispon[ií]vel|"
+    r"n[aã]o dispon[ií]vel no contexto|"
+    r"conte[uú]do (?:integral )?n[aã]o (?:est[aá]|foi) (?:dispon[ií]vel|carregado)|"
+    r"n[aã]o (?:foi )?poss[ií]vel (?:obter|carregar|ler)|"
+    r"placeholder|TODO:?\s*preencher|"
+    r"sem conte[uú]do dispon[ií]vel"
+    r")"
+)
+
+
+def _is_stub_file_content(content: str) -> bool:
+    """True se o conteúdo parece recusa/placeholder, não um arquivo real."""
+    text = (content or "").strip()
+    if not text:
+        return True
+    if len(text) < 40 and _STUB_CONTENT_RE.search(text):
+        return True
+    # recusa longa sem código típico
+    if _STUB_CONTENT_RE.search(text[:300]) and not re.search(
+        r"(import |export |class |def |function |void |package |Future<|Widget )",
+        text,
+    ):
+        return True
+    return False
+
+
+def _filter_real_files(files: dict[str, str]) -> dict[str, str]:
+    """Remove stubs para não empacotar ZIP vazio de significado."""
+    return {
+        path: content
+        for path, content in (files or {}).items()
+        if content and not _is_stub_file_content(content)
+    }
 
 def _gama_files_parse_issue(assistant_text: str) -> str | None:
     """Descreve por que uma resposta não contém um pacote de arquivos válido."""
@@ -1104,7 +1142,7 @@ async def chat(
                         files = simple_flutter_files
                     try:
                         if not files:
-                            files = _parse_gama_files(bundle_text)
+                            files = _filter_real_files(_parse_gama_files(bundle_text))
                     except ValueError as parse_err:
                         logger.warning("initial file block rejected: %s", parse_err)
 
@@ -1118,7 +1156,7 @@ async def chat(
                                 prepared_messages=gama_messages or messages,
                                 assistant_text=full_assistant,
                             )
-                            files = _parse_gama_files(bundle_text)
+                            files = _filter_real_files(_parse_gama_files(bundle_text))
                         except Exception as bundle_err:
                             logger.warning("structured file generation failed: %s", bundle_err)
                             bundle_text = ""
@@ -1133,7 +1171,7 @@ async def chat(
                                     rejected_response=bundle_text,
                                     parse_issue=first_parse_issue,
                                 )
-                                repaired_files = _parse_gama_files(repaired_text)
+                                repaired_files = _filter_real_files(_parse_gama_files(repaired_text))
                                 if repaired_files:
                                     bundle_text = repaired_text
                                     files = repaired_files
@@ -1151,7 +1189,7 @@ async def chat(
                                     _files_base_messages(gama_messages or messages, full_assistant),
                                 )
                                 if per_file["bundle"]:
-                                    per_files = _parse_gama_files(per_file["bundle"])
+                                    per_files = _filter_real_files(_parse_gama_files(per_file["bundle"]))
                                     if per_files:
                                         bundle_text = per_file["bundle"]
                                         files = per_files
