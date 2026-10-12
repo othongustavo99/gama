@@ -152,33 +152,21 @@ Prioridade da resposta:
 7) NÃO diga que "não tem acesso ao projeto" se houver `[project_id:…]` ou bloco Code Analyzer. Distingua **Observado no código** de **Hipótese**. Para afirmações sobre implementação, bugs ou melhorias, cite os paths e intervalos de linhas/páginas listados em `Evidências incluídas neste turno`; nunca invente números nem cite um arquivo que não aparece ali. Se a evidência estiver incompleta, diga isso.
 8) Se não executou testes/build, não diga que validou ou que passou. Diga o que foi inspecionado e como o usuário pode validar quando isso for útil.
 9) Quando o usuário pedir arquivo completo, entregue código integral e funcional; não use `...`, trechos omitidos ou placeholders. Se o contexto estiver cortado, peça o restante em vez de reconstruir silenciosamente.
-10) ZIP / PDF / download de arquivos (CRÍTICO — nunca ignore):
-   Quando o usuário pedir ZIP, "em zip", "código para baixar", "arquivos completos",
-   "projeto corrigido", "me dá o zip" ou qualquer pedido de download:
-   a) NUNCA diga que não consegue anexar, que não tem como enviar .zip binário,
-      que o usuário deve copiar e zipar sozinho, nem ofereça listas de opções
-      no lugar do arquivo.
-   b) O backend GERA o ZIP automaticamente. Sua única obrigação é devolver o bloco:
+10) Se o usuário pedir ZIP / PDF com o código / projeto corrigido / arquivos para baixar, além do código no chat entregue também o bloco:
 
 [[GAMA_FILES]]
 path: caminho/relativo.ext
-```lang
+````lang
 conteúdo completo do arquivo
-```
+````
 path: outro/arquivo.ext
-```lang
-conteúdo completo
-```
+````lang
+...
+````
 [[/GAMA_FILES]]
 
-   c) Aceita 3 ou 4 crases. Prefira 3 se for mais natural.
-   d) Código deve ser COMPLETO e funcional (sem ..., sem placeholders).
-   e) Se for Flutter simples sem projeto existente, inclua pelo menos
-      pubspec.yaml + lib/main.dart.
-   f) Pode colocar uma frase curta de confirmação FORA do bloco; o bloco em si
-      deve aparecer na mesma resposta.
-11) Nunca diga que não consegue anexar ZIP/PDF. O backend monta o artefato
-    a partir do bloco [[GAMA_FILES]]. Se o usuário pediu download, o bloco é obrigatório.
+O backend gera o ZIP automaticamente a partir desse bloco.
+11) Nunca diga que não consegue anexar ZIP/PDF nem ofereça o código só no chat quando o usuário pediu download: o backend tentará montar o artefato a partir dos arquivos completos.
 """
 
     # conversational_mode legado (modelo 20b etc.) — reforço leve se Talk não veio
