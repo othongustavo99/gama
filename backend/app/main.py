@@ -102,7 +102,7 @@ async def health():
         "storage": inspect_data_storage(),
         "features": [
             "chat", "memory", "memory_v2", "conversations", "rolling_summary", "extract",
-            "multi_provider", "web_search", "agent_tools", "project_analyzer", "code_analyzer",
+            "multi_provider", "web_search", "agent_tools", "code_analyzer",
             "document_builder", "talk_skill", "image_analyzer", "image_gen", "tts",
         ],
     }

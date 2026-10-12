@@ -23,7 +23,7 @@ from .github_reader import (
     MAX_TEXT_FILE_BYTES,
     fetch_file_content,
     fetch_file_with_path_guess,
-    get_tree,
+    get_tree_full,
     has_github_token,
 )
 from .index_store import (
@@ -162,12 +162,13 @@ async def ingest_github(
     if any(part in {".", ".."} for part in path_prefix.split("/") if part):
         raise ValueError("Caminho GitHub inválido")
     tree_sha = "raw"
+    commit_sha = ""
     entries: list[dict[str, Any]] = []
     raw_only = False
     tree_partial = False
 
     try:
-        tree_sha, entries, branch, tree_partial = await get_tree(owner, repo, branch)
+        tree_sha, entries, branch, tree_partial, commit_sha = await get_tree_full(owner, repo, branch)
         if path_prefix:
             entries = [
                 item for item in entries
@@ -248,6 +249,7 @@ async def ingest_github(
         "user_id": user_id,
         "source": {
             "type": "github",
+            "commit_sha": commit_sha or None,
             "owner": owner,
             "repo": repo,
             "branch": branch,
@@ -439,6 +441,8 @@ async def _load_github_texts(
     owner = src.get("owner")
     repo = src.get("repo")
     branch = src.get("branch") or "main"
+    # Mesma versão da materialização: SHA do commit quando existe; branch só como fallback.
+    ref = str(src.get("commit_sha") or "") or branch
     if not owner or not repo:
         return {}
     files = (meta.get("map") or {}).get("files") or []
@@ -458,15 +462,15 @@ async def _load_github_texts(
                     # candidatos raw-only já são paths completos e devem ser
                     # consultados diretamente, sem sondar dezenas de pastas.
                     real = path
-                    text = await fetch_file_content(owner, repo, path, ref=branch)
+                    text = await fetch_file_content(owner, repo, path, ref=ref)
                     if not text:
                         real = ""
                 else:
                     real, text = await fetch_file_with_path_guess(
-                        owner, repo, path, ref=branch, known_paths=known or None
+                        owner, repo, path, ref=ref, known_paths=known or None
                     )
                     if not text:
-                        text = await fetch_file_content(owner, repo, path, ref=branch)
+                        text = await fetch_file_content(owner, repo, path, ref=ref)
                 return path, real, text
             except Exception as e:
                 logger.warning("github fetch %s: %s", path, e)

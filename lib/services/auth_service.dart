@@ -38,7 +38,7 @@ class AuthService {
     defaultValue: '',
   );
 
-  GoogleSignIn get _google => GoogleSignIn(
+  late final GoogleSignIn _google = GoogleSignIn(
     scopes: const ['email', 'profile'],
     serverClientId: (serverClientId != null && serverClientId!.isNotEmpty)
         ? serverClientId
@@ -47,6 +47,31 @@ class AuthService {
 
   bool get isDesktop =>
       !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
+
+  String? _accessToken;
+  DateTime? _accessTokenExpiry;
+
+  /// Access token para o backend (`Authorization: Bearer`).
+  /// Null = sem sessão válida; o chamador segue no modo legado ou pede login.
+  Future<String?> bearerToken() async {
+    if (isDesktop) {
+      final exp = _accessTokenExpiry;
+      if (_accessToken != null &&
+          exp != null &&
+          DateTime.now().isBefore(exp.subtract(const Duration(minutes: 2)))) {
+        return _accessToken;
+      }
+      return null;
+    }
+    try {
+      final account = _google.currentUser ?? await _google.signInSilently();
+      final auth = await account?.authentication;
+      return auth?.accessToken;
+    } catch (e) {
+      debugPrint('bearerToken: $e');
+      return null;
+    }
+  }
 
   Future<bool> signInWithGoogle() async {
     if (isDesktop) return _signInDesktop();
@@ -186,6 +211,9 @@ class AuthService {
     final tokenJson = jsonDecode(tokenRes.body) as Map<String, dynamic>;
     final accessToken = tokenJson['access_token'] as String?;
     if (accessToken == null) throw StateError('Sem access_token');
+    final expiresIn = (tokenJson['expires_in'] as num?)?.toInt() ?? 3600;
+    _accessToken = accessToken;
+    _accessTokenExpiry = DateTime.now().add(Duration(seconds: expiresIn));
 
     final userRes = await http.get(
       Uri.parse('https://www.googleapis.com/oauth2/v2/userinfo'),

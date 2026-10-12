@@ -19,40 +19,25 @@ import zipfile
 from pathlib import Path
 from typing import Any, Optional
 
+from ..code_analyzer.cleaner import should_skip_dir
 from .validator import validate_path_safe, validate_zip
 
 logger = logging.getLogger(__name__)
 
-# diretórios que normalmente não entram no ZIP de entrega
-DEFAULT_SKIP_DIRS = {
-    ".git",
-    ".svn",
-    ".hg",
-    ".dart_tool",
-    ".idea",
-    ".vscode",
-    "__pycache__",
-    ".pytest_cache",
-    "node_modules",
-    "Pods",
-    "build",
-    "dist",
-    ".gradle",
-    ".next",
-    "coverage",
-    "venv",
-    ".venv",
-    "DerivedData",
-}
-
 _CHUNK = 1024 * 1024
 
 
-def _should_skip(rel: str, skip_dirs: set[str], include_junk: bool) -> bool:
+def _should_skip(rel: str, skip_dirs: Optional[set[str]], include_junk: bool) -> bool:
+    """Junk de diretório. Usa a MESMA lista da análise (code_analyzer.cleaner).
+
+    `skip_dirs` explícito continua aceito, para chamadas especiais.
+    """
     if include_junk:
         return False
-    parts = Path(rel).parts
-    return any(p in skip_dirs for p in parts)
+    dirs = Path(rel).parts[:-1]  # só diretórios; o nome do arquivo não conta
+    if skip_dirs is not None:
+        return any(d in skip_dirs for d in dirs)
+    return any(should_skip_dir(d) for d in dirs)
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -83,7 +68,7 @@ def build_zip_with_report(
     max_total: int = 80 * 1024 * 1024,
 ) -> tuple[bytes, dict[str, Any]]:
     """Compacta um diretório. Retorna (bytes_zip, relatório)."""
-    skip = skip_dirs if skip_dirs is not None else DEFAULT_SKIP_DIRS
+    skip = skip_dirs
     report: dict[str, Any] = {
         "included": 0,
         "skipped": [],  # [{"path": ..., "reason": ...}]
@@ -255,7 +240,7 @@ def copy_tree_filtered(
     include_junk: bool = False,
 ) -> int:
     """Copia árvore filtrando junk e symlinks. Retorna número de arquivos."""
-    skip = skip_dirs if skip_dirs is not None else DEFAULT_SKIP_DIRS
+    skip = skip_dirs
     dest.mkdir(parents=True, exist_ok=True)
     n = 0
     for path in src.rglob("*"):

@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../core/constants.dart';
+import 'auth_service.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
 
@@ -74,6 +75,7 @@ class DownloadService {
       throw ArgumentError.value(downloadPath, 'downloadPath', 'caminho inválido');
     }
     final safeName = p.basename(filename).replaceAll(RegExp(r'[\\/\x00-\x1F]'), '_');
+    final token = await AuthService.instance.bearerToken();
     final dio = Dio(
       BaseOptions(
         baseUrl: SettingsService.instance.baseUrl,
@@ -82,6 +84,7 @@ class DownloadService {
         headers: {
           ...AppConstants.authHeaders,
           'X-User-Id': IdentityService.instance.userId,
+          if (token != null) 'Authorization': 'Bearer $token',
         },
       ),
     );

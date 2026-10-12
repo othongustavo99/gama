@@ -70,10 +70,12 @@ async def get_repo_default_branch(owner: str, repo: str) -> str:
         return data.get("default_branch") or "main"
 
 
-async def get_tree(
+async def get_tree_full(
     owner: str, repo: str, branch: str = "main"
-) -> tuple[str, list[dict[str, Any]], str, bool]:
-    """Retorna (tree_sha, blobs, ref resolvido, árvore parcial).
+) -> tuple[str, list[dict[str, Any]], str, bool, str]:
+    """Retorna (tree_sha, blobs, ref resolvido, árvore parcial, commit_sha).
+
+    O commit_sha é o SHA imutável usado para materializar exatamente esta versão.
 
     Resolve o default branch quando ``main`` não existe. Se a árvore recursiva
     vier truncada, percorre subárvores individualmente até o limite local.
@@ -163,7 +165,7 @@ async def get_tree(
                 for item in tree_items[:MAX_TREE_ENTRIES]
                 if item.get("type") == "blob"
             ]
-            return tree_sha, entries, resolved_ref, partial
+            return tree_sha, entries, resolved_ref, partial, commit_sha
 
         # The recursive endpoint may omit entries. Walk each directory tree
         # without recursion so large repositories are not silently mis-indexed.
@@ -188,7 +190,15 @@ async def get_tree(
                 partial = True
         if pending:
             partial = True
-        return tree_sha, entries, resolved_ref, partial
+        return tree_sha, entries, resolved_ref, partial, commit_sha
+
+
+async def get_tree(
+    owner: str, repo: str, branch: str = "main"
+) -> tuple[str, list[dict[str, Any]], str, bool]:
+    """Compatibilidade: mesma assinatura de antes, sem o commit_sha."""
+    tree_sha, entries, resolved_ref, partial, _ = await get_tree_full(owner, repo, branch)
+    return tree_sha, entries, resolved_ref, partial
 
 
 async def fetch_raw_content(
