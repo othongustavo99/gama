@@ -255,10 +255,6 @@ def build_pdf(
 
         if stype == "code":
             code = str(sec.get("text") or sec.get("code") or "")
-            # limita linhas enormes
-            lines = code.splitlines()
-            if len(lines) > 200:
-                code = "\n".join(lines[:200]) + "\n…[código truncado]"
             lang = sec.get("language") or ""
             if lang:
                 story.append(

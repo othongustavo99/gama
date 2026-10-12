@@ -16,7 +16,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from ..core.document_builder import (
@@ -27,6 +27,7 @@ from ..core.document_builder import (
     get_artifact,
     list_artifacts,
 )
+from ..core.document_builder.store import ArtifactStorageLimitError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/artifacts", tags=["artifacts", "document-builder"])
@@ -103,6 +104,8 @@ async def zip_from_project(
             include_junk=body.include_junk,
             user_id=_uid(x_user_id),
         )
+    except ArtifactStorageLimitError as e:
+        raise HTTPException(507, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
@@ -123,6 +126,8 @@ async def zip_from_files(
         return build_zip_from_files(
             body.files, filename=body.filename, user_id=_uid(x_user_id)
         )
+    except ArtifactStorageLimitError as e:
+        raise HTTPException(507, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
@@ -147,6 +152,8 @@ async def zip_edit(
             include_junk=body.include_junk,
             user_id=_uid(x_user_id),
         )
+    except ArtifactStorageLimitError as e:
+        raise HTTPException(507, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
@@ -177,6 +184,8 @@ async def zip_edit_upload(
             user_id=_uid(x_user_id),
         )
         return result
+    except ArtifactStorageLimitError as e:
+        raise HTTPException(507, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
@@ -201,6 +210,8 @@ async def pdf_create(
             filename=body.filename,
             user_id=_uid(x_user_id),
         )
+    except ArtifactStorageLimitError as e:
+        raise HTTPException(507, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except RuntimeError as e:
@@ -218,8 +229,11 @@ async def artifacts_list(
 
 
 @router.get("/{artifact_id}")
-async def artifact_meta(artifact_id: str):
-    info = get_artifact(artifact_id)
+async def artifact_meta(
+    artifact_id: str,
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+):
+    info = get_artifact(artifact_id, user_id=_uid(x_user_id))
     if not info:
         raise HTTPException(404, "Artefato não encontrado ou expirado")
     # não devolve bytes
@@ -229,19 +243,22 @@ async def artifact_meta(artifact_id: str):
 
 
 @router.get("/{artifact_id}/download")
-async def artifact_download(artifact_id: str):
-    info = get_artifact(artifact_id)
-    if not info or not info.get("bytes"):
+async def artifact_download(
+    artifact_id: str,
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+):
+    info = get_artifact(artifact_id, user_id=_uid(x_user_id))
+    if not info or not info.get("path"):
         raise HTTPException(404, "Artefato não encontrado ou expirado")
     media = {
         "zip": "application/zip",
         "pdf": "application/pdf",
     }.get(info.get("kind", ""), "application/octet-stream")
-    return Response(
-        content=info["bytes"],
+    return FileResponse(
+        path=info["path"],
+        filename=info.get("filename", "arquivo"),
         media_type=media,
         headers={
-            "Content-Disposition": f'attachment; filename="{info.get("filename", "file")}"',
-            "Content-Length": str(info.get("size") or len(info["bytes"])),
+            "Cache-Control": "private, no-store",
         },
     )

@@ -1,16 +1,35 @@
-"""Armazenamento de artefatos gerados (ZIP/PDF) em DATA_DIR/artifacts."""
+"""Persistência de artefatos ZIP/PDF no volume configurado em DATA_DIR."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-_TTL_SEC = 12 * 3600  # 12h
+
+def _positive_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+# Deixa espaço no volume de 5 GB para índices, memória e demais dados da Gama.
+_TTL_SEC = _positive_env("ARTIFACT_TTL_HOURS", 24 * 7) * 3600
+_MAX_TOTAL_BYTES = _positive_env("ARTIFACT_STORAGE_LIMIT_MB", 3072) * 1024 * 1024
+_MAX_FILE_BYTES = _positive_env("ARTIFACT_MAX_FILE_MB", 100) * 1024 * 1024
+_STORE_LOCK = threading.RLock()
+_ID_RE = re.compile(r"^[a-f0-9]{16}$")
+
+
+class ArtifactStorageLimitError(ValueError):
+    """O volume atingiu o limite configurado para artefatos."""
 
 
 def _root() -> Path:
@@ -26,8 +45,22 @@ def new_artifact_id() -> str:
 
 
 def artifact_dir(artifact_id: str) -> Path:
-    safe = "".join(c for c in artifact_id if c.isalnum() or c in "-_")[:32]
-    return _root() / safe
+    if not _ID_RE.fullmatch(artifact_id or ""):
+        raise ValueError("ID de artefato inválido")
+    return _root() / artifact_id
+
+
+def _used_bytes(root: Path) -> int:
+    total = 0
+    for child in root.iterdir():
+        if child.is_dir():
+            for path in child.iterdir():
+                if path.is_file() and path.name != ".meta.tmp":
+                    try:
+                        total += path.stat().st_size
+                    except OSError:
+                        pass
+    return total
 
 
 def save_artifact(
@@ -38,49 +71,98 @@ def save_artifact(
     meta: Optional[dict[str, Any]] = None,
     user_id: str = "default",
 ) -> dict[str, Any]:
-    cleanup_old()
-    aid = new_artifact_id()
-    d = artifact_dir(aid)
-    d.mkdir(parents=True, exist_ok=True)
+    if not isinstance(data, bytes):
+        data = bytes(data)
+    if not data:
+        raise ValueError("O arquivo gerado está vazio")
+    if len(data) > _MAX_FILE_BYTES:
+        raise ArtifactStorageLimitError(
+            f"O arquivo excede o limite de {_MAX_FILE_BYTES // (1024 * 1024)} MB"
+        )
 
-    safe_name = Path(filename).name.replace("..", "_") or f"file.{kind}"
-    path = d / safe_name
-    path.write_bytes(data)
+    with _STORE_LOCK:
+        cleanup_old()
+        root = _root()
+        if _used_bytes(root) + len(data) > _MAX_TOTAL_BYTES:
+            raise ArtifactStorageLimitError(
+                "O armazenamento de arquivos gerados atingiu o limite. Tente novamente mais tarde."
+            )
 
-    info = {
-        "artifact_id": aid,
-        "kind": kind,
-        "filename": safe_name,
-        "size": len(data),
-        "user_id": user_id,
-        "created_at": time.time(),
-        "path": str(path),
-        **(meta or {}),
-    }
-    (d / "meta.json").write_text(
-        json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return info
+        aid = new_artifact_id()
+        d = artifact_dir(aid)
+        d.mkdir(parents=True, exist_ok=False)
+        safe_name = filename.replace("\\", "/").split("/")[-1]
+        safe_name = "".join(c for c in safe_name if ord(c) >= 32 and ord(c) != 127)
+        safe_name = safe_name.replace("..", "_") or f"file.{kind}"
+        path = d / safe_name
+        temp_path = d / ".artifact.tmp"
+        try:
+            temp_path.write_bytes(data)
+            temp_path.replace(path)
+            now = time.time()
+            info = {
+                "artifact_id": aid,
+                "kind": kind,
+                "filename": safe_name,
+                "size": len(data),
+                "user_id": user_id,
+                "created_at": now,
+                "expires_at": now + _TTL_SEC,
+                "path": str(path),
+                **(meta or {}),
+            }
+            meta_tmp = d / ".meta.tmp"
+            meta_tmp.write_text(
+                json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            meta_tmp.replace(d / "meta.json")
+            return info
+        except Exception:
+            shutil.rmtree(d, ignore_errors=True)
+            raise
 
 
-def load_artifact(artifact_id: str) -> Optional[dict[str, Any]]:
-    d = artifact_dir(artifact_id)
-    meta_path = d / "meta.json"
-    if not meta_path.exists():
-        return None
+def _metadata(artifact_id: str, user_id: Optional[str] = None) -> Optional[dict[str, Any]]:
     try:
+        d = artifact_dir(artifact_id)
+        meta_path = d / "meta.json"
+        if not meta_path.is_file():
+            return None
         info = json.loads(meta_path.read_text(encoding="utf-8"))
-        file_path = Path(info.get("path") or (d / info.get("filename", "")))
-        if not file_path.exists():
-            # try relative to dir
-            file_path = d / info.get("filename", "")
-        if not file_path.exists():
+        if user_id is not None and info.get("user_id", "default") != user_id:
+            return None
+        # Only accept a file directly inside this artifact directory.
+        file_path = (d / Path(str(info.get("filename", ""))).name).resolve()
+        if file_path.parent != d.resolve() or not file_path.is_file():
+            return None
+        created = float(info.get("created_at") or 0)
+        expires = float(info.get("expires_at") or (created + _TTL_SEC))
+        if time.time() >= expires:
+            shutil.rmtree(d, ignore_errors=True)
             return None
         info["path"] = str(file_path)
-        info["bytes"] = file_path.read_bytes()
+        info["size"] = file_path.stat().st_size
+        info["expires_at"] = expires
         return info
-    except Exception:
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
+
+
+def load_artifact(
+    artifact_id: str,
+    user_id: Optional[str] = None,
+    *,
+    include_bytes: bool = False,
+) -> Optional[dict[str, Any]]:
+    info = _metadata(artifact_id, user_id)
+    if not info:
+        return None
+    if include_bytes:
+        try:
+            info["bytes"] = Path(info["path"]).read_bytes()
+        except OSError:
+            return None
+    return info
 
 
 def list_recent(user_id: Optional[str] = None, limit: int = 20) -> list[dict[str, Any]]:
@@ -89,24 +171,18 @@ def list_recent(user_id: Optional[str] = None, limit: int = 20) -> list[dict[str
     for child in root.iterdir():
         if not child.is_dir():
             continue
-        meta = child / "meta.json"
-        if not meta.exists():
-            continue
-        try:
-            data = json.loads(meta.read_text(encoding="utf-8"))
-            if user_id and data.get("user_id") != user_id:
-                continue
-            data.pop("path", None)
-            items.append(data)
-        except Exception:
-            continue
+        info = _metadata(child.name, user_id)
+        if info:
+            info.pop("path", None)
+            items.append(info)
     items.sort(key=lambda x: -float(x.get("created_at") or 0))
-    return items[:limit]
+    return items[: max(1, min(int(limit), 100))]
 
 
-def cleanup_old(max_age: float = _TTL_SEC) -> None:
+def cleanup_old(max_age: Optional[float] = None) -> None:
     root = _root()
     now = time.time()
+    ttl = _TTL_SEC if max_age is None else max_age
     for child in root.iterdir():
         if not child.is_dir():
             continue
@@ -114,12 +190,16 @@ def cleanup_old(max_age: float = _TTL_SEC) -> None:
         try:
             if meta.exists():
                 data = json.loads(meta.read_text(encoding="utf-8"))
-                if now - float(data.get("created_at", 0)) > max_age:
+                created = float(data.get("created_at", 0))
+                expires = float(data.get("expires_at") or (created + ttl))
+                if now >= expires:
                     shutil.rmtree(child, ignore_errors=True)
-            elif now - child.stat().st_mtime > max_age:
+            elif now - child.stat().st_mtime > ttl:
                 shutil.rmtree(child, ignore_errors=True)
         except Exception:
-            pass
+            # Metadados inválidos não devem ocupar o volume indefinidamente.
+            if now - child.stat().st_mtime > ttl:
+                shutil.rmtree(child, ignore_errors=True)
 
 
 def work_dir(job_id: Optional[str] = None) -> Path:

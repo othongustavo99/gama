@@ -225,8 +225,10 @@ def build_pdf(
     }
 
 
-def get_artifact(artifact_id: str) -> Optional[dict[str, Any]]:
-    return load_artifact(artifact_id)
+def get_artifact(
+    artifact_id: str, user_id: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    return load_artifact(artifact_id, user_id=user_id)
 
 
 def list_artifacts(user_id: Optional[str] = None, limit: int = 20) -> list[dict[str, Any]]:

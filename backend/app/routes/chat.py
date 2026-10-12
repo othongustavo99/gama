@@ -23,7 +23,7 @@ from ..core.context import schedule_summary_refresh
 from ..core.url_fetch import extract_urls
 from ..llm import LLMError
 from ..core.image_analyzer import analyze_images
-from ..core.document_builder import build_zip_from_files
+from ..core.document_builder import build_pdf, build_zip_from_files
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -51,10 +51,20 @@ _ZIP_DELIVERY_RE = re.compile(
     r"projeto\s+(?:corrigido|completo)\s+para\s+baixar)\b",
     re.IGNORECASE,
 )
+_PDF_DELIVERY_RE = re.compile(
+    r"(?:\b(?:gere?|gerar|crie?|criar|mont(?:e|ar)|devolv(?:a|er)|envie?|"
+    r"baix(?:ar|e)|export(?:ar|e))\b.{0,60}\bpdf\b|"
+    r"\bpdf\b.{0,60}\b(?:c[oó]digo|arquivos?|corre[cç][aã]o|projeto|baixar)\b)",
+    re.IGNORECASE,
+)
 
 
 def _wants_zip_delivery(user_text: str) -> bool:
     return bool(_ZIP_DELIVERY_RE.search(user_text or ""))
+
+
+def _wants_pdf_delivery(user_text: str) -> bool:
+    return bool(_PDF_DELIVERY_RE.search(user_text or ""))
 
 
 def _try_build_zip_from_assistant(
@@ -67,44 +77,9 @@ def _try_build_zip_from_assistant(
     if not match:
         return None
 
-    files: dict[str, str] = {}
-    current_path: str | None = None
-    current_lines: list[str] = []
-    in_fence = False
-
-    def save_current() -> None:
-        nonlocal current_path, current_lines
-        content = "\n".join(current_lines).rstrip("\n")
-        if current_path and content:
-            files[current_path] = content
-        current_path, current_lines = None, []
-
-    for line in match.group(1).splitlines():
-        if in_fence:
-            if line.strip().startswith("```"):
-                in_fence = False
-            else:
-                current_lines.append(line)
-            continue
-
-        path_match = _GAMA_FILE_PATH_RE.match(line)
-        if path_match:
-            save_current()
-            current_path = path_match.group(1).strip().strip("`\"")
-            continue
-        if line.strip().startswith("```"):
-            if current_path:
-                in_fence = True
-            continue
-        if current_path and line.strip():
-            current_lines.append(line)
-
-    save_current()
+    files = _parse_gama_files(assistant_text)
     if not files:
         return None
-    if len(files) > 500:
-        raise ValueError("A resposta excedeu o limite de 500 arquivos para o ZIP")
-
     result = build_zip_from_files(
         files,
         filename="gama_arquivos_corrigidos.zip",
@@ -114,6 +89,83 @@ def _try_build_zip_from_assistant(
     if not validation.get("ok"):
         raise ValueError("O ZIP gerado não passou na validação")
     return result
+
+
+def _parse_gama_files(assistant_text: str) -> dict[str, str]:
+    """Extrai arquivos completos; recusa blocos e fences que foram truncados."""
+    match = _GAMA_FILES_BLOCK_RE.search(assistant_text or "")
+    if not match:
+        return {}
+    files: dict[str, str] = {}
+    current_path: str | None = None
+    current_lines: list[str] = []
+    fence_marker: str | None = None
+
+    def save_current() -> None:
+        nonlocal current_path, current_lines
+        content = "\n".join(current_lines).rstrip("\n")
+        if current_path and content.strip():
+            if current_path in files:
+                raise ValueError(f"Caminho duplicado no bloco de arquivos: {current_path}")
+            files[current_path] = content
+        current_path, current_lines = None, []
+
+    for line in match.group(1).splitlines():
+        if fence_marker:
+            stripped = line.strip()
+            if re.fullmatch(re.escape(fence_marker[0]) + r"{" + str(len(fence_marker)) + r",}\s*", stripped):
+                fence_marker = None
+            else:
+                current_lines.append(line)
+            continue
+
+        path_match = _GAMA_FILE_PATH_RE.match(line)
+        if path_match:
+            save_current()
+            current_path = path_match.group(1).strip().strip("`\"")
+            continue
+        fence_match = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if fence_match:
+            if current_path:
+                fence_marker = fence_match.group(1)
+            continue
+        if current_path and line.strip():
+            current_lines.append(line)
+
+    save_current()
+    if fence_marker:
+        raise ValueError("O bloco de arquivos terminou antes do fechamento de um código")
+    if len(files) > 500:
+        raise ValueError("A resposta excedeu o limite de 500 arquivos para o ZIP")
+    return files
+
+
+def _try_build_pdf_from_assistant(
+    assistant_text: str,
+    *,
+    user_id: str,
+) -> dict | None:
+    files = _parse_gama_files(assistant_text)
+    if not files:
+        return None
+    sections: list[dict] = [
+        {"type": "heading", "level": 1, "text": "Arquivos revisados"},
+        {
+            "type": "paragraph",
+            "text": "Representação para leitura dos arquivos completos devolvidos pela Gama. "
+            "Para substituir arquivos no projeto, prefira também o ZIP quando disponível.",
+        },
+    ]
+    for path, content in files.items():
+        sections.append({"type": "heading", "level": 2, "text": path})
+        sections.append({"type": "code", "text": content})
+    return build_pdf(
+        title="Código revisado pela Gama",
+        subtitle=f"{len(files)} arquivo(s)",
+        sections=sections,
+        filename="gama_codigo_revisado.pdf",
+        user_id=user_id,
+    )
 
 
 def _message_text(content) -> str:
@@ -656,25 +708,40 @@ async def chat(
                     yield chunk
 
 
-            # ── ZIP automático a partir de [[GAMA_FILES]] ──
+            # ── Arquivos para download a partir do bloco [[GAMA_FILES]] ──
             try:
                 full_assistant = "".join(assistant_acc)
-                if "[[GAMA_FILES]]" in full_assistant or _wants_zip_delivery(last_user):
-                    artifact_meta = _try_build_zip_from_assistant(
-                        full_assistant,
-                        user_id=(x_user_id or getattr(request, "user_id", None) or "default"),
-                    )
+                wants_zip = _wants_zip_delivery(last_user)
+                wants_pdf = _wants_pdf_delivery(last_user)
+                if "[[GAMA_FILES]]" in full_assistant or wants_zip or wants_pdf:
+                    artifact_user = (x_user_id or getattr(request, "user_id", None) or "default").strip() or "default"
+                    artifact_meta = None
+                    if wants_zip or (not wants_pdf and "[[GAMA_FILES]]" in full_assistant):
+                        artifact_meta = _try_build_zip_from_assistant(
+                            full_assistant,
+                            user_id=artifact_user,
+                        )
                     if artifact_meta:
                         yield json.dumps(
                             {"gama_meta": {"phase": "artifact_ready", "artifact": artifact_meta}},
                             ensure_ascii=False,
                         ) + "\n"
-                    elif _wants_zip_delivery(last_user):
+                    if wants_pdf:
+                        pdf_meta = _try_build_pdf_from_assistant(
+                            full_assistant,
+                            user_id=artifact_user,
+                        )
+                        if pdf_meta:
+                            yield json.dumps(
+                                {"gama_meta": {"phase": "artifact_ready", "artifact": pdf_meta}},
+                                ensure_ascii=False,
+                            ) + "\n"
+                    if (wants_zip and not artifact_meta) or (wants_pdf and not _parse_gama_files(full_assistant)):
                         yield json.dumps(
                             {
                                 "message": {
                                     "role": "assistant",
-                                    "content": "\n\nNão consegui montar o ZIP porque a resposta não trouxe arquivos completos no formato esperado.",
+                                    "content": "\n\nNão consegui montar o arquivo porque a resposta não trouxe arquivos completos no formato esperado. Peça que eu gere novamente os arquivos completos.",
                                 },
                                 "done": False,
                             },
@@ -682,12 +749,12 @@ async def chat(
                         ) + "\n"
             except Exception as zip_err:
                 logger.warning("zip from assistant: %s", zip_err)
-                if _wants_zip_delivery(last_user):
+                if _wants_zip_delivery(last_user) or _wants_pdf_delivery(last_user):
                     yield json.dumps(
                         {
                             "message": {
                                 "role": "assistant",
-                                "content": "\n\nNão consegui montar o ZIP; confira os caminhos e o conteúdo dos arquivos e tente novamente.",
+                                "content": "\n\nNão consegui montar o arquivo para download. A resposta pode estar incompleta ou exceder o limite de armazenamento; tente gerar menos arquivos por vez.",
                             },
                             "done": False,
                         },
