@@ -215,6 +215,7 @@ async def fetch_raw_content(
         )
     ]
 
+    rate_limited = False
     async with httpx.AsyncClient(
         timeout=DEFAULT_TIMEOUT,
         headers={"User-Agent": "Gama-CodeAnalyzer/1.0"},
@@ -223,6 +224,8 @@ async def fetch_raw_content(
         for url in urls:
             try:
                 async with client.stream("GET", url) as response:
+                    if response.status_code in (403, 429):
+                        rate_limited = True
                     if response.status_code != 200:
                         continue
                     content_length = int(response.headers.get("content-length") or 0)
@@ -247,15 +250,62 @@ async def fetch_raw_content(
             except Exception as e:
                 logger.debug("raw fetch %s: %s", url, e)
 
-    # Último recurso: API (só útil com token ou fora do rate limit)
+    # 404 em raw/jsDelivr significa "arquivo não existe": não gastar a cota
+    # da API (60 req/h sem token) em cada candidato de path. A API só entra
+    # como fallback quando há token ou quando o raw/jsDelivr deu rate limit.
+    if not (has_github_token() or rate_limited):
+        return ""
     return await fetch_file_content_api(owner, repo, path, ref=ref)
+
+
+async def fetch_raw_bytes(
+    owner: str,
+    repo: str,
+    path: str,
+    *,
+    ref: str = "main",
+    max_bytes: int = MAX_TEXT_FILE_BYTES,
+) -> Optional[bytes]:
+    """Baixa o conteúdo bruto (inclusive binário) de um arquivo. None se indisponível."""
+    path = (path or "").lstrip("/")
+    if not path:
+        return None
+    refs = [ref] + (["master"] if ref == "main" else [])
+    encoded_path = "/".join(quote(part, safe="") for part in path.split("/"))
+    async with httpx.AsyncClient(
+        timeout=DEFAULT_TIMEOUT,
+        headers={"User-Agent": "Gama-CodeAnalyzer/1.0"},
+        follow_redirects=True,
+    ) as client:
+        for candidate_ref in refs:
+            for url in (
+                f"https://raw.githubusercontent.com/{owner}/{repo}/{candidate_ref}/{encoded_path}",
+                f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{candidate_ref}/{encoded_path}",
+            ):
+                try:
+                    async with client.stream("GET", url) as response:
+                        if response.status_code != 200:
+                            continue
+                        declared = int(response.headers.get("content-length") or 0)
+                        if declared > max_bytes:
+                            return None
+                        buf = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            buf.extend(chunk)
+                            if len(buf) > max_bytes:
+                                return None
+                        return bytes(buf)
+                except Exception as e:
+                    logger.debug("raw bytes %s: %s", url, e)
+    return None
 
 
 async def fetch_file_content_api(
     owner: str, repo: str, path: str, *, ref: str = "main"
 ) -> str:
     """Contents API (conta no rate limit)."""
-    url = f"{GITHUB_API}/repos/{owner}/{repo}/contents/{path}"
+    encoded_path = "/".join(quote(part, safe="") for part in path.lstrip("/").split("/"))
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/contents/{encoded_path}"
     params = {"ref": ref}
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=_headers()) as client:
         r = await client.get(url, params=params)

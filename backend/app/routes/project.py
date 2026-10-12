@@ -27,6 +27,7 @@ from ..core.code_analyzer import (
 )
 from ..core.code_analyzer.pipeline import build_query_context_async
 from ..core.code_analyzer.source_detector import parse_github_url
+from ._upload import read_upload_limited
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/project", tags=["project", "code-analyzer"])
@@ -55,7 +56,7 @@ async def project_ingest(
     name = file.filename or "project.zip"
     if not name.lower().endswith(".zip"):
         raise HTTPException(400, "Envie um arquivo .zip")
-    raw = await file.read()
+    raw = await read_upload_limited(file)
     if len(raw) < 64:
         raise HTTPException(400, "ZIP inválido ou vazio")
     try:
@@ -113,7 +114,7 @@ async def project_ingest_pdf(
     name = file.filename or "document.pdf"
     if not name.lower().endswith(".pdf"):
         raise HTTPException(400, "Envie um arquivo .pdf")
-    raw = await file.read()
+    raw = await read_upload_limited(file)
     if len(raw) < 64:
         raise HTTPException(400, "PDF inválido ou vazio")
     try:
@@ -136,7 +137,7 @@ async def project_ingest_docx(
     name = file.filename or "document.docx"
     if not name.lower().endswith(".docx"):
         raise HTTPException(400, "Envie um arquivo .docx")
-    raw = await file.read()
+    raw = await read_upload_limited(file)
     if len(raw) < 32:
         raise HTTPException(400, "DOCX inválido ou vazio")
     try:

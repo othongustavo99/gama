@@ -439,6 +439,13 @@ class GamaCore:
                         if summary.get("tree_partial")
                         else ""
                     )
+                    + (
+                        "AVISO: a árvore do GitHub não foi obtida; o Analyzer tentou ler apenas caminhos convencionais. "
+                        "A cobertura é parcial. Analise os arquivos realmente presentes e recomende GITHUB_TOKEN ou ZIP "
+                        "para uma revisão completa.\n"
+                        if summary.get("github_raw_only")
+                        else ""
+                    )
                     + "Instrução: use apenas o conteúdo realmente carregado no contexto abaixo. "
                     "Se o arquivo do link não aparecer ou a busca não o recuperar, informe isso com clareza "
                     "e solicite o caminho/trecho específico; não afirme que leu um arquivo ausente.\n"

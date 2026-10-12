@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import io
 import logging
+import re
+import stat
 import zipfile
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,14 @@ logger = logging.getLogger(__name__)
 MAX_ZIP_SIZE = 100 * 1024 * 1024  # 100 MB
 MAX_PDF_SIZE = 50 * 1024 * 1024
 MAX_ZIP_ENTRIES = 12_000
+
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _is_symlink_entry(info: zipfile.ZipInfo) -> bool:
+    mode = (info.external_attr >> 16) & 0xFFFF
+    return stat.S_ISLNK(mode)
 
 
 def validate_zip(data: bytes, *, expected_paths: list[str] | None = None) -> dict[str, Any]:
@@ -31,14 +40,24 @@ def validate_zip(data: bytes, *, expected_paths: list[str] | None = None) -> dic
             if bad is not None:
                 errors.append(f"Arquivo corrompido no ZIP: {bad}")
 
-            names = zf.namelist()
+            infos = zf.infolist()
+            names = [i.filename for i in infos]
             if len(names) > MAX_ZIP_ENTRIES:
                 errors.append(f"Muitas entradas no ZIP ({len(names)})")
 
-            for name in names:
+            for info in infos:
+                name = info.filename
                 norm = name.replace("\\", "/")
-                if norm.startswith("/") or ".." in norm.split("/"):
-                    errors.append(f"Path perigoso: {name}")
+                if (
+                    norm.startswith("/")
+                    or _WINDOWS_DRIVE_RE.match(norm)
+                    or ".." in norm.split("/")
+                    or _CONTROL_CHARS_RE.search(norm)
+                ):
+                    errors.append(f"Path perigoso: {name!r}")
+                if _is_symlink_entry(info):
+                    # Links simbólicos podem apontar para fora do projeto ao extrair.
+                    errors.append(f"Link simbólico não é permitido no ZIP: {name!r}")
 
             if expected_paths:
                 have = {n.replace("\\", "/").lstrip("./") for n in names}
@@ -113,13 +132,20 @@ def validate_pdf(data: bytes, *, min_pages: int = 1) -> dict[str, Any]:
 
 
 def validate_path_safe(rel: str) -> bool:
-    """True se o path relativo é seguro (sem traversal)."""
+    """True se o path relativo é seguro: sem traversal, sem absoluto, sem drive, sem controles."""
     if not rel or not isinstance(rel, str):
         return False
     norm = rel.replace("\\", "/").strip()
-    if norm.startswith("/") or norm.startswith("~"):
+    if not norm:
+        return False
+    if norm.startswith("/") or norm.startswith("~") or _WINDOWS_DRIVE_RE.match(norm):
+        return False
+    if _CONTROL_CHARS_RE.search(norm):
         return False
     parts = norm.split("/")
     if any(p == ".." for p in parts):
+        return False
+    # ignora segmentos vazios/"." apenas para validar que sobra algum nome real
+    if not any(p not in ("", ".") for p in parts):
         return False
     return True

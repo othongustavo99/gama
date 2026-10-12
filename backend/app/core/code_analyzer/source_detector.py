@@ -129,6 +129,20 @@ def detect_level(query: str) -> str:
     for h in deep_hints:
         if h in q:
             return "deep"
+    # Pedidos gerais de review variam bastante na linguagem natural. Trate-os
+    # como revisão ampla, mesmo quando não usam literalmente "análise completa".
+    if re.search(
+        r"\b(?:analisa(?:r|e)?|revise?|audita(?:r|e)?|avalie?|review)\b"
+        r".{0,100}\b(?:projeto|reposit[oó]rio|repo|c[oó]digo|aplicativo|app)\b",
+        q,
+        re.I,
+    ) or re.search(
+        r"\bpontos?\b.{0,60}\b(?:para\s+)?(?:poss[ií]veis?\s+)?"
+        r"(?:melhori\w*|refator\w*|otimiz\w*)\b",
+        q,
+        re.I,
+    ):
+        return "deep"
     for h in quick_hints:
         if h in q:
             return "quick"

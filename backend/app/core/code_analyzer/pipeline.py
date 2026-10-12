@@ -422,6 +422,8 @@ def get_project_summary(project_id: str) -> Optional[dict[str, Any]]:
         "frameworks": m.get("frameworks"),
         "languages": m.get("languages"),
         "sample_paths": [f["path"] for f in (m.get("files") or [])[:30]],
+        "github_raw_only": bool(src.get("raw_only")),
+        "github_tree_partial": bool(meta.get("github_tree_partial")),
     }
 
 
@@ -451,11 +453,20 @@ async def _load_github_texts(
             return "", "", ""
         async with semaphore:
             try:
-                real, text = await fetch_file_with_path_guess(
-                    owner, repo, path, ref=branch, known_paths=known or None
-                )
-                if not text:
+                if meta.get("github_raw_only") and not known:
+                    # Sem a árvore da API não há basenames para procurar. Os
+                    # candidatos raw-only já são paths completos e devem ser
+                    # consultados diretamente, sem sondar dezenas de pastas.
+                    real = path
                     text = await fetch_file_content(owner, repo, path, ref=branch)
+                    if not text:
+                        real = ""
+                else:
+                    real, text = await fetch_file_with_path_guess(
+                        owner, repo, path, ref=branch, known_paths=known or None
+                    )
+                    if not text:
+                        text = await fetch_file_content(owner, repo, path, ref=branch)
                 return path, real, text
             except Exception as e:
                 logger.warning("github fetch %s: %s", path, e)
@@ -807,6 +818,36 @@ async def build_query_context_async(
                 r"\b([\w./\-]+\.(?:dart|py|js|ts|tsx|jsx|java|kt|go|rs))\b",
                 query or "",
             )
+    if not paths and meta.get("github_raw_only") and not files:
+        # GitHub API 403/429 deixa o projeto sem árvore. Ainda tentamos uma
+        # amostra pequena de entrypoints/manifests comuns para oferecer uma
+        # análise parcial em vez de mandar contexto vazio ao modelo.
+        paths = [
+            "README.md",
+            "pubspec.yaml",
+            "package.json",
+            "pyproject.toml",
+            "requirements.txt",
+            "go.mod",
+            "Cargo.toml",
+            "lib/main.dart",
+            "src/main.dart",
+            "src/App.tsx",
+            "src/App.jsx",
+            "src/index.ts",
+            "src/index.js",
+            "main.py",
+            "app.py",
+            "main.js",
+            "main.ts",
+            "index.html",
+        ]
+        logger.warning(
+            "github raw-only fallback: probing %d conventional repository paths for %s/%s",
+            len(paths),
+            (meta.get("source") or {}).get("owner"),
+            (meta.get("source") or {}).get("repo"),
+        )
 
     texts = await _load_github_texts(meta, paths[:24])
 
@@ -899,6 +940,13 @@ async def build_query_context_async(
         source_label="Code Analyzer / GitHub",
         followup_paths=follow,
     )
+    if meta.get("github_raw_only"):
+        context += (
+            "\n\n[GitHub: a API não forneceu a árvore do repositório. Os arquivos incluídos "
+            "foram encontrados por caminhos convencionais e representam apenas uma amostra. "
+            "Faça uma análise útil do código realmente incluído, identifique a cobertura parcial "
+            "e recomende GITHUB_TOKEN ou envio do ZIP para revisar o restante.]"
+        )
     missing_requested = sorted(path for path in forced_paths if path not in texts)
     if missing_requested:
         oversized = set((meta.get("source") or {}).get("oversized_files") or [])

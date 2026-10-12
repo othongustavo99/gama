@@ -5,6 +5,7 @@ O LLM decide conteúdo/instruções; o backend executa de forma determinística.
 """
 
 from .pipeline import (
+    prepare_project,
     build_zip_from_project,
     build_zip_from_files,
     apply_edits_and_zip,
@@ -14,6 +15,7 @@ from .pipeline import (
 )
 
 __all__ = [
+    "prepare_project",
     "build_zip_from_project",
     "build_zip_from_files",
     "apply_edits_and_zip",

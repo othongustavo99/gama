@@ -9,6 +9,7 @@ import logging
 import zipfile
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from ._upload import read_upload_limited
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["extract"])
@@ -27,7 +28,7 @@ def _clip(text: str) -> str:
 
 @router.post("/extract")
 async def extract_file(file: UploadFile = File(...)):
-    raw = await file.read()
+    raw = await read_upload_limited(file)
     if len(raw) > MAX_BYTES:
         raise HTTPException(status_code=400, detail="Arquivo maior que 50 MB")
 
