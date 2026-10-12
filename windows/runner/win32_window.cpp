@@ -18,14 +18,6 @@ namespace {
 
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
-/// Registry key for app theme preference.
-///
-/// A value of 0 indicates apps should use dark mode. A non-zero or missing
-/// value indicates apps should use light mode.
-constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
-  L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
-constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
-
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
@@ -273,16 +265,24 @@ void Win32Window::OnDestroy() {
 }
 
 void Win32Window::UpdateTheme(HWND const window) {
-  DWORD light_mode;
-  DWORD light_mode_size = sizeof(light_mode);
-  LSTATUS result = RegGetValue(HKEY_CURRENT_USER, kGetPreferredBrightnessRegKey,
-                               kGetPreferredBrightnessRegValue,
-                               RRF_RT_REG_DWORD, nullptr, &light_mode,
-                               &light_mode_size);
+  // Mantém os controles nativos do Windows, mas combina a moldura com a UI
+  // escura da Gamma. As cores explícitas funcionam no Windows 11 (build 22000+);
+  // o atributo de modo escuro é o fallback para versões anteriores.
+  const BOOL enable_dark_mode = TRUE;
+  DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                        &enable_dark_mode, sizeof(enable_dark_mode));
 
-  if (result == ERROR_SUCCESS) {
-    BOOL enable_dark_mode = light_mode == 0;
-    DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                          &enable_dark_mode, sizeof(enable_dark_mode));
-  }
+  constexpr DWORD kDwmwaBorderColor = 34;
+  constexpr DWORD kDwmwaCaptionColor = 35;
+  constexpr DWORD kDwmwaTextColor = 36;
+  const COLORREF border_color = RGB(37, 43, 53);   // #252B35
+  const COLORREF caption_color = RGB(17, 21, 27);  // #11151B
+  const COLORREF text_color = RGB(242, 244, 248);  // #F2F4F8
+
+  DwmSetWindowAttribute(window, kDwmwaBorderColor, &border_color,
+                        sizeof(border_color));
+  DwmSetWindowAttribute(window, kDwmwaCaptionColor, &caption_color,
+                        sizeof(caption_color));
+  DwmSetWindowAttribute(window, kDwmwaTextColor, &text_color,
+                        sizeof(text_color));
 }

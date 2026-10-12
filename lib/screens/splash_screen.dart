@@ -56,7 +56,7 @@ class _SplashScreenState extends State<SplashScreen> {
             errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
           ),
           Positioned(
-            bottom: 45,
+            bottom: 53,
             left: 0,
             right: 0,
             child: Center(
