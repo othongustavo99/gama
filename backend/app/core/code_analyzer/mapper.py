@@ -40,6 +40,16 @@ def detect_framework(root: Path, files: list[str]) -> list[str]:
         fw.append("Flutter/Dart")
     if "package.json" in names:
         fw.append("Node.js")
+        for p in lower_paths:
+            if "next.config" in p or "/pages/" in p or "/app/" in p:
+                if "Next.js" not in fw:
+                    fw.append("Next.js")
+                break
+        for p in lower_paths:
+            if "vite.config" in p:
+                if "Vite" not in fw:
+                    fw.append("Vite")
+                break
     if any("build.gradle" in p for p in lower_paths):
         fw.append("Android/Gradle")
     if "pom.xml" in names:
@@ -48,16 +58,19 @@ def detect_framework(root: Path, files: list[str]) -> list[str]:
         fw.append("Rust/Cargo")
     if "go.mod" in names:
         fw.append("Go")
-    if "requirements.txt" in names or "pyproject.toml" in names:
+    if "requirements.txt" in names or "pyproject.toml" in names or "setup.py" in names:
         fw.append("Python")
     if any("manage.py" in p for p in lower_paths):
         fw.append("Django")
-    if any("fastapi" in p or "main.py" in p for p in lower_paths) and "Python" in (
-        fw or ["Python"]
-    ):
+    if any("fastapi" in p for p in lower_paths):
         if "FastAPI" not in fw:
-            # só adiciona se houver indício
-            pass
+            fw.append("FastAPI")
+    if any("flask" in p for p in lower_paths):
+        if "Flask" not in fw:
+            fw.append("Flask")
+    if "docker-compose.yml" in names or "dockerfile" in names:
+        if "Docker" not in fw:
+            fw.append("Docker")
     return fw or ["Genérico"]
 
 

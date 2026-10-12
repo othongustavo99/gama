@@ -821,8 +821,9 @@ async def build_query_context_async(
         ranked_meta.sort(key=lambda r: (0 if r.get("forced") else 1, -float(r.get("score") or 0)))
 
     # sempre prioriza forced / high score no fetch
+    # deep mode puxa mais arquivos para análise de melhorias / code review
     paths = []
-    candidate_limit = 18 if level == "deep" else 12
+    candidate_limit = 24 if level == "deep" else (16 if level == "targeted" else 10)
     for r in ranked_meta:
         if r["path"] not in paths:
             paths.append(r["path"])
@@ -834,11 +835,16 @@ async def build_query_context_async(
             ep = (ep or "").strip().lstrip("./")
             if not ep:
                 continue
-            matches = [f["path"] for f in files if f["path"] == ep or f["path"].endswith("/" + ep) or Path(f["path"]).name.lower() == Path(ep).name.lower()]
+            matches = [
+                f["path"]
+                for f in files
+                if f["path"] == ep
+                or f["path"].endswith("/" + ep)
+                or Path(f["path"]).name.lower() == Path(ep).name.lower()
+            ]
             for m in matches or [ep]:
                 if m not in paths:
                     paths.insert(0, m)
-
 
     # Sem árvore (rate limit): tenta nomes pedidos na query
     if not paths:
@@ -853,13 +859,13 @@ async def build_query_context_async(
                     paths.append(ep)
         if not paths:
             paths = _re.findall(
-                r"\b([\w./\-]+\.(?:dart|py|js|ts|tsx|jsx|java|kt|go|rs))\b",
+                r"\b([\w./\-]+\.(?:dart|py|js|ts|tsx|jsx|java|kt|go|rs|swift|cs))\b",
                 query or "",
             )
     if not paths and meta.get("github_raw_only") and not files:
         # GitHub API 403/429 deixa o projeto sem árvore. Ainda tentamos uma
-        # amostra pequena de entrypoints/manifests comuns para oferecer uma
-        # análise parcial em vez de mandar contexto vazio ao modelo.
+        # amostra de entrypoints/manifests comuns para oferecer análise parcial.
+        # Expandido para cobrir mais stacks (Flutter, Node, Python, Go, Rust, Java).
         paths = [
             "README.md",
             "pubspec.yaml",
@@ -868,17 +874,28 @@ async def build_query_context_async(
             "requirements.txt",
             "go.mod",
             "Cargo.toml",
+            "pom.xml",
+            "build.gradle",
+            "Dockerfile",
+            "docker-compose.yml",
             "lib/main.dart",
+            "lib/app.dart",
             "src/main.dart",
             "src/App.tsx",
             "src/App.jsx",
             "src/index.ts",
             "src/index.js",
+            "src/main.py",
             "main.py",
             "app.py",
             "main.js",
             "main.ts",
             "index.html",
+            "backend/app/main.py",
+            "backend/main.py",
+            "app/main.py",
+            "cmd/main.go",
+            "main.go",
         ]
         logger.warning(
             "github raw-only fallback: probing %d conventional repository paths for %s/%s",
@@ -887,7 +904,7 @@ async def build_query_context_async(
             (meta.get("source") or {}).get("repo"),
         )
 
-    texts = await _load_github_texts(meta, paths[:24])
+    texts = await _load_github_texts(meta, paths[:32])
 
     # cache no workspace para próximas queries
     scan = workspace(project_id)

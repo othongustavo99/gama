@@ -14,11 +14,14 @@ import httpx
 logger = logging.getLogger(__name__)
 
 GITHUB_API = "https://api.github.com"
-DEFAULT_TIMEOUT = 30.0
-MAX_TREE_ENTRIES = 25_000  # proteção contra repos gigantes
+DEFAULT_TIMEOUT = 35.0
+MAX_TREE_ENTRIES = 30_000  # proteção contra repos gigantes (ligeiramente maior)
 MAX_TEXT_FILE_BYTES = 8_000_000
+# Limite de candidatos no path-guess para não explodir em rate-limit
+MAX_PATH_GUESS_CANDIDATES = 28
 
-# Prefixo comuns em projetos Flutter / Python / Node — usados quando a tree API falha
+# Prefixo comuns em projetos Flutter / Python / Node / Go / Rust — usados quando a tree API falha
+# Expandido para melhorar acerto em modo raw-only e path-guessing.
 _COMMON_PREFIXES = (
     "",
     "lib/",
@@ -28,16 +31,40 @@ _COMMON_PREFIXES = (
     "lib/core/",
     "lib/models/",
     "lib/utils/",
+    "lib/providers/",
+    "lib/repositories/",
+    "lib/pages/",
+    "lib/features/",
     "backend/",
     "backend/app/",
     "backend/app/core/",
     "backend/app/routes/",
+    "backend/app/api/",
     "backend/app/core/code_analyzer/",
     "src/",
     "src/main/",
+    "src/components/",
+    "src/pages/",
+    "src/services/",
+    "src/utils/",
+    "src/hooks/",
+    "src/app/",
     "app/",
+    "app/services/",
+    "app/models/",
+    "app/controllers/",
+    "app/http/",
+    "cmd/",
+    "pkg/",
+    "internal/",
+    "api/",
+    "server/",
+    "client/",
+    "web/",
+    "frontend/",
     "test/",
     "tests/",
+    "spec/",
 )
 
 
@@ -384,26 +411,52 @@ async def fetch_file_with_path_guess(
     ref: str = "main",
     known_paths: Optional[list[str]] = None,
 ) -> tuple[str, str]:
-    """Tenta achar o arquivo. Retorna (path_real, content) ou ("", "")."""
+    """Tenta achar o arquivo. Retorna (path_real, content) ou ("", "").
+
+    Melhorias:
+    - prioriza matches exatos e por basename na árvore conhecida;
+    - fallback com prefixes comuns mais ricos;
+    - fuzzy por stem (ex.: context.py ↔ contexto);
+    - limite configurável de candidatos para não estourar rate-limit.
+    """
     name_or_path = (name_or_path or "").strip().lstrip("./")
     if not name_or_path:
         return "", ""
 
     candidates: list[str] = []
     slash_path = "/" in name_or_path
+    base_name = name_or_path.rsplit("/", 1)[-1]
+    stem = base_name.rsplit(".", 1)[0].lower() if "." in base_name else base_name.lower()
+
     if known_paths:
+        # 1) match exato ou sufixo
         for p in known_paths:
-            if p == name_or_path or p.endswith("/" + name_or_path) or p.endswith(name_or_path):
+            if (
+                p == name_or_path
+                or p.endswith("/" + name_or_path)
+                or p.endswith(name_or_path)
+            ):
                 candidates.append(p)
             elif p.lower().endswith("/" + name_or_path.lower()) or p.lower().endswith(
                 name_or_path.lower()
             ):
                 candidates.append(p)
+        # 2) match por basename
+        if not candidates:
+            for p in known_paths:
+                if p.rsplit("/", 1)[-1].lower() == base_name.lower():
+                    candidates.append(p)
+        # 3) fuzzy por stem (útil em PT/EN: context ↔ contexto)
+        if not candidates and len(stem) >= 4:
+            for p in known_paths:
+                p_stem = p.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+                if stem in p_stem or p_stem in stem:
+                    candidates.append(p)
 
-    # path já completo
+    # path já completo tem prioridade máxima
     if slash_path:
         candidates.insert(0, name_or_path)
-    elif not known_paths:
+    elif not known_paths or not candidates:
         for prefix in _COMMON_PREFIXES:
             candidates.append(f"{prefix}{name_or_path}")
 
@@ -415,7 +468,7 @@ async def fetch_file_with_path_guess(
             seen.add(c)
             ordered.append(c)
 
-    for path in ordered[:20]:
+    for path in ordered[:MAX_PATH_GUESS_CANDIDATES]:
         text = await fetch_raw_content(owner, repo, path, ref=ref)
         if text:
             return path, text

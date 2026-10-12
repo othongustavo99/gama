@@ -34,14 +34,26 @@ def _wants_full_content(query: str) -> bool:
     # [need_more:...] implica pedido de conteúdo integral desses paths
     if "[need_more:" in q.lower():
         return True
+    ql = q.lower()
     if any(
-        k in q.lower()
+        k in ql
         for k in (
             "códigos completos",
             "codigos completos",
             "código completo",
             "codigo completo",
             "prontos para substituir",
+            "devolver em zip",
+            "devolver em formato de zip",
+            "me devolva o zip",
+            "códigos que devem ser melhorados",
+            "codigos que devem ser melhorados",
+            "arquivos completos",
+            "arquivo integral",
+            "código corrigido",
+            "codigo corrigido",
+            "código melhorado",
+            "codigo melhorado",
         )
     ):
         return True
