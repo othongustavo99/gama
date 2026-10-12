@@ -70,6 +70,136 @@ def _wants_pdf_delivery(user_text: str) -> bool:
     return bool(_PDF_DELIVERY_RE.search(user_text or ""))
 
 
+def _simple_flutter_project_files(
+    user_text: str,
+    *,
+    has_existing_project: bool = False,
+) -> dict[str, str] | None:
+    """Return a deterministic starter project for an explicit simple Flutter ZIP request."""
+    text = user_text or ""
+    if has_existing_project or not _wants_zip_delivery(text):
+        return None
+    if not re.search(r"\bflutter\b", text, re.IGNORECASE):
+        return None
+    if not re.search(
+        r"\b(simples?|b[aá]sicos?|m[ií]nimos?|contador|exemplo)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return None
+
+    return {
+        "flutter_exemplo_simples/pubspec.yaml": """name: flutter_exemplo_simples
+description: Projeto Flutter simples gerado pela Gamma.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+""",
+        "flutter_exemplo_simples/lib/main.dart": """import 'package:flutter/material.dart';
+
+void main() {
+  runApp(const SimpleCounterApp());
+}
+
+class SimpleCounterApp extends StatelessWidget {
+  const SimpleCounterApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Contador simples',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
+        useMaterial3: true,
+      ),
+      home: const CounterPage(),
+    );
+  }
+}
+
+class CounterPage extends StatefulWidget {
+  const CounterPage({super.key});
+
+  @override
+  State<CounterPage> createState() => _CounterPageState();
+}
+
+class _CounterPageState extends State<CounterPage> {
+  int _count = 0;
+
+  void _increment() {
+    setState(() => _count++);
+  }
+
+  void _reset() {
+    setState(() => _count = 0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Contador simples')),
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Você pressionou o botão esta quantidade de vezes:'),
+            const SizedBox(height: 12),
+            Text('$_count', style: Theme.of(context).textTheme.displayMedium),
+            const SizedBox(height: 20),
+            Wrap(
+              spacing: 12,
+              children: [
+                FilledButton.icon(
+                  onPressed: _increment,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Incrementar'),
+                ),
+                OutlinedButton(
+                  onPressed: _reset,
+                  child: const Text('Zerar'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _increment,
+        tooltip: 'Incrementar',
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+""",
+        "flutter_exemplo_simples/README.md": """# Projeto Flutter simples
+
+## Executar
+
+1. Instale o Flutter SDK e configure um dispositivo ou emulador.
+2. Abra um terminal nesta pasta.
+3. Execute `flutter pub get`.
+4. Execute `flutter run`.
+
+O app de exemplo contém um contador com ações para incrementar e zerar o valor.
+""",
+    }
+
+
 def _try_build_zip_from_assistant(
     assistant_text: str,
     *,
@@ -296,8 +426,30 @@ async def chat(
         else:
             last_user = str(_c)
 
+    wants_zip_request = _wants_zip_delivery(last_user)
+    wants_pdf_request = _wants_pdf_delivery(last_user)
+    download_requested = wants_zip_request or wants_pdf_request
+    has_existing_code_project = bool(_attached_project_id(messages)) or any(
+        "github.com/" in _message_text(message.get("content")).lower()
+        for message in messages
+    )
+    simple_flutter_download_files = (
+        _simple_flutter_project_files(
+            last_user,
+            has_existing_project=has_existing_code_project,
+        )
+        if wants_zip_request
+        else None
+    )
+
     # Agente: o modelo decide quando pesquisar (tool calling). Só com OpenRouter.
-    use_agent = bool(app_settings.AGENT_TOOLS_ENABLED and llm.provider == "openrouter")
+    # Pedidos de arquivo usam o fluxo normal para que possamos validar o artefato
+    # antes de exibir uma resposta final ao usuário.
+    use_agent = bool(
+        app_settings.AGENT_TOOLS_ENABLED
+        and llm.provider == "openrouter"
+        and not download_requested
+    )
     will_search = bool(last_user and not use_agent and should_search(last_user))
 
     # ZIPs são indexados no momento do anexo; ler o conteúdo para o modelo é
@@ -755,7 +907,7 @@ async def chat(
                         except Exception as _e:
                             logger.warning("fallback search: %s", _e)
 
-            if not agent_done:
+            if not agent_done and not simple_flutter_download_files:
                 async for chunk in llm.stream_chat(
                     model=active_model,
                     messages=gama_messages,
@@ -769,20 +921,27 @@ async def chat(
                                 assistant_acc.append(c)
                     except Exception:
                         pass
-                    yield chunk
+                    # Para pedidos de download, não mostramos uma recusa ou uma
+                    # resposta provisória antes de saber se o arquivo foi criado.
+                    if not download_requested:
+                        yield chunk
 
 
             # ── Arquivos para download a partir do bloco [[GAMA_FILES]] ──
             try:
                 full_assistant = "".join(assistant_acc)
-                wants_zip = _wants_zip_delivery(last_user)
-                wants_pdf = _wants_pdf_delivery(last_user)
+                wants_zip = wants_zip_request
+                wants_pdf = wants_pdf_request
                 if "[[GAMA_FILES]]" in full_assistant or wants_zip or wants_pdf:
                     artifact_user = (x_user_id or getattr(request, "user_id", None) or "default").strip() or "default"
                     bundle_text = full_assistant
                     files = {}
+                    simple_flutter_files = simple_flutter_download_files if wants_zip else None
+                    if simple_flutter_files:
+                        files = simple_flutter_files
                     try:
-                        files = _parse_gama_files(bundle_text)
+                        if not files:
+                            files = _parse_gama_files(bundle_text)
                     except ValueError as parse_err:
                         logger.warning("initial file block rejected: %s", parse_err)
 
@@ -804,7 +963,13 @@ async def chat(
 
                     artifact_meta = None
                     pdf_meta = None
-                    if files and (wants_zip or (not wants_pdf and "[[GAMA_FILES]]" in full_assistant)):
+                    if simple_flutter_files and wants_zip:
+                        artifact_meta = build_zip_from_files(
+                            simple_flutter_files,
+                            filename="flutter_exemplo_simples.zip",
+                            user_id=artifact_user,
+                        )
+                    elif files and (wants_zip or (not wants_pdf and "[[GAMA_FILES]]" in full_assistant)):
                         artifact_meta = _try_build_zip_from_assistant(
                             bundle_text,
                             user_id=artifact_user,
@@ -834,7 +999,7 @@ async def chat(
                             {
                                 "message": {
                                     "role": "assistant",
-                                    "content": "\n\nPronto — gerei "
+                                    "content": "Pronto — gerei "
                                     + " e ".join(delivered)
                                     + " e anexei para baixar. Também salvei o arquivo na Biblioteca.",
                                 },
@@ -847,7 +1012,7 @@ async def chat(
                             {
                                 "message": {
                                     "role": "assistant",
-                                    "content": "\n\nNão consegui montar o arquivo porque a resposta não trouxe arquivos completos no formato esperado. Peça que eu gere novamente os arquivos completos.",
+                                    "content": "Não consegui gerar o arquivo para download nesta tentativa. Consulte os logs do backend no Railway para ver o erro de geração ou armazenamento.",
                                 },
                                 "done": False,
                             },
@@ -855,17 +1020,23 @@ async def chat(
                         ) + "\n"
             except Exception as zip_err:
                 logger.warning("zip from assistant: %s", zip_err)
-                if _wants_zip_delivery(last_user) or _wants_pdf_delivery(last_user):
+                if download_requested:
                     yield json.dumps(
                         {
                             "message": {
                                 "role": "assistant",
-                                "content": "\n\nNão consegui montar o arquivo para download. A resposta pode estar incompleta ou exceder o limite de armazenamento; tente gerar menos arquivos por vez.",
+                                "content": "Não consegui gerar o arquivo para download nesta tentativa. Consulte os logs do backend no Railway para ver o erro de geração ou armazenamento.",
                             },
                             "done": False,
                         },
                         ensure_ascii=False,
                     ) + "\n"
+
+            if download_requested:
+                yield json.dumps(
+                    {"message": {"role": "assistant", "content": ""}, "done": True},
+                    ensure_ascii=False,
+                ) + "\n"
 
             # Memória automática pós-turno
             if getattr(request, "auto_memory", True):
