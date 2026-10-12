@@ -18,7 +18,13 @@ from .context_builder import build_context
 from .dependency_resolver import resolve_dependencies
 from .document_reader import extract_docx_segments, segments_to_map
 from .extractor import safe_extract
-from .github_reader import fetch_file_content, fetch_file_with_path_guess, get_tree, has_github_token
+from .github_reader import (
+    MAX_TEXT_FILE_BYTES,
+    fetch_file_content,
+    fetch_file_with_path_guess,
+    get_tree,
+    has_github_token,
+)
 from .index_store import (
     cleanup_old,
     find_github_cache,
@@ -28,7 +34,7 @@ from .index_store import (
     workspace,
 )
 from .mapper import build_symbol_index, walk_project
-from .pdf_reader import extract_pages, pages_to_map, search_pages
+from .pdf_reader import extract_pages_detailed, pages_to_map, search_pages
 from .relevance import rank_for_query, suggest_followup_paths
 from .source_detector import detect_level, parse_github_url
 
@@ -193,6 +199,7 @@ async def ingest_github(
     from pathlib import PurePosixPath
 
     files: list[dict[str, Any]] = []
+    oversized_files: list[str] = []
     lang_counter: dict[str, int] = {}
     from .mapper import LANG_BY_EXT
     from .cleaner import is_important
@@ -206,7 +213,8 @@ async def ingest_github(
         fake = Path(path)
         if should_skip_file(fake):
             continue
-        if e.get("size", 0) > 1_500_000:
+        if e.get("size", 0) > MAX_TEXT_FILE_BYTES:
+            oversized_files.append(path)
             continue
         ext = fake.suffix.lower()
         lang = LANG_BY_EXT.get(ext, "other")
@@ -246,6 +254,8 @@ async def ingest_github(
             "tree_sha": tree_sha,
             "key": f"{owner}/{repo}@{branch}".lower(),
             "raw_only": raw_only,
+            "oversized_files": oversized_files[:200],
+            "oversized_file_count": len(oversized_files),
         },
         "scan_root": ".",
         "map": map_data,
@@ -265,6 +275,7 @@ async def ingest_github(
         "branch": branch,
         "path_prefix": path_prefix,
         "tree_partial": tree_partial,
+        "oversized_file_count": len(oversized_files),
         "file_count": map_data["file_count"],
         "frameworks": map_data["frameworks"],
         "languages": map_data["languages"],
@@ -281,11 +292,17 @@ def ingest_pdf(
 ) -> dict[str, Any]:
     cleanup_old()
     project_id = new_project_id()
-    pages = extract_pages(pdf_bytes)
+    pages, extraction = extract_pages_detailed(pdf_bytes)
     if not pages:
+        if extraction.get("scanned_pages"):
+            raise ValueError(
+                "PDF sem texto selecionável. O OCR não estava disponível ou não conseguiu "
+                "reconhecer texto; instale PyMuPDF e Tesseract com os idiomas configurados."
+            )
         raise ValueError("PDF sem texto extraível")
 
     map_data = pages_to_map(pages)
+    map_data["pdf_extraction"] = extraction
     # guarda páginas no meta (texto já extraído)
     meta = {
         "name": name,
@@ -295,6 +312,7 @@ def ingest_pdf(
         "map": map_data,
         "symbols": {},
         "pdf_pages": pages,
+        "pdf_extraction": extraction,
     }
     save_meta(project_id, meta)
     workspace(project_id).mkdir(parents=True, exist_ok=True)
@@ -307,6 +325,10 @@ def ingest_pdf(
         "frameworks": ["PDF/Documentação"],
         "languages": {"PDF": len(pages)},
         "sample_paths": [p["path"] for p in pages[:15]],
+        "ocr_pages": extraction.get("ocr_pages", 0),
+        "scanned_pages": extraction.get("scanned_pages", 0),
+        "ocr_skipped_pages": extraction.get("ocr_skipped_pages", 0),
+        "page_limit_reached": extraction.get("page_limit_reached", False),
     }
 
 
@@ -485,8 +507,9 @@ def build_query_context(
                             },
                         )
         map_data = meta.get("map") or pages_to_map(pages)
+        extraction = meta.get("pdf_extraction") or map_data.get("pdf_extraction") or {}
         ranked = rank_for_query(ranked, query, level=level)
-        return build_context(
+        context = build_context(
             map_data,
             ranked,
             query,
@@ -494,6 +517,15 @@ def build_query_context(
             level=level,
             source_label="Code Analyzer / DOCX" if src_type == "docx" else "Code Analyzer / PDF",
         )
+        if src_type == "pdf" and extraction:
+            context += (
+                "\n\n[PDF: páginas com OCR=" + str(extraction.get("ocr_pages", 0))
+                + "; páginas digitalizadas detectadas=" + str(extraction.get("scanned_pages", 0))
+                + "; páginas sem leitura=" + str(extraction.get("unreadable_pages", 0))
+                + "; limite de páginas atingido=" + str(bool(extraction.get("page_limit_reached")))
+                + ". Cite somente páginas cujo texto esteja incluído no contexto.]"
+            )
+        return context
 
     map_data = meta.get("map") or {"files": [], "file_count": 0}
     files = map_data.get("files") or []
@@ -867,6 +899,17 @@ async def build_query_context_async(
         followup_paths=follow,
     )
     missing_requested = sorted(path for path in forced_paths if path not in texts)
+    if missing_requested:
+        oversized = set((meta.get("source") or {}).get("oversized_files") or [])
+        oversized_requested = [path for path in missing_requested if path in oversized]
+        if oversized_requested:
+            context += (
+                "\n\n[GitHub: estes arquivos excedem o limite de leitura por arquivo ("
+                f"{MAX_TEXT_FILE_BYTES // 1_000_000} MB): "
+                + ", ".join(oversized_requested[:12])
+                + ". Peça um recorte/intervalo ou envie o arquivo em partes.]"
+            )
+            missing_requested = [path for path in missing_requested if path not in oversized]
     if missing_requested:
         context += (
             "\n\n[GitHub: não consegui carregar os caminhos solicitados: "

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 GITHUB_API = "https://api.github.com"
 DEFAULT_TIMEOUT = 30.0
 MAX_TREE_ENTRIES = 25_000  # proteção contra repos gigantes
-MAX_TEXT_FILE_BYTES = 1_500_000
+MAX_TEXT_FILE_BYTES = 8_000_000
 
 # Prefixo comuns em projetos Flutter / Python / Node — usados quando a tree API falha
 _COMMON_PREFIXES = (
@@ -222,14 +222,22 @@ async def fetch_raw_content(
     ) as client:
         for url in urls:
             try:
-                r = await client.get(url)
-                if (
-                    r.status_code == 200
-                    and r.content
-                    and len(r.content) <= MAX_TEXT_FILE_BYTES
-                    and b"\x00" not in r.content[:8192]
-                ):
-                    text = r.content.decode("utf-8", errors="replace")
+                async with client.stream("GET", url) as response:
+                    if response.status_code != 200:
+                        continue
+                    content_length = int(response.headers.get("content-length") or 0)
+                    if content_length > MAX_TEXT_FILE_BYTES:
+                        continue
+                    content = bytearray()
+                    oversized = False
+                    async for chunk in response.aiter_bytes():
+                        content.extend(chunk)
+                        if len(content) > MAX_TEXT_FILE_BYTES:
+                            oversized = True
+                            break
+                    if not content or oversized or b"\x00" in content[:8192]:
+                        continue
+                    text = bytes(content).decode("utf-8", errors="replace")
                     # jsDelivr às vezes devolve HTML de erro
                     if text.lstrip().lower().startswith("<!") or text.startswith(
                         "Couldn't find the requested release version"
@@ -286,11 +294,16 @@ async def fetch_blob(owner: str, repo: str, sha: str) -> str:
         r = await client.get(url)
         if r.status_code != 200:
             return ""
+        if int(r.headers.get("content-length") or 0) > MAX_TEXT_FILE_BYTES * 2:
+            return ""
         data = r.json()
         content = data.get("content") or ""
         if data.get("encoding") == "base64":
             try:
-                return base64.b64decode(content).decode("utf-8", errors="replace")
+                decoded = base64.b64decode(content)
+                if len(decoded) > MAX_TEXT_FILE_BYTES or b"\x00" in decoded[:8192]:
+                    return ""
+                return decoded.decode("utf-8", errors="replace")
             except Exception:
                 return ""
         return str(content)
