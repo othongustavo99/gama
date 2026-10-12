@@ -2,12 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
+import '../services/download_service.dart';
 
 /// Biblioteca local de anexos (metadados + arquivo persistido).
 class LibraryScreen extends StatefulWidget {
@@ -166,20 +166,9 @@ class LibraryScreen extends StatefulWidget {
       return;
     }
 
-    // PDF, ZIP, código, áudio → app nativo do sistema
+    // PDF, ZIP, código, áudio → seletor nativo / Explorer.
     try {
-      final result = await OpenFilex.open(path);
-      if (result.type != ResultType.done && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              result.message.isNotEmpty
-                  ? result.message
-                  : 'Não foi possível abrir $name',
-            ),
-          ),
-        );
-      }
+      await DownloadService.instance.openGeneratedFile(path);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)

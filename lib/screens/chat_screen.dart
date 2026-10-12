@@ -8,6 +8,7 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/gama_colors.dart';
@@ -71,9 +72,6 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _speakNextReply = false;
   bool _ttsEarlyStarted = false;
   bool _isSpeaking = false;
-  final Set<String> _handledArtifactIds = <String>{};
-  Future<void>? _artifactSaveFuture;
-  String? _artifactNotice;
 
   // Quando a resposta foi solicitada por voz, o texto recebido fica
   // retido até o áudio realmente começar. Depois, ele é revelado em blocos
@@ -232,7 +230,7 @@ class _ChatScreenState extends State<ChatScreen> {
         listenFor: const Duration(minutes: 30),
         // O Android pode ignorar valores longos e encerrar por silêncio.
         // onStatus faz a reabertura automática enquanto _micArmed == true.
-        pauseFor: const Duration(seconds: 5),
+        pauseFor: const Duration(seconds: 2),
         onResult: (result) => _onSpeechResult(result, sessionId),
       );
     }
@@ -389,6 +387,20 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _openLink(String? href) async {
     if (href == null || href.trim().isEmpty) return;
     var raw = href.trim();
+    final artifactUri = Uri.tryParse(raw);
+    if (artifactUri?.scheme == 'gama-artifact') {
+      final segments = artifactUri!.pathSegments;
+      final artifactId = segments.isNotEmpty ? segments.first : '';
+      final filename =
+          artifactUri.queryParameters['filename'] ?? 'gama_arquivo.zip';
+      if (artifactUri.host != 'download' ||
+          !RegExp(r'^[A-Za-z0-9_-]{6,128}$').hasMatch(artifactId)) {
+        _snack('Link de download inválido');
+        return;
+      }
+      await _downloadGeneratedArtifact(artifactId, filename);
+      return;
+    }
     if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
       raw = 'https://$raw';
     }
@@ -415,40 +427,101 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _saveGeneratedArtifact(Map<String, dynamic> artifact) async {
-    final downloadPath = artifact['download_path']?.toString() ?? '';
-    final filename = artifact['filename']?.toString() ?? 'gama_arquivos.zip';
-    if (!downloadPath.startsWith('/artifacts/')) {
-      _snack('O servidor retornou um caminho de download inválido.');
+  String _cleanMessageText(Message message) {
+    return MessageSanitize.forApi(message.content)
+        .replaceAll('[imagem gerada anteriormente nesta conversa]', '')
+        .trim();
+  }
+
+  Future<void> _copyMessage(Message message) async {
+    await Clipboard.setData(ClipboardData(text: _cleanMessageText(message)));
+    _snack('Mensagem copiada');
+  }
+
+  Future<void> _downloadMessage(Message message) async {
+    try {
+      final imagePattern = RegExp(
+        r'\[gama_image\]\s*mime:([^\n]+)\s*data:([A-Za-z0-9+/=\s]+)\s*\[/gama_image\]',
+        multiLine: true,
+      );
+      var savedImages = 0;
+      for (final match in imagePattern.allMatches(message.content)) {
+        await DownloadService.instance.saveBase64Image(
+          match.group(2)!,
+          mime: match.group(1)!.trim(),
+        );
+        savedImages++;
+      }
+
+      final text = _cleanMessageText(message);
+      String? path;
+      if (text.length > 20) {
+        path = await DownloadService.instance.saveText(text);
+      }
+      if (path != null) await DownloadService.instance.openPath(path);
+      _snack(
+        savedImages > 0
+            ? 'Salvo ($savedImages imagem(ns))'
+            : 'Arquivo salvo no dispositivo',
+      );
+    } catch (error) {
+      _snack('Falha ao salvar: $error');
+    }
+  }
+
+  Future<void> _shareMessage(Message message, BuildContext shareContext) async {
+    final text = _cleanMessageText(message);
+    if (text.isEmpty) {
+      _snack('Não há texto para compartilhar');
       return;
     }
 
     try {
-      final savedPath = await DownloadService.instance.downloadArtifact(
-        downloadPath,
+      final renderObject = shareContext.findRenderObject();
+      final box = renderObject is RenderBox ? renderObject : null;
+      final origin = box == null
+          ? null
+          : box.localToGlobal(Offset.zero) & box.size;
+      await SharePlus.instance.share(
+        ShareParams(
+          title: 'Mensagem da Gamma',
+          text: text,
+          sharePositionOrigin: origin,
+        ),
+      );
+    } catch (error) {
+      _snack('Não consegui compartilhar a mensagem: $error');
+    }
+  }
+
+  Future<void> _downloadGeneratedArtifact(
+    String artifactId,
+    String filename,
+  ) async {
+    late final String savedPath;
+    try {
+      savedPath = await DownloadService.instance.downloadArtifact(
+        '/artifacts/$artifactId/download',
         filename: filename,
       );
       final file = File(savedPath);
       await LibraryScreen.addEntry(
         name: filename,
-        kind: artifact['kind']?.toString() ?? 'zip',
+        kind: filename.toLowerCase().endsWith('.pdf') ? 'pdf' : 'zip',
         bytes: await file.length(),
         sourcePath: savedPath,
       );
-      _artifactNotice = '📦 **$filename** foi salvo na Biblioteca.';
-      _snack('Arquivo salvo na Biblioteca: $filename');
     } catch (e) {
-      _snack('Não consegui baixar o arquivo gerado: $e');
-    }
-  }
-
-  void _appendArtifactNotice() {
-    final notice = _artifactNotice;
-    if (notice == null || _messages.isEmpty || !_messages.last.isAssistant) {
+      _snack('Não consegui baixar o arquivo: $e');
       return;
     }
-    _messages.last.content = '${_messages.last.content.trim()}\n\n$notice';
-    _artifactNotice = null;
+
+    try {
+      await DownloadService.instance.openGeneratedFile(savedPath);
+      _snack('Arquivo salvo na Biblioteca. Escolha um app para abrir: $filename');
+    } catch (e) {
+      _snack('Arquivo salvo na Biblioteca, mas não consegui abrir: $e');
+    }
   }
 
   Future<void> _showAttachMenu() async {
@@ -897,15 +970,6 @@ class _ChatScreenState extends State<ChatScreen> {
             _pendingSources = List<WebSource>.from(event.sources!);
           }
 
-          final artifact = event.artifact;
-          final artifactId = artifact?['artifact_id']?.toString() ?? '';
-          if (artifact != null &&
-              artifactId.isNotEmpty &&
-              _handledArtifactIds.add(artifactId)) {
-            _artifactSaveFuture = _saveGeneratedArtifact(artifact);
-            unawaited(_artifactSaveFuture!);
-          }
-
           // Imagem gerada pelo backend (GPT Image 2.5 Sunburst)
           if (event.imageBase64 != null && event.imageBase64!.isNotEmpty) {
             final mime = event.imageMime ?? 'image/png';
@@ -937,7 +1001,6 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         },
         onDone: () async {
-          await _artifactSaveFuture;
           final isVoiceReply = _voiceResponsePending;
           _voiceResponseBuffer = _voiceResponseBuffer.replaceAll(
             RegExp(
@@ -998,7 +1061,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 });
               }
-              _appendArtifactNotice();
               await _service.addMessage(_messages.last);
             } catch (e) {
               // Se o áudio falhar, ainda mostramos a resposta completa para
@@ -1010,7 +1072,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 });
               }
-              _appendArtifactNotice();
               await _service.addMessage(_messages.last);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1304,7 +1365,13 @@ class _ChatScreenState extends State<ChatScreen> {
                             alignment: isUser
                                 ? Alignment.centerRight
                                 : Alignment.centerLeft,
-                            child: GestureDetector(
+                            child: Column(
+                              crossAxisAlignment: isUser
+                                  ? CrossAxisAlignment.end
+                                  : CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                GestureDetector(
                               onLongPress: () async {
                                 final action =
                                     await showModalBottomSheet<String>(
@@ -1356,60 +1423,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                     );
                                 if (!mounted || action == null) return;
                                 if (action == 'copy') {
-                                  // copia sem o bloco bruto de imagem base64
-                                  final clean =
-                                      MessageSanitize.forApi(msg.content)
-                                          .replaceAll(
-                                            '[imagem gerada anteriormente nesta conversa]',
-                                            '',
-                                          );
-                                  await Clipboard.setData(
-                                    ClipboardData(text: clean.trim()),
-                                  );
-                                  _snack('Mensagem copiada');
+                                  await _copyMessage(msg);
                                 } else if (action == 'download') {
-                                  try {
-                                    // tenta salvar imagens embutidas
-                                    final re = RegExp(
-                                      r'\[gama_image\]\s*mime:([^\n]+)\s*data:([A-Za-z0-9+/=\s]+)\s*\[/gama_image\]',
-                                      multiLine: true,
-                                    );
-                                    var saved = 0;
-                                    for (final m in re.allMatches(
-                                      msg.content,
-                                    )) {
-                                      await DownloadService.instance
-                                          .saveBase64Image(
-                                            m.group(2)!,
-                                            mime: m.group(1)!.trim(),
-                                          );
-                                      saved++;
-                                    }
-                                    final text =
-                                        MessageSanitize.forApi(msg.content)
-                                            .replaceAll(
-                                              '[imagem gerada anteriormente nesta conversa]',
-                                              '',
-                                            )
-                                            .trim();
-                                    String? path;
-                                    if (text.length > 20) {
-                                      path = await DownloadService.instance
-                                          .saveText(text);
-                                    }
-                                    if (path != null) {
-                                      await DownloadService.instance.openPath(
-                                        path,
-                                      );
-                                    }
-                                    _snack(
-                                      saved > 0
-                                          ? 'Salvo ($saved imagem(ns))'
-                                          : 'Arquivo salvo no dispositivo',
-                                    );
-                                  } catch (e) {
-                                    _snack('Falha ao salvar: $e');
-                                  }
+                                  await _downloadMessage(msg);
                                 }
                               },
                               child: Container(
@@ -1417,7 +1433,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   maxWidth: MediaQuery.of(context).size.width *
                                       (isUser ? 0.86 : 0.94),
                                 ),
-                                margin: const EdgeInsets.only(bottom: 16),
+                                margin: EdgeInsets.only(bottom: isUser ? 16 : 4),
                                 padding: EdgeInsets.symmetric(
                                   horizontal: isUser ? 16 : 14,
                                   vertical: isUser ? 12 : 14,
@@ -1506,6 +1522,68 @@ class _ChatScreenState extends State<ChatScreen> {
                                   ],
                                 ),
                               ),
+                                ),
+                            if (!isUser && msg.content.trim().isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 2, top: 1),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      tooltip: 'Copiar',
+                                      onPressed: () => _copyMessage(msg),
+                                      icon: const Icon(Icons.copy_rounded),
+                                      color: GamaColors.textMuted,
+                                      hoverColor: GamaColors.accentSoft,
+                                      iconSize: 17,
+                                      padding: const EdgeInsets.all(7),
+                                      constraints: const BoxConstraints.tightFor(
+                                        width: 34,
+                                        height: 34,
+                                      ),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                    const SizedBox(width: 5),
+                                    IconButton(
+                                      tooltip: 'Baixar no dispositivo',
+                                      onPressed: () => _downloadMessage(msg),
+                                      icon: const Icon(Icons.download_rounded),
+                                      color: GamaColors.textMuted,
+                                      hoverColor: GamaColors.accentSoft,
+                                      iconSize: 18,
+                                      padding: const EdgeInsets.all(7),
+                                      constraints: const BoxConstraints.tightFor(
+                                        width: 34,
+                                        height: 34,
+                                      ),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Builder(
+                                      builder: (shareContext) => IconButton(
+                                        tooltip: 'Compartilhar',
+                                        onPressed: () => _shareMessage(
+                                          msg,
+                                          shareContext,
+                                        ),
+                                        icon: const Icon(Icons.share_rounded),
+                                        color: GamaColors.textMuted,
+                                        hoverColor: GamaColors.accentSoft,
+                                        iconSize: 17,
+                                        padding: const EdgeInsets.all(7),
+                                        constraints:
+                                            const BoxConstraints.tightFor(
+                                          width: 34,
+                                          height: 34,
+                                        ),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (!isUser) const SizedBox(height: 12),
+                              ],
                             ),
                           );
                         },

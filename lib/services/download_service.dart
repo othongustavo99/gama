@@ -85,17 +85,28 @@ class DownloadService {
         },
       ),
     );
-    final response = await dio.get<List<int>>(
-      downloadPath,
-      options: Options(responseType: ResponseType.bytes),
-    );
-    final bytes = response.data;
-    if (response.statusCode != 200 || bytes == null || bytes.isEmpty) {
-      throw Exception('O servidor não retornou o arquivo completo.');
-    }
     final dir = await _targetDir();
     final file = File(p.join(dir.path, safeName));
-    await file.writeAsBytes(bytes, flush: true);
+    final partial = File(
+      '${file.path}.part-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    try {
+      final response = await dio.download(
+        downloadPath,
+        partial.path,
+        deleteOnError: true,
+      );
+      if (response.statusCode != 200 ||
+          !await partial.exists() ||
+          await partial.length() == 0) {
+        throw Exception('O servidor não retornou o arquivo completo.');
+      }
+      if (await file.exists()) await file.delete();
+      await partial.rename(file.path);
+    } catch (_) {
+      if (await partial.exists()) await partial.delete();
+      rethrow;
+    }
     return file.path;
   }
 
@@ -103,6 +114,44 @@ class DownloadService {
     try {
       await OpenFilex.open(path);
     } catch (_) {}
+  }
+
+  /// Opens a generated file through the platform's file-opening flow.
+  /// Android shows the system "Open with" chooser; Windows opens Explorer
+  /// with the file selected. Other platforms use their default file handler.
+  Future<void> openGeneratedFile(String path) async {
+    if (kIsWeb) {
+      await OpenFilex.open(path);
+      return;
+    }
+
+    if (Platform.isAndroid) {
+      await const MethodChannel('com.example.gama/file_opener')
+          .invokeMethod<void>('openWithChooser', {'path': path});
+      return;
+    }
+
+    if (Platform.isWindows) {
+      final file = File(path);
+      if (!await file.exists()) {
+        throw FileSystemException('Arquivo não encontrado', path);
+      }
+      await Process.start(
+        'explorer.exe',
+        ['/select,', p.normalize(file.absolute.path)],
+        mode: ProcessStartMode.detached,
+      );
+      return;
+    }
+
+    final result = await OpenFilex.open(path);
+    if (result.type != ResultType.done) {
+      throw Exception(
+        result.message.isNotEmpty
+            ? result.message
+            : 'Não foi possível abrir o arquivo.',
+      );
+    }
   }
 
   Future<void> copyText(String text) async {
