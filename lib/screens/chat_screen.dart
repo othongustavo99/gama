@@ -518,7 +518,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       await DownloadService.instance.openGeneratedFile(savedPath);
-      _snack('Arquivo salvo na Biblioteca. Escolha um app para abrir: $filename');
     } catch (e) {
       _snack('Arquivo salvo na Biblioteca, mas não consegui abrir: $e');
     }
