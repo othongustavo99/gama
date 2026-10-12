@@ -64,8 +64,8 @@ def build_zip_with_report(
     arc_prefix: str = "",
     skip_dirs: Optional[set[str]] = None,
     include_junk: bool = False,
-    max_file_size: int = 5 * 1024 * 1024,
-    max_total: int = 80 * 1024 * 1024,
+    max_file_size: int = 8 * 1024 * 1024,  # era 5 MB
+    max_total: int = 100 * 1024 * 1024,  # era 80 MB
 ) -> tuple[bytes, dict[str, Any]]:
     """Compacta um diretório. Retorna (bytes_zip, relatório)."""
     skip = skip_dirs
@@ -131,8 +131,8 @@ def build_zip_from_directory(
     arc_prefix: str = "",
     skip_dirs: Optional[set[str]] = None,
     include_junk: bool = False,
-    max_file_size: int = 5 * 1024 * 1024,
-    max_total: int = 80 * 1024 * 1024,
+    max_file_size: int = 8 * 1024 * 1024,
+    max_total: int = 100 * 1024 * 1024,
 ) -> bytes:
     """Compatibilidade: retorna só os bytes do ZIP."""
     data, _ = build_zip_with_report(
@@ -149,7 +149,7 @@ def build_zip_from_directory(
 def build_zip_from_mapping(
     files: dict[str, str | bytes],
     *,
-    max_total: int = 80 * 1024 * 1024,
+    max_total: int = 100 * 1024 * 1024,
 ) -> bytes:
     """Cria ZIP a partir de {path_relativo: conteúdo}."""
     buf = io.BytesIO()
@@ -178,8 +178,8 @@ def extract_zip_safe(
     dest: Path,
     *,
     max_files: int = 8000,
-    max_single: int = 5 * 1024 * 1024,
-    max_total: int = 80 * 1024 * 1024,
+    max_single: int = 8 * 1024 * 1024,
+    max_total: int = 100 * 1024 * 1024,
 ) -> int:
     """Extrai ZIP com proteções (traversal, symlink, limites reais de leitura)."""
     dest.mkdir(parents=True, exist_ok=True)

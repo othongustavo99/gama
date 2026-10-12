@@ -20,10 +20,10 @@ from typing import Any, Awaitable, Callable
 ChatFn = Callable[[list[dict]], Awaitable[dict[str, Any]]]
 
 CLOSE_MARKER = "[[/GAMA_FILES]]"
-MAX_CONTINUATIONS = 2
-MAX_PLAN_FILES = 12
+MAX_CONTINUATIONS = 3  # era 2; mais uma tentativa contra respostas cortadas
+MAX_PLAN_FILES = 20  # era 12; refactors médios cabem sem estourar custo demais
 PER_FILE_CONCURRENCY = 3
-_TAIL_CHARS = 12_000
+_TAIL_CHARS = 14_000
 
 _CONTINUE_PROMPT = (
     "Sua resposta anterior foi cortada no limite de tamanho. Continue EXATAMENTE de onde parou: "
@@ -37,7 +37,10 @@ _PLAN_PROMPT = (
 )
 _FILE_PROMPT = (
     "Gere SOMENTE o arquivo `{path}`, completo, sem outros arquivos e sem reticências ou trechos omitidos.\n"
-    "Formato obrigatório:\n[[GAMA_FILES]]\npath: {path}\n````\nconteúdo integral\n````\n[[/GAMA_FILES]]"
+    "Formato obrigatório (cabeçalho path: obrigatório; conteúdo integral entre quatro crases):\n"
+    "[[GAMA_FILES]]\npath: {path}\n````\nconteúdo integral\n````\n[[/GAMA_FILES]]\n"
+    "Não invente o arquivo se não houver evidência no contexto; nesse caso responda só:\n"
+    "[[GAMA_FILES]]\npath: {path}\n````\n# arquivo não disponível no contexto\n````\n[[/GAMA_FILES]]"
 )
 
 _PLAN_RE = re.compile(r"\[\[GAMA_PLAN\]\](.*?)(?:\[\[/GAMA_PLAN\]\]|\Z)", re.DOTALL)
@@ -118,10 +121,18 @@ async def generate_files_per_file(
         async with semaphore:
             prompt = {"role": "user", "content": _FILE_PROMPT.format(path=path)}
             result = await chat_with_continuation(chat_fn, base_messages + [prompt])
-            if f"path: {path}" not in result["text"]:
+            text = result["text"] or ""
+            # Aceita "path: X" ou heading markdown com o caminho
+            path_ok = (
+                f"path: {path}" in text
+                or f"path:{path}" in text
+                or f"`{path}`" in text
+                or f"# {path}" in text
+            )
+            if not path_ok:
                 failed.append(path)
                 return ""
-            return result["text"]
+            return text
 
     responses = await asyncio.gather(*(_one(p) for p in paths))
     return {

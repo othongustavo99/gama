@@ -35,11 +35,44 @@ from .validator import validate_path_safe
 
 logger = logging.getLogger(__name__)
 
-MAX_CONCURRENT_DOWNLOADS = 8  # arquivos em paralelo dentro de um mesmo repositório
-MAX_FILE_BYTES = 8 * 1024 * 1024
-MAX_TOTAL_BYTES = 80 * 1024 * 1024
+MAX_CONCURRENT_DOWNLOADS = 10  # arquivos em paralelo dentro de um mesmo repositório
+MAX_FILE_BYTES = 10 * 1024 * 1024  # era 8 MB
+MAX_TOTAL_BYTES = 100 * 1024 * 1024  # era 80 MB
 MAX_FILES = 12_000
 _NOT_COPIED = {".complete", "manifest.json"}
+
+# Entry-points usados quando a árvore da API veio vazia (raw-only / rate-limit).
+_RAW_ONLY_PROBE_PATHS = (
+    "README.md",
+    "pubspec.yaml",
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "go.mod",
+    "Cargo.toml",
+    "pom.xml",
+    "build.gradle",
+    "Dockerfile",
+    "docker-compose.yml",
+    "lib/main.dart",
+    "lib/app.dart",
+    "src/main.dart",
+    "src/App.tsx",
+    "src/App.jsx",
+    "src/index.ts",
+    "src/index.js",
+    "src/main.py",
+    "main.py",
+    "app.py",
+    "main.js",
+    "main.ts",
+    "index.html",
+    "backend/app/main.py",
+    "backend/main.py",
+    "app/main.py",
+    "cmd/main.go",
+    "main.go",
+)
 
 
 async def _download_into(
@@ -123,9 +156,24 @@ async def materialize_github_project(project_id: str, *, force: bool = False) ->
     if not owner or not repo:
         raise ValueError("Metadados do projeto GitHub incompletos")
 
-    files = (meta.get("map") or {}).get("files") or []
+    files = list((meta.get("map") or {}).get("files") or [])
     if len(files) > MAX_FILES:
         raise ValueError(f"Repositório com mais de {MAX_FILES} arquivos; use um subcaminho")
+
+    # raw-only / rate-limit: árvore vazia — tenta entry-points convencionais
+    # para o ZIP não sair sem nenhum arquivo.
+    if not files:
+        logger.warning(
+            "materialize %s/%s: mapa vazio (raw-only?); sondando %d paths convencionais",
+            owner,
+            repo,
+            len(_RAW_ONLY_PROBE_PATHS),
+        )
+        files = [{"path": p, "size": 0, "important": True} for p in _RAW_ONLY_PROBE_PATHS]
+    else:
+        # Prioriza arquivos marcados como important (manifests, entry-points)
+        # para que, perto do limite de bytes, o essencial entre primeiro.
+        files = sorted(files, key=lambda f: (not bool(f.get("important")), f.get("path") or ""))
 
     root = workspace(project_id)
     root.mkdir(parents=True, exist_ok=True)

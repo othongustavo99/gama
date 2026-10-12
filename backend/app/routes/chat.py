@@ -1235,10 +1235,36 @@ async def chat(
                                 f"{file_lines}\n\n"
                                 f"Como aplicar: {apply_steps}"
                             )
+                        # Notas de cobertura (limites / arquivos pulados) para o usuário
+                        coverage_notes: list[str] = []
+                        for item in delivered:
+                            skipped_n = int(item.get("skipped_count") or 0)
+                            if skipped_n:
+                                coverage_notes.append(
+                                    f"{item.get('filename', 'pacote')}: {skipped_n} arquivo(s) "
+                                    "não entraram no ZIP (tamanho ou filtro)."
+                                )
+                            if item.get("truncated"):
+                                coverage_notes.append(
+                                    f"{item.get('filename', 'pacote')}: limite de tamanho do ZIP "
+                                    "foi atingido; o conteúdo é parcial."
+                                )
+                            included_n = item.get("included_files")
+                            if included_n is not None and not skipped_n:
+                                coverage_notes.append(
+                                    f"{item.get('filename', 'pacote')}: {included_n} arquivo(s) incluído(s)."
+                                )
+                        coverage_block = (
+                            ("\n\n" + "\n".join(f"• {n}" for n in coverage_notes))
+                            if coverage_notes
+                            else ""
+                        )
                         delivery_text = (
                             summary
-                            + "\n\nBaixe o arquivo: "
+                            + coverage_block
+                            + "\n\n📥 **Download pronto:** "
                             + links
+                            + "\n\nToque no link acima para baixar o arquivo no dispositivo."
                         )
                         yield json.dumps(
                             {
@@ -1255,7 +1281,7 @@ async def chat(
                             {
                                 "message": {
                                     "role": "assistant",
-                                    "content": "Não consegui gerar o arquivo para download nesta tentativa. Consulte os logs do backend no Railway para ver o erro de geração ou armazenamento.",
+                                    "content": "Não consegui montar o ZIP completo nesta tentativa. Peça de novo com paths específicos (ex.: lib/main.dart) ou envie o projeto em ZIP — assim consigo gerar o pacote com os arquivos corrigidos.",
                                 },
                                 "done": False,
                             },
@@ -1268,7 +1294,7 @@ async def chat(
                         {
                             "message": {
                                 "role": "assistant",
-                                "content": "Não consegui gerar o arquivo para download nesta tentativa. Consulte os logs do backend no Railway para ver o erro de geração ou armazenamento.",
+                                "content": "Não consegui montar o ZIP completo nesta tentativa. Peça de novo com paths específicos (ex.: lib/main.dart) ou envie o projeto em ZIP — assim consigo gerar o pacote com os arquivos corrigidos.",
                             },
                             "done": False,
                         },
