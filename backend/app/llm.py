@@ -349,6 +349,24 @@ class LLMClient:
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> str:
+        result = await self.chat_once_meta(
+            model, messages, timeout=timeout, max_tokens=max_tokens, temperature=temperature
+        )
+        return result["text"]
+
+    async def chat_once_meta(
+        self,
+        model: str,
+        messages: list[dict],
+        *,
+        timeout: float = 120.0,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> dict:
+        """Como chat_once, mas devolve também o motivo de término e o uso de tokens.
+
+        finish_reason == "length" significa que a saída foi cortada pelo limite.
+        """
         model = self.resolve_model(model)
         msgs = self.prepare_messages(messages)
 
@@ -378,9 +396,20 @@ class LLMClient:
             data = r.json()
             if settings.PROVIDER == "openrouter":
                 choices = data.get("choices") or []
-                return str((choices[0].get("message") or {}).get("content") or "").strip() if choices else ""
-            return str((data.get("message") or {}).get("content") or "").strip()
-        return ""
+                if not choices:
+                    return {"text": "", "finish_reason": None, "usage": data.get("usage") or {}}
+                choice = choices[0] or {}
+                return {
+                    "text": str((choice.get("message") or {}).get("content") or "").strip(),
+                    "finish_reason": choice.get("finish_reason"),
+                    "usage": data.get("usage") or {},
+                }
+            return {
+                "text": str((data.get("message") or {}).get("content") or "").strip(),
+                "finish_reason": data.get("done_reason"),
+                "usage": {},
+            }
+        return {"text": "", "finish_reason": None, "usage": {}}
 
     # ---- streaming com eventos (agente) -------------------------------------
     async def stream_events(

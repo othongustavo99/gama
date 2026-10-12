@@ -25,6 +25,7 @@ from ..core.url_fetch import extract_urls
 from ..llm import LLMError
 from ..core.image_analyzer import analyze_images
 from ..core.document_builder import build_pdf, build_zip_from_files
+from ..core.file_bundle import chat_with_continuation, generate_files_per_file
 from ..core.conversation_session import load_session, session_key
 
 logger = logging.getLogger(__name__)
@@ -384,15 +385,7 @@ def _try_build_pdf_from_assistant(
     )
 
 
-async def _generate_files_for_download(
-    *,
-    model: str,
-    prepared_messages: list[dict],
-    assistant_text: str,
-    rejected_response: str | None = None,
-    parse_issue: str | None = None,
-) -> str:
-    """Gera arquivos e pode reparar uma resposta estruturada rejeitada."""
+def _files_base_messages(prepared_messages: list[dict], assistant_text: str) -> list[dict]:
     messages = [dict(message) for message in prepared_messages]
     system_index = next(
         (index for index, message in enumerate(messages) if message.get("role") == "system"),
@@ -439,6 +432,19 @@ Markdown não encerrem o conteúdo.
 
     if assistant_text.strip():
         messages.append({"role": "assistant", "content": assistant_text[-12_000:]})
+    return messages
+
+
+async def _generate_files_for_download(
+    *,
+    model: str,
+    prepared_messages: list[dict],
+    assistant_text: str,
+    rejected_response: str | None = None,
+    parse_issue: str | None = None,
+) -> str:
+    """Gera arquivos e pode reparar uma resposta estruturada rejeitada."""
+    messages = _files_base_messages(prepared_messages, assistant_text)
     if rejected_response is not None:
         repair_request = (
             "A tentativa anterior não pôde ser empacotada: "
@@ -468,12 +474,36 @@ Markdown não encerrem o conteúdo.
         parse_issue,
         max_tokens,
     )
-    return await llm.chat_once(
-        model=model,
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=0.1,
-        timeout=180,
+    result = await chat_with_continuation(_meta_chat_fn(model, max_tokens), messages)
+    _log_generation_result("generate", result)
+    return result["text"]
+
+
+
+
+def _meta_chat_fn(model: str, max_tokens: int):
+    """Função de chamada usada pelo pacote de arquivos: devolve texto + motivo de término."""
+
+    async def _call(msgs: list[dict]) -> dict:
+        return await llm.chat_once_meta(
+            model=model, messages=msgs, max_tokens=max_tokens, temperature=0.1, timeout=180
+        )
+
+    return _call
+
+
+def _log_generation_result(stage: str, result: dict) -> None:
+    usage = result.get("usage") or {}
+    details = usage.get("completion_tokens_details") or {}
+    logger.info(
+        "file generation %s: finish_reason=%s continuations=%s completion_tokens=%s "
+        "reasoning_tokens=%s chars=%d",
+        stage,
+        result.get("finish_reason"),
+        result.get("continuations"),
+        usage.get("completion_tokens"),
+        details.get("reasoning_tokens"),
+        len(result.get("text") or ""),
     )
 
 
@@ -1107,6 +1137,30 @@ async def chat(
                                     first_parse_issue = _gama_files_parse_issue(repaired_text)
                             except Exception as repair_err:
                                 logger.warning("structured file repair failed: %s", repair_err)
+                        if not files and (wants_zip or wants_pdf):
+                            # Último recurso: um arquivo por chamada, em vez de um pacote gigante.
+                            try:
+                                per_file = await generate_files_per_file(
+                                    _meta_chat_fn(active_model, app_settings.ARTIFACT_MAX_OUTPUT_TOKENS),
+                                    _files_base_messages(gama_messages or messages, full_assistant),
+                                )
+                                if per_file["bundle"]:
+                                    per_files = _parse_gama_files(per_file["bundle"])
+                                    if per_files:
+                                        bundle_text = per_file["bundle"]
+                                        files = per_files
+                                    logger.info(
+                                        "per-file generation: paths=%s failed=%s files=%s plan_finish=%s",
+                                        per_file["paths"], per_file["failed"], len(files),
+                                        per_file.get("plan_finish_reason"),
+                                    )
+                                else:
+                                    logger.warning(
+                                        "per-file generation sem arquivos (plan_finish=%s)",
+                                        per_file.get("plan_finish_reason"),
+                                    )
+                            except Exception as per_err:
+                                logger.warning("per-file generation failed: %s", per_err)
                         if not files:
                             logger.warning(
                                 "artifact_generation_failed: no parseable files "
