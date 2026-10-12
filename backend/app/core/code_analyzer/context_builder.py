@@ -157,12 +157,14 @@ def build_context(
     """Contexto para o LLM — mapa + arquivos prioritários.
 
     Arquivos com forced=True (mencionados na pergunta) têm prioridade.
-    Se a pergunta pede conteúdo completo, esses arquivos NÃO são truncados
-    (até um teto alto de segurança).
+    Pedidos de conteúdo completo recebem um orçamento ampliado, mas continuam
+    sujeitos ao limite global de contexto; quando não couberem, são enviados
+    trechos sinalizados para não confundir evidência parcial com arquivo inteiro.
     """
     forced = [r for r in ranked_files if r.get("forced")]
     others = [r for r in ranked_files if not r.get("forced")]
-    # arquivo citado pelo nome → sempre conteúdo integral desses forced
+    # Arquivos citados recebem prioridade e orçamento ampliado; o limite global
+    # continua valendo e a montagem sinaliza qualquer conteúdo parcial.
     full_intent = _wants_full_content(query) or bool(forced)
 
     # pedido de arquivo completo → orçamento bem maior só para esses arquivos
@@ -239,10 +241,8 @@ def build_context(
         parts.append("\n[Nenhum trecho de arquivo foi incluído; não cite arquivos como se tivessem sido lidos.]")
         return "\n".join(parts)
 
-    # teto por arquivo:
-    # - forced + full intent → quase sem corte (até 200k, já limitado na leitura)
-    # - forced normal → fatia generosa
-    # - demais → divide o restante
+    # Teto por arquivo. Mesmo arquivos explicitamente pedidos dividem o orçamento
+    # total, para que a montagem do contexto não ultrapasse o limite do provedor.
     FULL_FILE_CAP = 200_000
     FORCED_CAP = 80_000
 
@@ -263,7 +263,7 @@ def build_context(
     parts.append("\n--- Arquivos relevantes ---")
     evidence_entries: list[str] = []
 
-    def _append_file(item: dict[str, Any], cap: int, no_clip: bool = False) -> bool:
+    def _append_file(item: dict[str, Any], cap: int) -> bool:
         nonlocal used
         path = item.get("path", "?")
         text = item.get("text") or item.get("preview") or ""
@@ -289,7 +289,11 @@ def build_context(
         if item.get("page") and len(text) > cap:
             body = text[:cap]
             note = f"\n…[texto da página com {len(text)} chars; trecho enviado={len(body)}]"
-        elif no_clip or len(text) <= cap:
+        elif len(text) <= cap:
+            # Mesmo quando o usuário pede arquivos completos, a íntegra só entra
+            # se couber no orçamento reservado para este arquivo. Sem esta checagem,
+            # vários arquivos marcados como forced podiam ignorar o orçamento global
+            # e ultrapassar o limite de contexto do provedor.
             body = text
             if not item.get("page") and "DOCX" not in source_label.upper():
                 evidence_label = f"linhas 1-{max(1, len(text.splitlines()))}"
@@ -302,26 +306,37 @@ def build_context(
             note = f"\n…[arquivo com {len(text)} chars; trechos enviados={len(body)}]" if clipped else ""
 
         block = f"{header}\n```\n{body}\n```{note}"
-        if used + len(block) > budget and not (item.get("forced") and full_intent):
-            # tenta caber um resumo menor
+        if used + len(block) > budget:
+            # O orçamento é um limite global, inclusive para arquivos explicitamente
+            # pedidos. Preferimos evidência parcial bem sinalizada a enviar milhões
+            # de caracteres e provocar erro de context length no modelo.
             smaller = max(400, budget - used - 100)
             if smaller < 300:
                 return False
             if item.get("page"):
                 body = text[:smaller]
                 header = f"\n### {path}{tag} — página {item['page']} (trecho)"
+                note = (
+                    f"\n…[página original com {len(text)} chars; "
+                    f"trecho enviado={len(body)} chars]"
+                )
                 if score is not None:
                     header += f"  [score={score:.1f}]"
             else:
                 body, line_ranges, clipped = _select_excerpt(text, query, smaller)
                 evidence_label = f"linhas {line_ranges}"
                 header = f"\n### {path}{tag} — {evidence_label}"
+                note = (
+                    f"\n…[arquivo original com {len(text)} chars; "
+                    f"trechos enviados={len(body)} chars]"
+                    if clipped or len(body) < len(text)
+                    else ""
+                )
                 if score is not None:
                     header += f"  [score={score:.1f}]"
-            block = f"{header}\n```\n{body}\n```"
+            block = f"{header}\n```\n{body}\n```{note}"
             if used + len(block) > budget:
                 return False
-        # forced + full: estoura um pouco o budget se necessário (modelo aguenta)
         parts.append(block)
         used += len(block)
         if item.get("page"):
@@ -334,11 +349,9 @@ def build_context(
 
     # Requested files first; large sources are represented by explicit excerpts.
     for item in forced:
-        text = item.get("text") or item.get("preview") or ""
         ok = _append_file(
             item,
             cap=forced_budget if forced_budget else FORCED_CAP,
-            no_clip=bool(full_intent and len(text) <= FULL_FILE_CAP),
         )
         if not ok and not full_intent:
             break
@@ -347,7 +360,7 @@ def build_context(
     for item in others:
         if used >= budget - 200:
             break
-        ok = _append_file(item, cap=other_budget if other_budget else 800, no_clip=False)
+        ok = _append_file(item, cap=other_budget if other_budget else 800)
         if not ok:
             break
 

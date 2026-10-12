@@ -82,9 +82,20 @@ def _wants_full_file(query: str) -> bool:
 
 
 def _scan_root_for(project_id: str, meta: dict[str, Any]) -> Path:
+    """Resolve the indexed scan root without guessing after lazy downloads.
+
+    ZIP ingestion records its detected top-level project directory in
+    ``scan_root``. GitHub projects, in contrast, keep repository-relative paths
+    and populate their workspace file-by-file; treating a sole downloaded
+    directory (for example ``lib/``) as a new root duplicates the prefix and
+    makes cached source files appear missing.
+    """
     root = workspace(project_id)
     rel = meta.get("scan_root") or "."
     if rel in (".", "", None):
+        source = meta.get("source") or {}
+        if source.get("type") == "github" or meta.get("github_lazy"):
+            return root
         children = [p for p in root.iterdir()] if root.exists() else []
         if len(children) == 1 and children[0].is_dir():
             return children[0]

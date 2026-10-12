@@ -52,5 +52,35 @@ class CodeEvidenceTests(unittest.TestCase):
         self.assertIn("Nenhum trecho de arquivo foi incluído", context)
 
 
+    def test_multiple_requested_large_files_stay_inside_context_budget(self):
+        from app.core.code_analyzer.context_builder import _budget_chars
+
+        files = [
+            {
+                "path": f"src/module_{index}.py",
+                "score": 999.0,
+                "important": True,
+                "forced": True,
+                "text": (f"# module {index}\n" + ("unrelated_line = 123\n" * 3500)),
+            }
+            for index in range(3)
+        ]
+        context = build_context(
+            {
+                "file_count": 3,
+                "files": [{"path": item["path"]} for item in files],
+                "frameworks": ["Python"],
+            },
+            files,
+            "me envie os códigos completos para substituir",
+            max_tokens=1000,
+        )
+
+        # A revisão de vários arquivos completos não deve ultrapassar o teto
+        # global de contexto, mesmo quando todos foram marcados como obrigatórios.
+        self.assertLessEqual(len(context), _budget_chars(18500) + 500)
+        self.assertIn("trechos enviados", context)
+        self.assertNotIn(r"\n###", context)
+
 if __name__ == "__main__":
     unittest.main()

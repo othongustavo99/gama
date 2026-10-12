@@ -27,6 +27,7 @@ from ..core.image_analyzer import analyze_images
 from ..core.document_builder import build_pdf, build_zip_from_files
 from ..core.file_bundle import chat_with_continuation, generate_files_per_file
 from ..core.conversation_session import load_session, session_key
+from ..core.code_analyzer.source_detector import parse_github_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -612,8 +613,13 @@ async def chat(
 
     # ZIPs são indexados no momento do anexo; ler o conteúdo para o modelo é
     # deliberadamente sob demanda. Conversa comum não chama o analisador.
+    # A URL GitHub in the turno atual pode criar/indexar o project_id dentro
+    # de GamaCore.build_messages. Não exija uma sessão já existente antes de
+    # ativar a revisão profunda solicitada junto do link/ZIP.
+    has_current_github_link = bool(parse_github_url(last_user))
     deep_project_review = bool(
-        project_id and (_DEEP_PROJECT_INTENT.search(last_user) or wants_zip_request)
+        (project_id or has_current_github_link)
+        and (_DEEP_PROJECT_INTENT.search(last_user) or wants_zip_request)
     )
 
     has_imgs = bool(getattr(request, "images", None))
@@ -847,11 +853,11 @@ async def chat(
             except Exception as forget_err:
                 logger.warning("forget: %s", forget_err)
 
-            if deep_project_review and project_id:
-                yield json.dumps(
-                    {"gama_meta": {"phase": "project_analyzing", "project_id": project_id}},
-                    ensure_ascii=False,
-                ) + "\n"
+            if deep_project_review and (project_id or has_current_github_link):
+                phase_meta = {"phase": "project_analyzing"}
+                if project_id:
+                    phase_meta["project_id"] = project_id
+                yield json.dumps({"gama_meta": phase_meta}, ensure_ascii=False) + "\n"
 
             # --- monta contexto ---
             try:
@@ -892,7 +898,7 @@ async def chat(
             # The Code Analyzer already injects project context inside
             # build_messages. Keep one retrieval per turn and only add guidance
             # here; a second fetch duplicated context and consumed model budget.
-            if deep_project_review and project_id:
+            if deep_project_review and (project_id or has_current_github_link):
                 has_project_context = any(
                     item.get("role") == "system"
                     and "[Code Analyzer" in str(item.get("content") or "")

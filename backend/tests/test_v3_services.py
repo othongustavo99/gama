@@ -226,6 +226,26 @@ class EndToEndServiceTests(_Env):
             self.assertEqual(zf.read("lib/main.dart").decode(), "void main() { print(1); }\n")
 
 
+class CodeAnalyzerConsistencyTests(_Env):
+    def test_github_workspace_keeps_repository_relative_root_when_only_one_folder_is_loaded(self):
+        pid = self._project(SHA_A, ["lib/main.dart"])
+        meta = index_store.load_meta(pid)
+        root = index_store.workspace(pid)
+        (root / "lib").mkdir(parents=True, exist_ok=True)
+        (root / "lib" / "main.dart").write_text("void main() => print('loaded');", encoding="utf-8")
+        meta["map"]["files"][0]["important"] = True
+        index_store.save_meta(pid, meta)
+
+        from app.core.code_analyzer import pipeline as code_pipeline
+
+        scan = code_pipeline._scan_root_for(pid, meta)
+        context = code_pipeline.build_query_context(pid, "analyze this code", max_tokens=1200)
+
+        self.assertEqual(scan, root)
+        self.assertTrue((scan / "lib" / "main.dart").is_file())
+        self.assertIn("void main()", context)
+
+
 if __name__ == "__main__":
     unittest.main()
 
