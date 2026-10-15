@@ -251,6 +251,10 @@ def build_context(
             "\n(Nenhum arquivo fortemente relacionado; use o mapa e peça paths específicos.)"
         )
         parts.append("\n[Nenhum trecho de arquivo foi incluído; não cite arquivos como se tivessem sido lidos.]")
+        parts.append(
+            f"\n[COBERTURA: nenhum trecho de fonte foi incluído; {indexed_count} item(ns) constam no índice. "
+            "Esta resposta não deve ser apresentada como análise do código-fonte.]"
+        )
         return "\n".join(parts)
 
     # Teto por arquivo. Mesmo arquivos explicitamente pedidos dividem o orçamento
@@ -390,4 +394,18 @@ def build_context(
     else:
         parts.append("\n[Nenhum trecho de arquivo foi incluído; não cite arquivos como se tivessem sido lidos.]")
 
+    context_text = "\n".join(parts).lower()
+    has_omissions = any(
+        marker in context_text
+        for marker in ("linhas omitidas", "trechos enviados=", "texto enviado=", "arquivo com ", "arquivo original com ")
+    )
+    included_evidence = len(evidence_entries)
+    not_included = max(0, indexed_count - included_evidence)
+    coverage_status = "parcial" if not_included or has_omissions else "itens_incluidos_sem_truncamento_detectado"
+    parts.append(
+        f"\n[COBERTURA DA ANÁLISE: {included_evidence} evidência(s) de arquivo/página incluída(s); "
+        f"{indexed_count} item(ns) disponível(is) no índice; aproximadamente {not_included} item(ns) do índice "
+        f"não representado(s) nesta seleção; truncamento detectado={str(has_omissions).lower()}; "
+        f"status={coverage_status}. Isso não equivale automaticamente a uma revisão integral do projeto.]"
+    )
     return "\n".join(parts)

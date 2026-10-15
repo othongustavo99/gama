@@ -25,7 +25,7 @@ from .file_editor import apply_edits, write_files
 from .github_materializer import materialize_github_project
 from .pdf_builder import build_pdf as _build_pdf_bytes
 from .store import load_artifact, list_recent, save_artifact, work_dir
-from .validator import validate_pdf
+from .validator import validate_pdf, validate_source_archive
 from .zip_builder import (
     build_zip_with_report,
     copy_tree_filtered,
@@ -91,6 +91,7 @@ def _zip_response(info: dict[str, Any], report: dict[str, Any], **extra: Any) ->
         "skipped_count": len(report.get("skipped", [])),
         "truncated": bool(report.get("truncated")),
         "validation": report.get("validation"),
+        "source_validation": report.get("source_validation"),
         "download_path": f"/artifacts/{info['artifact_id']}/download",
         **extra,
     }
@@ -108,6 +109,7 @@ def build_zip_from_project(
         raise ValueError(f"Projeto {project_id} não encontrado ou sem arquivos locais")
 
     data, report = build_zip_with_report(scan, include_junk=include_junk)
+    report["source_validation"] = validate_source_archive(data)
     if report["included"] == 0:
         raise ValueError(
             "O projeto não tem arquivos para compactar. Se for um repositório GitHub, "
@@ -122,6 +124,7 @@ def build_zip_from_project(
             "source": "project",
             "project_id": project_id,
             "validation": report["validation"],
+            "source_validation": report["source_validation"],
             "skipped_count": len(report["skipped"]),
         },
         user_id=user_id,
@@ -140,11 +143,12 @@ def build_zip_from_files(
 
     data = build_zip_from_mapping(files)
     validation = validate_zip(data)
+    source_validation = validate_source_archive(data)
     info = save_artifact(
         kind="zip",
         filename=filename,
         data=data,
-        meta={"source": "files", "file_count": len(files), "validation": validation},
+        meta={"source": "files", "file_count": len(files), "validation": validation, "source_validation": source_validation},
         user_id=user_id,
     )
     return {
@@ -154,6 +158,7 @@ def build_zip_from_files(
         "kind": "zip",
         "size": info["size"],
         "validation": validation,
+        "source_validation": source_validation,
         "download_path": f"/artifacts/{info['artifact_id']}/download",
     }
 
@@ -208,6 +213,7 @@ def apply_edits_and_zip(
             edit_result["applied"].extend(f"write:{p}" for p in written)
 
         data, report = build_zip_with_report(project_root, include_junk=include_junk)
+        report["source_validation"] = validate_source_archive(data)
         name = filename or "project_edited.zip"
         info = save_artifact(
             kind="zip",
@@ -217,6 +223,7 @@ def apply_edits_and_zip(
                 "source": src_label,
                 "edits": edit_result,
                 "validation": report["validation"],
+                "source_validation": report["source_validation"],
                 "skipped_count": len(report["skipped"]),
             },
             user_id=user_id,

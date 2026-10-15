@@ -149,3 +149,78 @@ def validate_path_safe(rel: str) -> bool:
     if not any(p not in ("", ".") for p in parts):
         return False
     return True
+
+
+def validate_source_archive(data: bytes, *, max_files: int = 500, max_file_bytes: int = 2 * 1024 * 1024) -> dict[str, Any]:
+    """Valida sintaxe de formatos suportados sem executar código do projeto.
+
+    Verifica Python, JSON/JSONL básico, XML/SVG e TOML quando a stdlib oferece
+    parser. Linguagens sem parser seguro disponível são listadas como não
+    verificadas; não se declara que o ZIP inteiro compila.
+    """
+    import ast
+    import json
+    from pathlib import PurePosixPath
+    import xml.etree.ElementTree as ET
+
+    issues: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    checked: list[str] = []
+    supported = {".py", ".json", ".ipynb", ".xml", ".svg", ".plist", ".toml"}
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            candidates = [info for info in archive.infolist() if not info.is_dir()]
+            processed = 0
+            for info in candidates:
+                path = info.filename.replace("\\", "/")
+                ext = PurePosixPath(path).suffix.lower()
+                if ext not in supported:
+                    continue
+                if processed >= max_files:
+                    skipped.append({"path": path, "reason": "limite de arquivos verificados"})
+                    continue
+                processed += 1
+                if info.file_size > max_file_bytes:
+                    skipped.append({"path": path, "reason": "arquivo grande demais para validação sintática"})
+                    continue
+                try:
+                    raw = archive.read(info)
+                    text = raw.decode("utf-8-sig")
+                    if ext == ".py":
+                        ast.parse(text, filename=path)
+                    elif ext in {".json", ".ipynb"}:
+                        json.loads(text)
+                    elif ext in {".xml", ".svg", ".plist"}:
+                        ET.fromstring(text)
+                    elif ext == ".toml":
+                        try:
+                            import tomllib
+                        except ImportError:
+                            skipped.append({"path": path, "reason": "tomllib indisponível neste Python"})
+                            continue
+                        tomllib.loads(text)
+                    checked.append(path)
+                except (UnicodeDecodeError, SyntaxError, json.JSONDecodeError, ET.ParseError, ValueError) as exc:
+                    issues.append({
+                        "path": path,
+                        "line": getattr(exc, "lineno", None),
+                        "message": str(exc).splitlines()[0][:300],
+                        "validator": ext.lstrip("."),
+                    })
+                except Exception as exc:  # parser inesperado não pode derrubar a geração do artefato
+                    skipped.append({"path": path, "reason": f"falha no validador: {type(exc).__name__}"})
+    except (zipfile.BadZipFile, OSError) as exc:
+        return {"ok": False, "checked_count": 0, "checked_paths": [], "issues": [{"path": "", "line": None, "message": f"ZIP inválido: {exc}"}], "skipped": []}
+
+    return {
+        "ok": not issues,
+        "status": "passed" if not issues else "issues_found",
+        "checked_count": len(checked),
+        "checked_paths": checked[:200],
+        "issues": issues[:200],
+        "issue_count": len(issues),
+        "skipped": skipped[:200],
+        "skipped_count": len(skipped),
+        "note": "Esta validação sintática não substitui flutter analyze, testes, compilação ou revisão humana.",
+    }
