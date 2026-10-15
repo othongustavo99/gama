@@ -18,7 +18,8 @@ import 'identity_service.dart';
 ///   GOOGLE_DESKTOP_CLIENT_ID
 ///   GOOGLE_DESKTOP_CLIENT_SECRET
 ///
-/// userId gravado: google_{id} → memória no servidor é a mesma em qualquer device.
+/// userId gravado pelo IdentityService: google_email_<email-normalizado>.
+/// O backend valida o Bearer e deriva a mesma identidade canônica.
 class AuthService {
   AuthService._();
   static final AuthService instance = AuthService._();
@@ -242,11 +243,16 @@ class AuthService {
         await _google.signOut();
       } catch (_) {}
     }
+    // Não mantenha um token válido em memória depois do logout.
+    _accessToken = null;
+    _accessTokenExpiry = null;
     await IdentityService.instance.signOutLocal();
   }
 
   Future<bool> trySilentGoogle() async {
-    if (isDesktop) return IdentityService.instance.isLoggedIn;
+    // O fluxo OAuth desktop atual não persiste refresh token de forma segura.
+    // Após reiniciar o app, solicite novo login em vez de marcar uma sessão sem Bearer como válida.
+    if (isDesktop) return (await bearerToken()) != null;
     try {
       final account = await _google.signInSilently();
       if (account == null) return IdentityService.instance.isLoggedIn;

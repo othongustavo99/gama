@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/constants.dart';
 import 'auth_service.dart';
+import 'auth_interceptor.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
 
@@ -88,6 +89,9 @@ class DownloadService {
         },
       ),
     );
+    if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
+      dio.interceptors.add(GammaAuthInterceptor());
+    }
     final dir = await _targetDir();
     final file = File(p.join(dir.path, safeName));
     final partial = File(

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import '../core/constants.dart';
+import 'auth_interceptor.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
 
@@ -36,6 +37,9 @@ class MemoryService {
   );
 
   Dio _dio() {
+    if (!_client.interceptors.any((i) => i is GammaAuthInterceptor)) {
+      _client.interceptors.add(GammaAuthInterceptor());
+    }
     _client.options.baseUrl = SettingsService.instance.baseUrl;
     _client.options.headers['X-User-Id'] = IdentityService.instance.userId;
     _client.options.headers.addAll(AppConstants.authHeaders);

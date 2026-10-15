@@ -16,6 +16,7 @@ from .routes.project import router as project_router
 from .routes.tts import router as tts_router
 from .routes.artifacts import router as artifacts_router
 from .security import body_too_large, rate_limit_chat, rate_limit_default, require_api_key
+from .core.identity import require_auth
 from .storage_status import inspect_data_storage
 
 logger = logging.getLogger("gama")
@@ -45,7 +46,9 @@ async def lifespan(_app: FastAPI):
     if settings.PROVIDER == "openrouter" and not settings.OPENROUTER_API_KEY:
         logger.warning("OPENROUTER_API_KEY ausente: /chat vai falhar até ser configurada.")
     if not settings.GAMA_API_KEY:
-        logger.warning("GAMA_API_KEY ausente: a API está ABERTA para qualquer pessoa com a URL.")
+        logger.warning("GAMA_API_KEY ausente: a proteção por chave de API está desativada.")
+    if not require_auth():
+        logger.warning("GAMA_REQUIRE_AUTH está desativado: rotas legadas aceitam X-User-Id informado pelo cliente.")
     if settings.CORS_ORIGINS == ["*"]:
         logger.info("CORS aberto (*). Restrinja com CORS_ORIGINS se houver cliente web.")
     yield
@@ -96,6 +99,7 @@ async def health():
         "web_search": settings.WEB_SEARCH_ENABLED,
         "agent_tools": settings.AGENT_TOOLS_ENABLED and settings.PROVIDER == "openrouter",
         "auth_required": bool(settings.GAMA_API_KEY),
+        "user_auth_required": require_auth(),
         "llm": "online" if ok else "offline",
         "ollama": "online" if ok and settings.PROVIDER == "ollama" else ("n/a" if settings.PROVIDER != "ollama" else "offline"),
         "openrouter": "online" if ok and settings.PROVIDER == "openrouter" else ("n/a" if settings.PROVIDER != "openrouter" else "offline"),

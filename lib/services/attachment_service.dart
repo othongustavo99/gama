@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import '../core/constants.dart';
 import 'settings_service.dart';
 import 'identity_service.dart';
+import 'auth_interceptor.dart';
 
 enum AttachmentKind { text, zip, pdf, document, image, audio, other }
 
@@ -306,6 +307,9 @@ class AttachmentService {
         receiveTimeout: const Duration(seconds: 180),
       ),
     );
+    if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
+      dio.interceptors.add(GammaAuthInterceptor());
+    }
     final form = FormData.fromMap({
       'file': await MultipartFile.fromFile(path, filename: name),
     });
@@ -332,6 +336,9 @@ class AttachmentService {
         receiveTimeout: const Duration(seconds: 180),
       ),
     );
+    if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
+      dio.interceptors.add(GammaAuthInterceptor());
+    }
     final form = FormData.fromMap({
       'file': await MultipartFile.fromFile(path, filename: name),
     });
@@ -356,6 +363,9 @@ class AttachmentService {
           receiveTimeout: const Duration(seconds: 120),
         ),
       );
+      if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
+        dio.interceptors.add(GammaAuthInterceptor());
+      }
       final form = FormData.fromMap({
         'file': await MultipartFile.fromFile(path, filename: name),
       });

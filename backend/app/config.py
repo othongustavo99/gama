@@ -131,7 +131,13 @@ class Settings:
     RATE_LIMIT_DEFAULT_PER_MIN = int(os.getenv("RATE_LIMIT_DEFAULT_PER_MIN", "120"))
     # Quantos proxies confiáveis existem na frente (Railway/Render = 1).
     TRUSTED_PROXY_HOPS = max(0, int(os.getenv("TRUSTED_PROXY_HOPS", "1")))
-    MAX_BODY_MB = int(os.getenv("MAX_BODY_MB", "60"))
+    # Upload individual e corpo HTTP são limites relacionados, mas distintos.
+    # O corpo reserva 5 MB adicionais para multipart/cabeçalhos e outros campos.
+    MAX_UPLOAD_MB = max(1, min(int(os.getenv("MAX_UPLOAD_MB", os.getenv("ARTIFACT_MAX_FILE_MB", "100"))), 1024))
+    MAX_BODY_MB = max(
+        1,
+        min(int(os.getenv("MAX_BODY_MB", str(MAX_UPLOAD_MB + 5))), 2048),
+    )
     MAX_CHAT_MESSAGES = int(os.getenv("MAX_CHAT_MESSAGES", "120"))
     MAX_IMAGES = int(os.getenv("MAX_IMAGES", "4"))
     MAX_IMAGE_B64_CHARS = int(os.getenv("MAX_IMAGE_B64_CHARS", str(14_000_000)))

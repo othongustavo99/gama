@@ -198,7 +198,7 @@ async def ingest_github(
             ]
             if not entries:
                 raise ValueError(f"Caminho '{path_prefix}' não encontrado em {owner}/{repo}@{branch}")
-        cached = find_github_cache(owner, repo, branch, tree_sha) if not path_prefix else None
+        cached = find_github_cache(owner, repo, branch, tree_sha, user_id=user_id) if not path_prefix else None
         if cached:
             summary = get_project_summary(cached)
             if summary:
@@ -1055,3 +1055,68 @@ async def detect_and_prepare(
     except Exception as e:
         logger.warning("github ingest failed: %s", e)
         return {"error": str(e), "source": "github"}
+
+
+def build_coverage_report(project_id: str, context: str, *, level: Optional[str] = None) -> dict[str, Any]:
+    """Resume a cobertura real do contexto enviado ao modelo, sem alegar revisão integral."""
+    from .index_store import load_meta
+
+    meta = load_meta(project_id) or {}
+    map_data = meta.get("map") or {}
+    source = meta.get("source") or {}
+    indexed = map_data.get("files") or []
+    indexed_paths = [str(item.get("path", "")) for item in indexed if item.get("path")]
+
+    included: list[str] = []
+    for match in re.finditer(r"^###\s+(.+?)\s+—\s+(?:linhas|página|trecho)\b", context or "", re.MULTILINE | re.IGNORECASE):
+        path = match.group(1).strip()
+        path = re.sub(r"\s+\(dep\)$", "", path)
+        path = re.sub(r"\s+\[arquivo pedido\]$", "", path)
+        if path and path not in included:
+            included.append(path)
+
+    omitted = [path for path in indexed_paths if path not in set(included)]
+    text = context or ""
+    truncation_markers = (
+        "linhas omitidas", "arquivo com ", "trechos enviados=", "texto enviado=",
+        "alguns arquivos GitHub ainda não foram baixados", "limite de páginas atingido=True",
+        "limite de contexto", "[nenhum trecho de arquivo foi incluído",
+    )
+    truncated = any(marker in text.lower() for marker in truncation_markers)
+    source_partial = bool(meta.get("github_tree_partial") or source.get("raw_only") or meta.get("github_raw_only"))
+    has_evidence = bool(included) and "nenhum trecho de arquivo foi incluído" not in text.lower()
+    no_project_files = not indexed_paths
+    exhaustive = bool(indexed_paths) and not omitted and not truncated and not source_partial
+    if not has_evidence:
+        status = "sem_evidencias"
+    elif exhaustive:
+        status = "todos_os_arquivos_indexados_incluidos"
+    else:
+        status = "parcial"
+
+    warnings: list[str] = []
+    if omitted:
+        warnings.append(f"{len(omitted)} arquivo(s) indexado(s) não foram incluídos no contexto deste turno.")
+    if truncated:
+        warnings.append("Um ou mais arquivos/trechos foram truncados ou tiveram linhas omitidas pelo orçamento de contexto.")
+    if source_partial:
+        warnings.append("A origem GitHub possui árvore parcial, modo raw-only ou limitações conhecidas.")
+    if not has_evidence:
+        warnings.append("Nenhuma evidência de arquivo foi confirmada no contexto; não trate a resposta como análise do código-fonte.")
+    if has_evidence and not exhaustive:
+        warnings.append("Esta é uma análise seletiva, não uma auditoria integral do projeto.")
+    return {
+        "status": status,
+        "source_type": source.get("type", "unknown"),
+        "level": level or "auto",
+        "indexed_file_count": int(map_data.get("file_count") or len(indexed_paths)),
+        "included_file_count": len(included),
+        "included_paths": included[:200],
+        "omitted_file_count": len(omitted),
+        "omitted_paths_sample": omitted[:50],
+        "context_chars": len(text),
+        "context_has_truncation_markers": truncated,
+        "source_index_partial": source_partial,
+        "full_project_review": exhaustive,
+        "warnings": warnings,
+    }

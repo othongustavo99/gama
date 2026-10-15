@@ -2,14 +2,16 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/constants.dart';
+import 'auth_interceptor.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import 'conversation_service.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
 
-/// Sincroniza conversas Hive ↔ Railway (`/conversations`), por `X-User-Id`.
-///
+/// Sincroniza conversas Hive ↔ Railway (`/conversations`).
+/// O backend deriva a identidade do Bearer Google validado; `X-User-Id` fica
+/// apenas como compatibilidade com servidores locais no modo legado.
 /// Com o mesmo login Google no Android e no Windows, o histórico fica igual.
 class ConversationSyncService {
   ConversationSyncService._();
@@ -28,6 +30,9 @@ class ConversationSyncService {
   DateTime? _lastFullSync;
 
   Dio _client() {
+    if (!_dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
+      _dio.interceptors.add(GammaAuthInterceptor());
+    }
     _dio.options.baseUrl = SettingsService.instance.baseUrl;
     _dio.options.headers['X-User-Id'] = IdentityService.instance.userId;
     _dio.options.headers['Accept'] = 'application/json';

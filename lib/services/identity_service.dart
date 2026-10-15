@@ -67,7 +67,10 @@ class IdentityService {
     if (e.contains('@') && e.length >= 5) {
       // só caracteres seguros para path no backend
       final safe = e.replaceAll(RegExp(r'[^\w\.\-@]+'), '_');
-      return 'google_email_$safe';
+      final candidate = 'google_email_$safe';
+      // O backend/armazenamento limita IDs a 120 caracteres. Para e-mails
+      // excepcionalmente longos, use o ID Google imutável nas duas pontas.
+      if (candidate.length <= 120) return candidate;
     }
     final gid = googleId.trim();
     if (gid.isEmpty) return 'google_unknown';

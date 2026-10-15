@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/constants.dart';
+import 'auth_interceptor.dart';
 import 'settings_service.dart';
 
 class TtsService {
@@ -21,7 +22,7 @@ class TtsService {
       responseType: ResponseType.bytes,
       validateStatus: (_) => true,
     ),
-  );
+  )..interceptors.add(GammaAuthInterceptor());
 
   bool _busy = false;
   bool _cancelQueue = false;

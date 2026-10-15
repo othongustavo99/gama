@@ -155,7 +155,7 @@ class HttpIntegrationTests(unittest.TestCase):
 
         pid = index_store.new_project_id()
         index_store.save_meta(pid, {
-            "name": "o/r", "github_lazy": True, "scan_root": ".",
+            "name": "o/r", "user_id": "google_A", "github_lazy": True, "scan_root": ".",
             "source": {"type": "github", "owner": "o", "repo": "r", "branch": "main", "commit_sha": SHA},
             "map": {"files": [{"path": "src/main.py", "size": 5}]},
         })

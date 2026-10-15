@@ -3,7 +3,7 @@ import logging
 import re
 from urllib.parse import quote
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..core.gama import GamaCore
@@ -28,6 +28,8 @@ from ..core.document_builder import build_pdf, build_zip_from_files
 from ..core.file_bundle import chat_with_continuation, generate_files_per_file
 from ..core.conversation_session import load_session, session_key
 from ..core.code_analyzer.source_detector import parse_github_url
+from ..core.identity import current_user_id
+from ..core.code_analyzer.index_store import load_meta
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -577,7 +579,7 @@ async def list_models():
 @router.post("/chat")
 async def chat(
     request: ChatRequest,
-    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+    user_id: str = Depends(current_user_id),
 ):
     """
     Stream com fases:
@@ -616,7 +618,7 @@ async def chat(
     project_id = _attached_project_id(messages)
     if not project_id and getattr(request, "conversation_id", None):
         try:
-            session_user = (x_user_id or request.user_id or "default").strip() or "default"
+            session_user = user_id
             session = load_session(
                 session_key(session_user, request.conversation_id, messages)
             )
@@ -625,6 +627,13 @@ async def chat(
                 project_id = active_project_id
         except Exception:
             logger.exception("Could not recover project id from conversation session")
+
+    if project_id:
+        project_meta = load_meta(project_id)
+        if project_meta and project_meta.get("user_id", "default") != user_id:
+            # O ID pode vir do histórico enviado pelo cliente; nunca permita que
+            # ele faça o chat recuperar contexto de projeto pertencente a outro usuário.
+            raise HTTPException(404, "Projeto não encontrado ou expirado")
 
     has_existing_code_project = bool(project_id) or any(
         "github.com/" in _message_text(message.get("content")).lower()
@@ -882,7 +891,7 @@ async def chat(
             # --- pedido para esquecer algo ---
             forgotten: list[str] = []
             try:
-                _uid_forget = (x_user_id or request.user_id or "default").strip() or "default"
+                _uid_forget = user_id
                 _target = try_forget(last_user) if last_user else None
                 if _target:
                     forgotten = [f["text"] for f in get_store(_uid_forget).forget(_target)]
@@ -899,7 +908,7 @@ async def chat(
 
             # --- monta contexto ---
             try:
-                uid = (x_user_id or request.user_id or "default").strip() or "default"
+                uid = user_id
                 gama_messages, fact_saved, search_query, sources = await gama.build_messages(
                     messages,
                     model=model,
@@ -918,7 +927,7 @@ async def chat(
                 logger.exception("build_messages: %s", e)
                 try:
                     _mem_block = get_store(
-                        (x_user_id or request.user_id or "default").strip() or "default"
+                        user_id
                     ).as_prompt_block()
                 except Exception:
                     _mem_block = ""
@@ -1061,7 +1070,7 @@ async def chat(
             agent_done = False
             if use_agent:
                 _typing_sent = False
-                _uid_agent = (x_user_id or request.user_id or "default").strip() or "default"
+                _uid_agent = user_id
                 try:
                     async for ev in run_agent(
                         llm,
@@ -1134,7 +1143,7 @@ async def chat(
                 wants_zip = wants_zip_request
                 wants_pdf = wants_pdf_request
                 if "[[GAMA_FILES]]" in full_assistant or wants_zip or wants_pdf:
-                    artifact_user = (x_user_id or getattr(request, "user_id", None) or "default").strip() or "default"
+                    artifact_user = user_id
                     bundle_text = full_assistant
                     files = {}
                     simple_flutter_files = simple_flutter_download_files if wants_zip else None
@@ -1348,7 +1357,7 @@ async def chat(
             # Memória automática pós-turno
             if getattr(request, "auto_memory", True):
                 try:
-                    u = (x_user_id or getattr(request, "user_id", None) or "default")
+                    u = user_id
                     user_txt = last_user if isinstance(last_user, str) else ""
                     if user_txt.strip():
                         store = get_store(u)
@@ -1380,7 +1389,7 @@ async def chat(
                     llm,
                     model,
                     messages,
-                    user_id=(x_user_id or getattr(request, "user_id", None) or "default"),
+                    user_id=user_id,
                     conversation_id=getattr(request, "conversation_id", None),
                 )
             except Exception as sum_err:

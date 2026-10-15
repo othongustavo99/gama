@@ -30,10 +30,18 @@ from ..core.document_builder import (
 from ..core.document_builder.pipeline import prepare_project
 from ._upload import read_upload_limited
 from ..core.identity import current_user_id
+from ..core.code_analyzer.index_store import load_meta
 from ..core.document_builder.store import ArtifactStorageLimitError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/artifacts", tags=["artifacts", "document-builder"])
+
+
+def _require_project_owner(project_id: str, user_id: str) -> None:
+    meta = load_meta(project_id)
+    if not meta or meta.get("user_id", "default") != user_id:
+        # 404 evita confirmar a existência de projeto privado alheio.
+        raise HTTPException(404, "Projeto não encontrado ou expirado")
 
 
 class ZipFromProjectRequest(BaseModel):
@@ -97,7 +105,9 @@ async def zip_from_project(
     user_id: str = Depends(current_user_id),
 ):
     try:
-        # Projetos GitHub só têm metadados até aqui: baixa os arquivos antes do ZIP.
+        _require_project_owner(body.project_id, user_id)
+        # Projetos GitHub só têm metadados até aqui: baixa os arquivos depois de
+        # confirmar a propriedade do projeto.
         await prepare_project(body.project_id)
         return build_zip_from_project(
             body.project_id,
@@ -105,6 +115,8 @@ async def zip_from_project(
             include_junk=body.include_junk,
             user_id=user_id,
         )
+    except HTTPException:
+        raise
     except ArtifactStorageLimitError as e:
         raise HTTPException(507, str(e)) from e
     except ValueError as e:
@@ -145,6 +157,7 @@ async def zip_edit(
         raise HTTPException(400, "Informe project_id e/ou edits")
     try:
         if body.project_id:
+            _require_project_owner(body.project_id, user_id)
             await prepare_project(body.project_id)
         edits = [e.model_dump() for e in body.edits]
         return apply_edits_and_zip(
@@ -155,6 +168,8 @@ async def zip_edit(
             include_junk=body.include_junk,
             user_id=user_id,
         )
+    except HTTPException:
+        raise
     except ArtifactStorageLimitError as e:
         raise HTTPException(507, str(e)) from e
     except ValueError as e:
@@ -240,7 +255,8 @@ async def artifact_meta(
     if not info:
         raise HTTPException(404, "Artefato não encontrado ou expirado")
     # não devolve bytes
-    out = {k: v for k, v in info.items() if k != "bytes"}
+    # Não exponha o caminho absoluto do armazenamento no servidor ao cliente.
+    out = {k: v for k, v in info.items() if k not in {"bytes", "path"}}
     out["download_path"] = f"/artifacts/{artifact_id}/download"
     return out
 

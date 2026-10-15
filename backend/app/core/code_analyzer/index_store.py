@@ -76,7 +76,7 @@ def cleanup_old(max_age: float = _TTL_SEC) -> None:
             pass
 
 
-def find_github_cache(owner: str, repo: str, branch: str, tree_sha: str) -> Optional[str]:
+def find_github_cache(owner: str, repo: str, branch: str, tree_sha: str, user_id: Optional[str] = None) -> Optional[str]:
     """Retorna project_id se já houver cache com o mesmo tree SHA."""
     root = _root()
     key = f"{owner}/{repo}@{branch}".lower()
@@ -93,6 +93,7 @@ def find_github_cache(owner: str, repo: str, branch: str, tree_sha: str) -> Opti
                 src.get("type") == "github"
                 and src.get("key") == key
                 and src.get("tree_sha") == tree_sha
+                and (user_id is None or data.get("user_id", "default") == user_id)
             ):
                 return data.get("project_id") or child.name
         except Exception:

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../core/constants.dart';
+import 'auth_interceptor.dart';
 import '../models/message.dart';
 import '../utils/message_sanitize.dart';
 import 'identity_service.dart';
@@ -86,6 +87,9 @@ class OllamaService {
   Dio _client() {
     // Mantém uma única instância do Dio para reaproveitar conexões HTTP.
     // A URL continua podendo ser alterada pelas configurações do app.
+    if (!_dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
+      _dio.interceptors.add(GammaAuthInterceptor());
+    }
     _dio.options.baseUrl = SettingsService.instance.baseUrl;
     _dio.options.headers.addAll(AppConstants.authHeaders);
     return _dio;
