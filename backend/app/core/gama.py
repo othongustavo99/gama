@@ -6,6 +6,7 @@ from .memory import get_store, try_extract_memories
 from .url_fetch import build_url_context
 from .code_analyzer import build_query_context, detect_and_prepare
 from .code_analyzer.pipeline import build_query_context_async
+from .code_analyzer.deep_review import append_deep_review_if_requested
 from .code_analyzer.source_detector import (
     extract_project_id,
     extract_pdf_id,
@@ -54,14 +55,8 @@ logger = logging.getLogger(__name__)
 
 
 class GamaCore:
-    def __init__(self, max_context_messages: Optional[int] = None):
-        # Sem argumento, respeita os limites configuráveis em contexto_budget.py.
-        # Um valor explícito permanece disponível para integrações/tests antigos.
-        self.context_manager = (
-            ContextManager()
-            if max_context_messages is None
-            else ContextManager(max_messages=max(max_context_messages, 4))
-        )
+    def __init__(self, max_context_messages: int = 24):
+        self.context_manager = ContextManager(max_messages=max(max_context_messages, 48))
 
     async def build_messages(
         self,
@@ -230,6 +225,8 @@ class GamaCore:
                 session=session,
                 messages=messages,
                 force_deep=force_deep_code_analysis,
+                llm_client=ollama_client,
+                model=model,
             )
             if code_ctx:
                 prepared.append({"role": "system", "content": code_ctx})
@@ -276,6 +273,8 @@ class GamaCore:
         session: Optional[dict] = None,
         messages: Optional[List[Dict[str, str]]] = None,
         force_deep: bool = False,
+        llm_client=None,
+        model: str = "",
     ) -> str:
         """Prepara contexto de código sem mandar o projeto inteiro ao LLM."""
         if not last_user or not isinstance(last_user, str):
@@ -456,7 +455,10 @@ class GamaCore:
                     "Se o arquivo do link não aparecer ou a busca não o recuperar, informe isso com clareza "
                     "e solicite o caminho/trecho específico; não afirme que leu um arquivo ausente.\n"
                 )
-                return header + (ctx or "")
+                combined = header + (ctx or "")
+                return await append_deep_review_if_requested(
+                    combined, pid, last_user, model_client=llm_client, model=model
+                )
             if summary and summary.get("error"):
                 return (
                     f"(Code Analyzer: falha ao indexar GitHub — {summary['error']}. "
@@ -471,20 +473,26 @@ class GamaCore:
             if session is not None and not session.get("active_project_id"):
                 set_active_project(session, project_id=pid, source="marker")
             try:
-                return await build_query_context_async(
+                ctx = await build_query_context_async(
                     pid,
                     last_user or "contexto do projeto",
                     max_tokens=max_tokens,
                     level=level,
                     extra_paths=extra_paths or None,
                 )
+                return await append_deep_review_if_requested(
+                    ctx, pid, last_user, model_client=llm_client, model=model
+                )
             except Exception:
-                return build_query_context(
+                ctx = build_query_context(
                     pid,
                     last_user or "contexto do projeto",
                     max_tokens=max_tokens,
                     level=level,
                     extra_paths=extra_paths or None,
+                )
+                return await append_deep_review_if_requested(
+                    ctx, pid, last_user, model_client=llm_client, model=model
                 )
 
         # 3) GitHub só na sessão (sem URL nesta mensagem)
@@ -513,7 +521,10 @@ class GamaCore:
                     f"[Code Analyzer] Repositório {summary.get('name')} "
                     f"(project_id={pid})\n"
                 )
-                return header + (ctx or "")
+                combined = header + (ctx or "")
+                return await append_deep_review_if_requested(
+                    combined, pid, last_user, model_client=llm_client, model=model
+                )
             if summary and summary.get("error"):
                 return f"(Code Analyzer: falha ao indexar GitHub — {summary['error']})"
 
@@ -524,8 +535,11 @@ class GamaCore:
 
             summary = ingest_direct_code(inline, name="inline", user_id=user_id)
             pid = summary["project_id"]
-            return build_query_context(
+            ctx = build_query_context(
                 pid, last_user, max_tokens=max_tokens, level=level, extra_paths=extra_paths or None
+            )
+            return await append_deep_review_if_requested(
+                ctx, pid, last_user, model_client=llm_client, model=model
             )
 
         return ""
