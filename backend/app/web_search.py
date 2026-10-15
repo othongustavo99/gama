@@ -1,10 +1,15 @@
 """
-Rede ampliada + busca PROATIVA.
+Busca web com ativação contextual e sanitização de consultas.
 
 Modos (env WEB_SEARCH_MODE):
-  aggressive  → busca em quase toda mensagem útil (padrão recomendado)
-  balanced    → perguntas, fatos, tech, atualidades
-  explicit    → só se o usuário pedir pesquisa / internet
+  off         → desativa toda busca, inclusive pedidos explícitos
+  balanced    → perguntas/fatos atuais e tópicos técnicos (padrão)
+  explicit    → só pesquisa quando o usuário pedir diretamente
+  aggressive  → busca em mensagens substantivas; não recomendado para privacidade
+
+Antes de sair do backend, a consulta é sanitizada para remover blocos de código,
+credenciais e dados pessoais comuns. Isso reduz a exposição acidental, mas não
+substitui a avaliação do usuário antes de enviar assuntos privados a serviços externos.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from urllib.parse import quote
 import httpx
 
 from .config import settings
+from .core.search_privacy import sanitize_search_query
 
 logger = logging.getLogger(__name__)
 
@@ -88,32 +94,32 @@ def should_search(user_text: str) -> bool:
     if len(text) < 12:
         return False
 
+    # A desativação global tem precedência sobre intenção explícita ou heurísticas.
+    if not getattr(settings, "WEB_SEARCH_ENABLED", True):
+        return False
+    mode = SEARCH_MODE
+    if mode in ("off", "0", "false", "disabled", "none"):
+        return False
+
     if _SKIP.search(text):
         return False
 
     if _EXPLICIT.search(text):
         return True
 
-    mode = SEARCH_MODE
-    if mode in ("off", "0", "false", "disabled"):
-        return False
-
     if mode in ("explicit", "manual"):
         return False
 
-    # aggressive / balanced
+    # Código/arquivos privados são analisados localmente; a busca só é útil se
+    # houver pedido claro de documentação, versão ou erro público.
     if _CODE_ONLY.search(text) and not _EXPLICIT.search(text):
-        # ainda busca se pedir docs/versão/erro público
         if not re.search(r"\b(documenta[cç][aã]o|stackoverflow|pub\.dev|erro\s+oficial)\b", text, re.I):
             return False
 
     if mode in ("aggressive", "always", "max"):
-        # Qualquer mensagem substantiva (não cumprimentar / não só código local)
-        if len(text) >= 12:
-            return True
-        return bool(_FACTUAL.search(text))
+        return len(text) >= 12
 
-    # balanced
+    # balanced: mantém a heurística histórica sem enviar automaticamente toda mensagem.
     if _FACTUAL.search(text):
         return True
     if re.search(r"\b(hoje|agora|atual(?:izado)?|202[4-9]|not[ií]cia)\b", text, re.I):
@@ -127,15 +133,37 @@ def should_search(user_text: str) -> bool:
     return False
 
 
+def web_tools_enabled_for_turn(user_text: str) -> bool:
+    """Define se o agente pode sequer receber as ferramentas de busca neste turno.
+
+    No modo `explicit`, não basta bloquear o HTTP ao final: ocultamos as ferramentas
+    quando a solicitação não pede pesquisa diretamente, evitando chamadas inúteis e
+    deixando a política de privacidade coerente com a configuração escolhida.
+    """
+    if not getattr(settings, "WEB_SEARCH_ENABLED", True):
+        return False
+    if SEARCH_MODE in ("off", "0", "false", "disabled", "none"):
+        return False
+    text = (user_text or "").strip()
+    if _SKIP.search(text):
+        return False
+    if SEARCH_MODE in ("explicit", "manual"):
+        return bool(_EXPLICIT.search(text))
+    return True
+
+
 def _clean_query(q: str) -> str:
-    q = re.sub(r"\s+", " ", (q or "").strip())
-    q = re.sub(
+    # Nunca enviar o texto bruto. Este filtro é chamado centralmente por todos os
+    # caminhos (heurística, tools do agente e endpoint de busca).
+    sanitized = sanitize_search_query(q, max_chars=220)
+    sanitized = re.sub(
         r"^(?:por\s+favor|pesquisa(?:r)?|busc(?:a|ar)|me\s+diga|google)\s*[:,]?\s*",
         "",
-        q,
+        sanitized,
         flags=re.I,
     )
-    return q[:220].strip() or q[:220]
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    return sanitized[:220]
 
 
 def _format_results(results: list[dict[str, str]], query: str) -> str:
@@ -182,6 +210,12 @@ def _dedupe(items: list[dict[str, str]], limit: int) -> list[dict[str, str]]:
 
 
 async def search_web(query: str, *, max_results: int = 8) -> list[dict[str, str]]:
+    # Camada central de proteção: chamadas diretas/agent/routes também respeitam
+    # o interruptor global, independentemente da heurística `should_search`.
+    if not getattr(settings, "WEB_SEARCH_ENABLED", True):
+        return []
+    if SEARCH_MODE in ("off", "0", "false", "disabled", "none"):
+        return []
     query = _clean_query(query)
     if not query:
         return []
@@ -193,16 +227,18 @@ async def search_web(query: str, *, max_results: int = 8) -> list[dict[str, str]
             timeout=SEARCH_TIMEOUT_SEC,
         )
     except asyncio.TimeoutError:
-        logger.warning("web search timeout (%.1fs) q=%s", SEARCH_TIMEOUT_SEC, query[:80])
+        # Não registrar a consulta: mesmo sanitizada, ela pode conter contexto privado.
+        logger.warning("web search timeout (%.1fs)", SEARCH_TIMEOUT_SEC)
         return []
     except Exception as e:
-        logger.warning("web search error: %s", e)
+        logger.warning("web search error (%s)", type(e).__name__)
         return []
 
 
 async def search_and_format(query: str, *, max_results: int = 8) -> str:
-    results = await search_web(query, max_results=max_results)
-    return _format_results(results, query)
+    safe_query = _clean_query(query)
+    results = await search_web(safe_query, max_results=max_results)
+    return _format_results(results, safe_query)
 
 
 async def _search_pipeline(query: str, max_results: int) -> list[dict[str, str]]:
@@ -248,7 +284,8 @@ async def _safe(name: str, coro) -> list[dict[str, str]]:
     try:
         return await asyncio.wait_for(coro, timeout=max(4.0, SEARCH_TIMEOUT_SEC - 2))
     except Exception as e:
-        logger.debug("search source %s: %s", name, e)
+        # Exceções HTTP podem incluir a URL consultada; não registrar query/corpo.
+        logger.debug("search source %s failed (%s)", name, type(e).__name__)
         return []
 
 

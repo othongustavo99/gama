@@ -25,14 +25,16 @@ from typing import Any, AsyncIterator, Iterable, Optional
 import httpx
 
 from .config import settings
+from .core.context_budget import (
+    MAX_MESSAGE_CHARS as _MAX_MSG_CHARS,
+    MAX_TOTAL_INPUT_CHARS as _MAX_TOTAL_INPUT_CHARS,
+    _strip_heavy_content,
+    budget_messages as _budget_messages,
+    budget_messages_with_report,
+    budget_raw_tool_messages,
+)
 
 logger = logging.getLogger(__name__)
-
-_GAMA_IMAGE_RE = re.compile(r"\[gama_image\][\s\S]*?\[/gama_image\]", re.I)
-_MAX_MSG_CHARS = 12_000
-_MAX_TOTAL_INPUT_CHARS = 280_000  # folga vs limite 400k tokens do OpenRouter
-_RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
-
 
 # --------------------------------------------------------------------------- erros
 
@@ -89,73 +91,8 @@ _TRANSIENT = (
     httpx.PoolTimeout,
 )
 
-
-# --------------------------------------------------------------------------- mensagens
-
-def _strip_heavy_content(text: str) -> str:
-    if not text:
-        return ""
-    t = _GAMA_IMAGE_RE.sub("\n[imagem gerada anteriormente]\n", text)
-    if len(t) > _MAX_MSG_CHARS:
-        t = t[:_MAX_MSG_CHARS] + "\n\n…[cortado para caber no contexto]"
-    return t
-
-
-def _budget_messages(messages: list[dict]) -> list[dict]:
-    """Mantém mensagens recentes dentro do orçamento de caracteres.
-
-    A última mensagem do usuário (código colado) usa teto maior e
-    tem prioridade no orçamento.
-    """
-    last_user = -1
-    for i in range(len(messages) - 1, -1, -1):
-        if (messages[i].get("role") or "") == "user":
-            last_user = i
-            break
-
-    def clip_last(txt: str) -> str:
-        if "[gama_image]" in txt:
-            txt = _GAMA_IMAGE_RE.sub("\n[imagem gerada anteriormente]\n", txt)
-        if len(txt) > 100_000:
-            txt = txt[:100_000] + "\n…[código cortado no limite]"
-        return txt
-
-    cleaned: list[dict] = []
-    for i, m in enumerate(messages):
-        role = m.get("role") or "user"
-        content = m.get("content")
-        is_last_user = i == last_user
-        if isinstance(content, list):
-            parts = []
-            for part in content:
-                if not isinstance(part, dict):
-                    continue
-                if part.get("type") == "text":
-                    txt = str(part.get("text") or "")
-                    txt = clip_last(txt) if is_last_user else _strip_heavy_content(txt)
-                    parts.append({"type": "text", "text": txt})
-                else:
-                    parts.append(part)
-            cleaned.append({"role": role, "content": parts or ""})
-        else:
-            txt = str(content or "")
-            cleaned.append({"role": role, "content": clip_last(txt) if is_last_user else _strip_heavy_content(txt)})
-
-    out: list[dict] = []
-    total = 0
-    for idx in range(len(cleaned) - 1, -1, -1):
-        m = cleaned[idx]
-        c = m.get("content")
-        if isinstance(c, list):
-            size = sum(len(str(p.get("text") or "")) for p in c if isinstance(p, dict))
-        else:
-            size = len(str(c or ""))
-        is_last = m.get("role") == "user" and not any(x.get("role") == "user" for x in cleaned[idx + 1:])
-        if out and total + size > _MAX_TOTAL_INPUT_CHARS and not is_last:
-            break
-        out.insert(0, m)
-        total += size
-    return out
+# Aliases mantidos para compatibilidade com código/tests que importavam estes nomes.
+_RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
 
 
 # --------------------------------------------------------------------------- SSE (puro, testável)
@@ -322,8 +259,24 @@ class LLMClient:
 
     # ---- preparo -----------------------------------------------------------
     def prepare_messages(self, messages: list[dict]) -> list[dict]:
+        """Normaliza e seleciona contexto sem perder a instrução principal.
+
+        Os limites são configuráveis por ambiente e preservam os padrões anteriores.
+        O relatório de orçamento contém contagens, nunca o texto privado da conversa.
+        """
         has_mm = any(isinstance(m.get("content"), list) for m in messages)
-        return _budget_messages(self._normalize_messages(messages, keep_multimodal=has_mm))
+        normalized = self._normalize_messages(messages, keep_multimodal=has_mm)
+        prepared, report = budget_messages_with_report(normalized)
+        if report["dropped_messages"] or report["truncated_parts"]:
+            logger.debug(
+                "llm context prepared input_messages=%s output_messages=%s "
+                "dropped=%s truncated_parts=%s chars=%s/%s mandatory_over_budget=%s",
+                report["input_messages"], report["output_messages"],
+                report["dropped_messages"], report["truncated_parts"],
+                report["sent_chars"], report["budget_chars"],
+                report["over_budget_mandatory_context"],
+            )
+        return prepared
 
     def _payload(self, model: str, msgs: list[dict], *, stream: bool, max_tokens: Optional[int],
                  temperature: Optional[float], tools: Optional[list[dict]] = None) -> dict:
@@ -431,7 +384,9 @@ class LLMClient:
         if not settings.OPENROUTER_API_KEY:
             raise LLMError(None, "A chave do provedor de IA não está configurada no servidor.")
         model = self.resolve_model(model)
-        msgs = messages if raw else self.prepare_messages(messages)
+        # O agente usa `raw=True` para preservar tool_calls/tool_call_id. Ainda assim,
+        # resultados de ferramentas antigas não podem fazer o contexto crescer sem controle.
+        msgs = budget_raw_tool_messages(messages) if raw else self.prepare_messages(messages)
         payload = self._payload(model, msgs, stream=True, max_tokens=max_tokens, temperature=temperature, tools=tools)
         retries = settings.LLM_RETRIES
         started = False

@@ -20,10 +20,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .context_budget import (
+    MAX_MESSAGE_CHARS as MAX_MSG_CHARS,
+    CONTEXT_MAX_MESSAGES,
+    CONTEXT_KEEP_RECENT,
+    CONTEXT_SUMMARY_MAX_CHARS,
+    CONTEXT_CURRENT_USER_CHARS,
+    GAMA_IMAGE_RE as _IMG_RE,
+)
+
 logger = logging.getLogger(__name__)
 
-_IMG_RE = re.compile(r"\[gama_image\][\s\S]*?\[/gama_image\]")
-MAX_MSG_CHARS = 12_000
 REFRESH_GAP = 8  # mensagens novas fora da janela antes de re-resumir
 
 
@@ -40,14 +47,22 @@ def _text_of(content: Any) -> str:
 
 def normalize_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
-    for m in messages or []:
+    source = messages or []
+    last_user = next(
+        (i for i in range(len(source) - 1, -1, -1) if (source[i].get("role") or "") == "user"),
+        -1,
+    )
+    for index, m in enumerate(source):
         content = _text_of(m.get("content")).strip()
         if not content:
             continue
         if "[gama_image]" in content:
             content = _IMG_RE.sub("[imagem gerada anteriormente]", content)
-        if len(content) > MAX_MSG_CHARS:
-            content = content[:MAX_MSG_CHARS] + "\n…[cortado]"
+        # Mantém o padrão anterior para não aumentar custos sem configuração, mas
+        # permite ampliar só a mensagem atual para pedidos com código/documentos.
+        limit = CONTEXT_CURRENT_USER_CHARS if index == last_user else MAX_MSG_CHARS
+        if len(content) > limit:
+            content = content[:limit] + "\n…[cortado pelo limite de contexto configurado]"
         out.append({"role": m.get("role", "user"), "content": content})
     return out
 
@@ -108,10 +123,20 @@ class SummaryStore:
 # --------------------------------------------------------------------------- manager
 
 class ContextManager:
-    def __init__(self, max_messages: int = 48, summary_max_chars: int = 2500, keep_recent: int = 24):
-        self.max_messages = max_messages
-        self.summary_max_chars = summary_max_chars
-        self.keep_recent = keep_recent
+    def __init__(
+        self,
+        max_messages: Optional[int] = None,
+        summary_max_chars: Optional[int] = None,
+        keep_recent: Optional[int] = None,
+    ):
+        """Cria o gerenciador de resumo usando os padrões anteriores ou env vars.
+
+        Parâmetros explícitos continuam disponíveis para testes/integrações antigas.
+        """
+        self.max_messages = max(4, int(max_messages if max_messages is not None else CONTEXT_MAX_MESSAGES))
+        self.summary_max_chars = max(256, int(summary_max_chars if summary_max_chars is not None else CONTEXT_SUMMARY_MAX_CHARS))
+        requested_recent = int(keep_recent if keep_recent is not None else CONTEXT_KEEP_RECENT)
+        self.keep_recent = max(1, min(requested_recent, self.max_messages - 1))
 
     async def prepare(self, messages: List[Dict[str, Any]], **_ignored) -> List[Dict[str, str]]:
         """Compat com a v1: devolve só a lista de mensagens."""

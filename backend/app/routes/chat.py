@@ -17,7 +17,7 @@ from ..core.image_gen import (
     ImageIntent,
 )
 from ..config import settings as app_settings
-from ..web_search import should_search, search_web
+from ..web_search import should_search, search_web, web_tools_enabled_for_turn
 from ..core.memory import get_store, extract_facts_with_llm, try_forget
 from ..core.agent import ToolsUnsupported, run_agent
 from ..core.context import schedule_summary_refresh
@@ -1078,7 +1078,7 @@ async def chat(
                         gama_messages,
                         user_id=_uid_agent,
                         user_text=last_user,
-                        web_enabled=bool(app_settings.WEB_SEARCH_ENABLED),
+                        web_enabled=web_tools_enabled_for_turn(last_user),
                         user_urls=extract_urls(" ".join(_message_text(m.get("content")) for m in messages)),
                     ):
                         kind = ev["type"]

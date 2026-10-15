@@ -54,8 +54,14 @@ logger = logging.getLogger(__name__)
 
 
 class GamaCore:
-    def __init__(self, max_context_messages: int = 24):
-        self.context_manager = ContextManager(max_messages=max(max_context_messages, 48))
+    def __init__(self, max_context_messages: Optional[int] = None):
+        # Sem argumento, respeita os limites configuráveis em contexto_budget.py.
+        # Um valor explícito permanece disponível para integrações/tests antigos.
+        self.context_manager = (
+            ContextManager()
+            if max_context_messages is None
+            else ContextManager(max_messages=max(max_context_messages, 4))
+        )
 
     async def build_messages(
         self,
