@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ..code_analyzer.cleaner import is_sensitive_file
+
 SKIP_DIR_NAMES = {
     ".git",
     ".svn",
@@ -168,6 +170,14 @@ def should_skip_file(path: Path) -> bool:
     lower = name.lower()
     suffix = path.suffix.lower()
 
+    if is_sensitive_file(path):
+        return True
+    if lower in {
+        ".env.example", ".env.sample", ".env.template", ".env.dist",
+        "example.env", "sample.env", "credentials.example.json",
+        "service-account.example.json", ".npmrc.example", ".pypirc.example",
+    } or (lower.startswith(".env.") and lower.endswith((".example", ".sample", ".template", ".dist"))):
+        return False
     if lower in KEEP_LOCK_NAMES:
         return False
 

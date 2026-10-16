@@ -7,9 +7,11 @@ import logging
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from ..code_analyzer.cleaner import is_sensitive_file
+
 logger = logging.getLogger(__name__)
 
-MAX_ZIP_BYTES = 100 * 1024 * 1024  # alinhado
+MAX_ZIP_BYTES = 200 * 1024 * 1024  # alinhado com MAX_UPLOAD_MB do backend
 MAX_FILES = 15_000
 MAX_SINGLE_FILE = 15 * 1024 * 1024
 MAX_TOTAL_UNCOMPRESSED = 512 * 1024 * 1024
@@ -39,6 +41,10 @@ def safe_extract(zip_bytes: bytes, dest: Path) -> int:
                 break
 
             name = info.filename.replace("\\", "/")
+            # Não grave credenciais no workspace indexado nem as exponha ao modelo.
+            if is_sensitive_file(name):
+                logger.warning("ZIP: arquivo sensível ignorado na ingestão: %r", name)
+                continue
             rel = PurePosixPath(name)
             if rel.is_absolute() or any(p in ("..", "") for p in rel.parts):
                 continue

@@ -11,13 +11,13 @@ import logging
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from .cleaner import should_skip_dir, should_skip_file
+from .cleaner import is_sensitive_file, should_skip_dir, should_skip_file
 
 logger = logging.getLogger(__name__)
 
 # Limite para o arquivo enviado (comprimido). A hospedagem/proxy também precisa
 # aceitar esse tamanho; este limite sozinho não altera limites externos.
-MAX_ZIP_BYTES = 100 * 1024 * 1024  # 100 MiB
+MAX_ZIP_BYTES = 200 * 1024 * 1024  # 200 MiB; alinhar com config.MAX_UPLOAD_MB
 MAX_FILES = 30_000
 MAX_SINGLE_FILE = 25 * 1024 * 1024  # evita arquivos binários enormes
 MAX_TOTAL_UNCOMPRESSED = 1024 * 1024 * 1024  # proteção contra ZIP bombs
@@ -49,7 +49,7 @@ def safe_extract(zip_bytes: bytes, dest: Path) -> int:
     continua sendo construído a partir de todos os arquivos úteis extraídos.
     """
     if len(zip_bytes) > MAX_ZIP_BYTES:
-        raise ValueError("ZIP maior que 100 MiB; compacte/remova caches ou envie um ZIP menor")
+        raise ValueError("ZIP maior que 200 MiB; compacte/remova caches ou envie um ZIP menor")
 
     dest.mkdir(parents=True, exist_ok=True)
     count = 0
@@ -89,6 +89,9 @@ def safe_extract(zip_bytes: bytes, dest: Path) -> int:
             if any(should_skip_dir(part) for part in rel.parts[:-1]):
                 continue
             relative_path = Path(*rel.parts)
+            if is_sensitive_file(relative_path):
+                logger.warning("ZIP: arquivo potencialmente sensível ignorado: %s", rel)
+                continue
             if should_skip_file(relative_path):
                 continue
 

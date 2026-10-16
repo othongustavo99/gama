@@ -9,6 +9,7 @@ import logging
 import zipfile
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from ..core.code_analyzer.cleaner import is_sensitive_file
 from ._upload import read_upload_limited
 
 logger = logging.getLogger(__name__)
@@ -167,7 +168,7 @@ def _extract_zip(raw: bytes) -> str:
                 continue
             name = info.filename.replace("\\", "/")
             low = name.lower()
-            if any(s in low for s in skip_parts):
+            if any(s in low for s in skip_parts) or is_sensitive_file(name):
                 continue
             all_names.append(name)
         if all_names:
@@ -181,7 +182,7 @@ def _extract_zip(raw: bytes) -> str:
                 continue
             name = info.filename.replace("\\", "/")
             low = name.lower()
-            if any(s in low for s in skip_parts):
+            if any(s in low for s in skip_parts) or is_sensitive_file(name):
                 continue
             if not any(low.endswith(ext) for ext in text_exts):
                 continue

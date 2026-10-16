@@ -133,7 +133,7 @@ class Settings:
     TRUSTED_PROXY_HOPS = max(0, int(os.getenv("TRUSTED_PROXY_HOPS", "1")))
     # Upload individual e corpo HTTP são limites relacionados, mas distintos.
     # O corpo reserva 5 MB adicionais para multipart/cabeçalhos e outros campos.
-    MAX_UPLOAD_MB = max(1, min(int(os.getenv("MAX_UPLOAD_MB", os.getenv("ARTIFACT_MAX_FILE_MB", "100"))), 1024))
+    MAX_UPLOAD_MB = max(1, min(int(os.getenv("MAX_UPLOAD_MB", os.getenv("ARTIFACT_MAX_FILE_MB", "200"))), 1024))
     MAX_BODY_MB = max(
         1,
         min(int(os.getenv("MAX_BODY_MB", str(MAX_UPLOAD_MB + 5))), 2048),

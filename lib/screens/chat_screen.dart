@@ -46,6 +46,10 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isLoading = false;
   String _streamPhase = '';
   List<WebSource> _pendingSources = [];
+  final Map<String, List<WebSource>> _sourcesByMessageId = {};
+  final Map<String, List<Map<String, dynamic>>> _artifactsByMessageId = {};
+  DateTime? _lastAutoScrollAt;
+  bool _scrollCallbackScheduled = false;
   StreamSubscription<ChatStreamEvent>? _streamSubscription;
 
   /// Arquivos anexados (ainda não enviados)
@@ -370,22 +374,129 @@ class _ChatScreenState extends State<ChatScreen> {
   void _loadMessages() {
     setState(() {
       _messages = _service.getMessages(widget.conversationId);
+      _sourcesByMessageId.clear();
+      _artifactsByMessageId.clear();
+      _pendingSources = [];
     });
     _scrollToBottom(force: true);
   }
 
   void _scrollToBottom({bool force = false}) {
+    // O stream pode emitir dezenas de tokens por segundo. Coalescemos os
+    // callbacks e limitamos animações automáticas para evitar trepidação.
+    if (_scrollCallbackScheduled) return;
+    if (!force) {
+      final now = DateTime.now();
+      final last = _lastAutoScrollAt;
+      if (last != null && now.difference(last) < const Duration(milliseconds: 120)) {
+        return;
+      }
+      _lastAutoScrollAt = now;
+    }
+    _scrollCallbackScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollCallbackScheduled = false;
       if (!_scrollController.hasClients) return;
       final position = _scrollController.position;
       if (force || position.pixels >= position.maxScrollExtent - 120) {
         _scrollController.animateTo(
           position.maxScrollExtent,
-          duration: const Duration(milliseconds: 180),
+          duration: Duration(milliseconds: force ? 180 : 90),
           curve: Curves.easeOut,
         );
       }
     });
+  }
+
+  bool _canReusePrompt(Message message) {
+    if (!message.isUser) return false;
+    final content = message.content;
+    // O histórico visível de anexos não contém o payload original da imagem nem
+    // o texto integral indexado do projeto. Não oferecer reenvio que os perderia.
+    return !content.contains('Anexos para análise:') &&
+        !content.contains('[arquivo:') &&
+        !content.contains('[project_id:') &&
+        !content.contains('[gama_image]');
+  }
+
+  Future<void> _editAndResend(Message message, int index) async {
+    if (_isLoading || !_canReusePrompt(message) || index < 0 || index >= _messages.length) {
+      return;
+    }
+    final editController = TextEditingController(text: message.content);
+    final edited = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: GamaColors.surfaceElevated,
+        title: const Text('Editar mensagem', style: TextStyle(color: GamaColors.textPrimary)),
+        content: SizedBox(
+          width: 560,
+          child: TextField(
+            controller: editController,
+            autofocus: true,
+            minLines: 3,
+            maxLines: 12,
+            style: const TextStyle(color: GamaColors.textPrimary),
+            decoration: const InputDecoration(
+              hintText: 'Edite o pedido para a Gamma',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, editController.text.trim()),
+            child: const Text('Reenviar'),
+          ),
+        ],
+      ),
+    );
+    editController.dispose();
+    if (!mounted || edited == null || edited.trim().isEmpty) return;
+    if (index >= _messages.length || _messages[index].id != message.id) return;
+
+    final removed = List<Message>.from(_messages.skip(index));
+    await _service.deleteMessages(removed, sync: false);
+    if (!mounted) return;
+    setState(() {
+      for (final item in removed) {
+        _sourcesByMessageId.remove(item.id);
+        _artifactsByMessageId.remove(item.id);
+      }
+      _messages.removeRange(index, _messages.length);
+      _controller.text = edited.trim();
+    });
+    await _sendMessage();
+  }
+
+  Future<void> _regenerateResponse(int assistantIndex) async {
+    if (_isLoading ||
+        assistantIndex != _messages.length - 1 ||
+        assistantIndex <= 0 ||
+        !_messages[assistantIndex].isAssistant) {
+      return;
+    }
+    final prompt = _messages[assistantIndex - 1];
+    if (!_canReusePrompt(prompt)) {
+      _snack('Não é possível regenerar esta resposta porque a mensagem anterior contém anexos.');
+      return;
+    }
+    final removed = List<Message>.from(_messages.skip(assistantIndex - 1));
+    await _service.deleteMessages(removed, sync: false);
+    if (!mounted) return;
+    setState(() {
+      for (final item in removed) {
+        _sourcesByMessageId.remove(item.id);
+        _artifactsByMessageId.remove(item.id);
+      }
+      _messages.removeRange(assistantIndex - 1, _messages.length);
+      _controller.text = prompt.content;
+    });
+    await _sendMessage();
   }
 
   Future<void> _openLink(String? href) async {
@@ -673,17 +784,16 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final result = await FilePicker.pickFiles(type: FileType.any);
       if (result == null || result.isEmpty) return;
-      // file_picker 13.x devolve List<PlatformFile>? (sem .files)
-      final processing = <Future<void>>[];
+      // Processa sequencialmente para não iniciar vários uploads grandes em
+      // paralelo (Android tem memória limitada e o backend também é protegido).
       for (final f in result) {
         final path = f.path;
         if (path == null || path.isEmpty) {
           _snack('${f.name}: caminho indisponível');
           continue;
         }
-        processing.add(_addPath(path));
+        await _addPath(path);
       }
-      await Future.wait(processing);
     } catch (e) {
       _snack('Arquivos: $e');
     }
@@ -1012,6 +1122,19 @@ class _ChatScreenState extends State<ChatScreen> {
             _pendingSources = List<WebSource>.from(event.sources!);
           }
 
+          // Metadados confiáveis de entrega: separam integridade do ZIP da
+          // validação sintática real dos arquivos que ele contém.
+          if (event.artifact != null &&
+              _messages.isNotEmpty &&
+              _messages.last.isAssistant) {
+            final artifacts = _artifactsByMessageId.putIfAbsent(
+              _messages.last.id,
+              () => <Map<String, dynamic>>[],
+            );
+            artifacts.add(Map<String, dynamic>.from(event.artifact!));
+            setState(() {});
+          }
+
           // Imagem gerada pelo backend (GPT Image 2.5 Sunburst)
           if (event.imageBase64 != null && event.imageBase64!.isNotEmpty) {
             final mime = event.imageMime ?? 'image/png';
@@ -1070,6 +1193,13 @@ class _ChatScreenState extends State<ChatScreen> {
               _messages.last.content =
                   'Não recebi resposta do servidor. Tente novamente.';
             }
+          }
+
+          if (_messages.isNotEmpty &&
+              _messages.last.isAssistant &&
+              _pendingSources.isNotEmpty) {
+            _sourcesByMessageId[_messages.last.id] =
+                List<WebSource>.unmodifiable(_pendingSources);
           }
 
           if (mounted) {
@@ -1429,6 +1559,43 @@ class _ChatScreenState extends State<ChatScreen> {
                                         child: Column(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
+                                            if (!_isLoading && isUser && _canReusePrompt(msg))
+                                              ListTile(
+                                                leading: const Icon(
+                                                  Icons.edit_note_rounded,
+                                                  color: GamaColors.accent,
+                                                ),
+                                                title: const Text(
+                                                  'Editar e reenviar',
+                                                  style: TextStyle(color: GamaColors.textPrimary),
+                                                ),
+                                                subtitle: const Text(
+                                                  'Substitui esta mensagem e as respostas seguintes',
+                                                  style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                                                ),
+                                                onTap: () => Navigator.pop(ctx, 'edit_resend'),
+                                              ),
+                                            if (!_isLoading &&
+                                                !isUser &&
+                                                index == _messages.length - 1 &&
+                                                index > 0 &&
+                                                _messages[index - 1].isUser &&
+                                                _canReusePrompt(_messages[index - 1]))
+                                              ListTile(
+                                                leading: const Icon(
+                                                  Icons.refresh_rounded,
+                                                  color: GamaColors.accent,
+                                                ),
+                                                title: const Text(
+                                                  'Regenerar resposta',
+                                                  style: TextStyle(color: GamaColors.textPrimary),
+                                                ),
+                                                subtitle: const Text(
+                                                  'Tenta outra resposta para a última mensagem',
+                                                  style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                                                ),
+                                                onTap: () => Navigator.pop(ctx, 'regenerate'),
+                                              ),
                                             ListTile(
                                               leading: const Icon(
                                                 Icons.copy_rounded,
@@ -1468,6 +1635,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                   await _copyMessage(msg);
                                 } else if (action == 'download') {
                                   await _downloadMessage(msg);
+                                } else if (action == 'edit_resend') {
+                                  await _editAndResend(msg, index);
+                                } else if (action == 'regenerate') {
+                                  await _regenerateResponse(index);
                                 }
                               },
                               child: Container(
@@ -1561,6 +1732,28 @@ class _ChatScreenState extends State<ChatScreen> {
                                         isUser: isUser,
                                         onTapLink: _openLink,
                                       ),
+                                    if (!isUser &&
+                                        (_sourcesByMessageId[msg.id]?.isNotEmpty ?? false)) ...[
+                                      const SizedBox(height: 12),
+                                      _SourceList(
+                                        sources: _sourcesByMessageId[msg.id]!,
+                                        onTapLink: _openLink,
+                                      ),
+                                    ],
+                                    if (!isUser &&
+                                        (_artifactsByMessageId[msg.id]?.isNotEmpty ?? false)) ...[
+                                      const SizedBox(height: 12),
+                                      _ArtifactStatusList(
+                                        artifacts: _artifactsByMessageId[msg.id]!,
+                                        onDownload: (artifact) {
+                                          final id = artifact['artifact_id']?.toString() ?? '';
+                                          final filename = artifact['filename']?.toString() ?? 'gamma_arquivo.zip';
+                                          if (id.isNotEmpty) {
+                                            _downloadGeneratedArtifact(id, filename);
+                                          }
+                                        },
+                                      ),
+                                    ],
                                   ],
                                 ),
                               ),
@@ -1771,6 +1964,256 @@ class _ChatScreenState extends State<ChatScreen> {
           },
         ),
       ],
+    );
+  }
+}
+
+class _ArtifactStatusList extends StatelessWidget {
+  final List<Map<String, dynamic>> artifacts;
+  final ValueChanged<Map<String, dynamic>> onDownload;
+
+  const _ArtifactStatusList({required this.artifacts, required this.onDownload});
+
+  String _validationLabel(Map<String, dynamic> validation) {
+    switch (validation['status']?.toString()) {
+      case 'passed':
+        return 'Validação sintática passou nos formatos suportados';
+      case 'partial':
+        return 'Validação sintática parcial';
+      case 'issues_found':
+        return 'Foram encontrados problemas de validação';
+      case 'not_checked':
+        return 'Código não verificado sintaticamente';
+      case 'no_source_files':
+        return 'Nenhum arquivo-fonte reconhecido para validação';
+      case 'invalid_archive':
+        return 'O arquivo não passou na validação estrutural';
+      default:
+        return 'Validação de código não disponível';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: artifacts.map((artifact) {
+        final filename = artifact['filename']?.toString() ?? 'arquivo gerado';
+        final kind = artifact['kind']?.toString() ?? 'zip';
+        final structural = artifact['validation'] is Map
+            ? Map<String, dynamic>.from(artifact['validation'] as Map)
+            : <String, dynamic>{};
+        final source = artifact['source_validation'] is Map
+            ? Map<String, dynamic>.from(artifact['source_validation'] as Map)
+            : <String, dynamic>{};
+        final isZip = kind == 'zip';
+        final zipOk = structural['ok'] == true;
+        final syntaxStatus = source['status']?.toString() ?? '';
+        final checked = source['checked_count']?.toString() ?? '0';
+        final unverified = source['unverified_count']?.toString() ?? '0';
+        final issues = source['issue_count']?.toString() ?? '0';
+
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsets.all(11),
+          decoration: BoxDecoration(
+            color: GamaColors.surfaceCard.withOpacity(0.82),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: GamaColors.borderSoft),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    isZip ? Icons.folder_zip_outlined : Icons.description_outlined,
+                    color: GamaColors.accentBright,
+                    size: 19,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      filename,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: GamaColors.textPrimary,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (isZip) ...[
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      zipOk ? Icons.check_circle_outline : Icons.error_outline,
+                      size: 16,
+                      color: zipOk ? GamaColors.accentBright : Colors.orangeAccent,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        zipOk
+                            ? 'Integridade do ZIP: passou (estrutura/CRC)'
+                            : 'Integridade do ZIP: falhou',
+                        style: const TextStyle(color: GamaColors.textSecondary, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      syntaxStatus == 'passed'
+                          ? Icons.verified_outlined
+                          : syntaxStatus == 'issues_found'
+                              ? Icons.warning_amber_rounded
+                              : Icons.info_outline_rounded,
+                      size: 16,
+                      color: syntaxStatus == 'issues_found' ? Colors.orangeAccent : GamaColors.accentBright,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        _validationLabel(source),
+                        style: const TextStyle(color: GamaColors.textSecondary, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+                if (source.isNotEmpty) ...[
+                  const SizedBox(height: 5),
+                  Text(
+                    'Arquivos verificados: $checked · não verificados: $unverified · problemas: $issues',
+                    style: const TextStyle(color: GamaColors.textMuted, fontSize: 11),
+                  ),
+                  if (source['note'] is String)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 5),
+                      child: Text(
+                        source['note'].toString(),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: GamaColors.textMuted, fontSize: 10.5),
+                      ),
+                    ),
+                ],
+              ] else ...[
+                Text(
+                  structural['ok'] == true
+                      ? 'Arquivo gerado e validado estruturalmente.'
+                      : 'O arquivo precisa de verificação adicional.',
+                  style: const TextStyle(color: GamaColors.textSecondary, fontSize: 12),
+                ),
+              ],
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => onDownload(artifact),
+                  icon: const Icon(Icons.download_rounded, size: 16),
+                  label: const Text('Baixar arquivo'),
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(growable: false),
+    );
+  }
+}
+
+class _SourceList extends StatelessWidget {
+  final List<WebSource> sources;
+  final ValueChanged<String?> onTapLink;
+
+  const _SourceList({required this.sources, required this.onTapLink});
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = sources
+        .where((source) => source.url.trim().isNotEmpty)
+        .toList(growable: false);
+    if (visible.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: GamaColors.surfaceCard.withOpacity(0.72),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: GamaColors.borderSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.public_rounded, size: 16, color: GamaColors.accentBright),
+              const SizedBox(width: 7),
+              Text(
+                'Fontes consultadas (${visible.length})',
+                style: const TextStyle(
+                  color: GamaColors.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (final source in visible.take(6))
+            InkWell(
+              onTap: () => onTapLink(source.url),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      source.title.trim().isEmpty ? source.url : source.title.trim(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: GamaColors.accentBright,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                    if (source.snippet.trim().isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        source.snippet.trim(),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: GamaColors.textMuted, fontSize: 11.5),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          if (visible.length > 6)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '+ ${visible.length - 6} fontes adicionais não exibidas',
+                style: const TextStyle(color: GamaColors.textMuted, fontSize: 11),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

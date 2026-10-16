@@ -15,6 +15,7 @@ from typing import Any, Optional
 import httpx
 
 from .code_search import search_files, extract_mentioned_filenames, find_matching_paths
+from .cleaner import is_sensitive_file
 from .context_builder import build_context
 from .dependency_resolver import resolve_dependencies
 from .document_reader import extract_docx_segments, segments_to_map
@@ -491,8 +492,8 @@ async def _load_github_texts(
 
     async def _load_one(path: str) -> tuple[str, str, str]:
         path = (path or "").strip().lstrip("./")
-        if not path:
-            return "", "", ""
+        if not path or is_sensitive_file(path):
+            return path, "", ""
         async with semaphore:
             for r in refs:
                 try:
@@ -578,7 +579,10 @@ def build_query_context(
         return context
 
     map_data = meta.get("map") or {"files": [], "file_count": 0}
-    files = map_data.get("files") or []
+    original_files = map_data.get("files") or []
+    files = [f for f in original_files if not is_sensitive_file(str(f.get("path") or ""))]
+    if len(files) != len(original_files):
+        map_data = {**map_data, "files": files, "file_count": len(files)}
     symbol_index = meta.get("symbols") or {}
 
     # GitHub lazy: sem arquivos no disco — só ranking por path/símbolos limitados
@@ -615,7 +619,7 @@ def build_query_context(
             have = {r["path"] for r in ranked_meta}
             for ep in extra_paths:
                 ep = ep.strip().lstrip("./")
-                if not ep or ep in have:
+                if not ep or is_sensitive_file(ep) or ep in have:
                     continue
                 ranked_meta.insert(
                     0,
@@ -657,7 +661,7 @@ def build_query_context(
         auto_paths.extend(find_matching_paths(files, mentioned))
     for ep in auto_paths:
         ep = (ep or "").strip().lstrip("./").replace("\\", "/")
-        if not ep or ep in have:
+        if not ep or is_sensitive_file(ep) or ep in have:
             continue
         p = scan / ep
         if p.is_file():
@@ -746,7 +750,10 @@ async def build_query_context_async(
 
     level = level or detect_level(query)
     map_data = meta.get("map") or {"files": [], "file_count": 0}
-    files = map_data.get("files") or []
+    original_files = map_data.get("files") or []
+    files = [f for f in original_files if not is_sensitive_file(str(f.get("path") or ""))]
+    if len(files) != len(original_files):
+        map_data = {**map_data, "files": files, "file_count": len(files)}
     symbol_index = meta.get("symbols") or {}
 
     from .code_search import expand_query, score_file
@@ -776,6 +783,7 @@ async def build_query_context_async(
     from .source_detector import extract_need_more_paths
 
     requested_paths.extend(extract_need_more_paths(query))
+    requested_paths = [path for path in requested_paths if not is_sensitive_file(str(path or ""))]
     if requested_paths:
         resolved: list[str] = []
         for ep in requested_paths:
@@ -1065,7 +1073,11 @@ def build_coverage_report(project_id: str, context: str, *, level: Optional[str]
     map_data = meta.get("map") or {}
     source = meta.get("source") or {}
     indexed = map_data.get("files") or []
-    indexed_paths = [str(item.get("path", "")) for item in indexed if item.get("path")]
+    indexed_paths = [
+        str(item.get("path", ""))
+        for item in indexed
+        if item.get("path") and not is_sensitive_file(str(item.get("path", "")))
+    ]
 
     included: list[str] = []
     for match in re.finditer(r"^###\s+(.+?)\s+—\s+(?:linhas|página|trecho)\b", context or "", re.MULTILINE | re.IGNORECASE):

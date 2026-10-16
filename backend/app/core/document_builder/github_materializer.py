@@ -30,6 +30,7 @@ from ..code_analyzer.github_cache import (
     with_materialize_slot,
 )
 from ..code_analyzer.github_reader import fetch_raw_bytes
+from ..code_analyzer.cleaner import is_sensitive_file
 from ..code_analyzer.index_store import load_meta, save_meta, workspace
 from .validator import validate_path_safe
 
@@ -90,6 +91,9 @@ async def _download_into(
         rel = str(item.get("path") or "")
         if not validate_path_safe(rel):
             skipped.append({"path": rel, "reason": "caminho inseguro"})
+            return
+        if is_sensitive_file(rel):
+            skipped.append({"path": rel, "reason": "arquivo sensível omitido para proteger credenciais"})
             return
         if int(item.get("size") or 0) > MAX_FILE_BYTES:
             skipped.append({"path": rel, "reason": "arquivo grande demais"})

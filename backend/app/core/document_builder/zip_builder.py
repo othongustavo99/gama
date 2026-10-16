@@ -19,7 +19,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Optional
 
-from ..code_analyzer.cleaner import should_skip_dir
+from ..code_analyzer.cleaner import is_sensitive_file, should_skip_dir
 from .validator import validate_path_safe, validate_zip
 
 logger = logging.getLogger(__name__)
@@ -32,9 +32,13 @@ def _should_skip(rel: str, skip_dirs: Optional[set[str]], include_junk: bool) ->
 
     `skip_dirs` explícito continua aceito, para chamadas especiais.
     """
+    # Segredos nunca são incluídos, mesmo no modo explícito include_junk.
+    if is_sensitive_file(rel):
+        return True
     if include_junk:
         return False
-    dirs = Path(rel).parts[:-1]  # só diretórios; o nome do arquivo não conta
+    file_path = Path(rel)
+    dirs = file_path.parts[:-1]  # só diretórios; o nome do arquivo não conta
     if skip_dirs is not None:
         return any(d in skip_dirs for d in dirs)
     return any(should_skip_dir(d) for d in dirs)
@@ -87,6 +91,9 @@ def build_zip_with_report(
                 continue
             if not validate_path_safe(rel):
                 report["skipped"].append({"path": rel, "reason": "caminho inseguro"})
+                continue
+            if is_sensitive_file(rel):
+                report["skipped"].append({"path": rel, "reason": "arquivo sensível omitido para proteger credenciais"})
                 continue
             if _should_skip(rel, skip, include_junk):
                 continue
@@ -158,6 +165,10 @@ def build_zip_from_mapping(
         for rel, content in files.items():
             if not validate_path_safe(rel):
                 raise ValueError(f"Path inseguro: {rel}")
+            if is_sensitive_file(rel):
+                raise ValueError(
+                    f"Arquivo sensível não pode ser incluído no ZIP gerado: {rel}"
+                )
             if isinstance(content, str):
                 raw = content.encode("utf-8")
             else:
@@ -197,6 +208,9 @@ def extract_zip_safe(
                 logger.warning("ZIP: link simbólico ignorado: %r", info.filename)
                 continue
             name = info.filename.replace("\\", "/")
+            if is_sensitive_file(name):
+                logger.warning("ZIP: arquivo sensível ignorado ao extrair: %r", info.filename)
+                continue
             if not validate_path_safe(name):
                 logger.warning("ZIP: caminho inseguro ignorado: %r", info.filename)
                 continue

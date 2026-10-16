@@ -45,7 +45,9 @@ class ProcessedAttachment {
 }
 
 class AttachmentService {
-  static const maxBytesPerFile = 50 * 1024 * 1024; // 50 MB
+  static const maxBytesPerFile = 50 * 1024 * 1024; // documentos/arquivos comuns
+  static const maxZipBytes = 200 * 1024 * 1024; // alinhado ao backend (200 MiB)
+  static const maxLocalZipFallbackBytes = 50 * 1024 * 1024;
   static const maxTextExtract = 200000;
 
   /// Limite para mandar imagem no chat (base64 ~ +33%)
@@ -124,11 +126,19 @@ class AttachmentService {
       throw Exception('Arquivo não encontrado: $name');
     }
     final bytes = await file.length();
-    if (bytes > maxBytesPerFile) {
-      throw Exception('$name é grande demais (máx. 50 MB)');
-    }
-
     final kind = kindFor(ext);
+    final sizeLimit = kind == AttachmentKind.zip ? maxZipBytes : maxBytesPerFile;
+    if (bytes > sizeLimit) {
+      final limitMb = sizeLimit ~/ (1024 * 1024);
+      if (kind == AttachmentKind.zip) {
+        throw Exception(
+          '$name tem ${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB. '
+          'O limite deste app é $limitMb MiB por ZIP. Remova .git, venv, '
+          'node_modules, build e caches antes de compactar novamente.',
+        );
+      }
+      throw Exception('$name é grande demais (máx. $limitMb MiB)');
+    }
 
     switch (kind) {
       case AttachmentKind.text:
@@ -143,13 +153,14 @@ class AttachmentService {
         );
 
       case AttachmentKind.zip:
-        // Project Analyzer: indexa no backend (não despeja o ZIP inteiro no modelo)
-        final data = await file.readAsBytes();
+        // Project Analyzer: envia o caminho para MultipartFile sem carregar o
+        // ZIP inteiro na RAM. Isso é especialmente importante para projetos grandes.
         try {
           final summary = await _ingestProjectZip(path, name);
           final id = summary['project_id']?.toString() ?? '';
-          // Marcador mínimo: o analyzer busca arquivos sob demanda.
-          // Não despejar lista de paths/frameworks no histórico (estoura contexto).
+          if (id.isEmpty) {
+            throw Exception('O servidor não retornou o ID do projeto indexado.');
+          }
           final body =
               '[project_id:$id]\n'
               'Projeto anexado: $name. Use o Code Analyzer com este project_id; '
@@ -163,15 +174,33 @@ class AttachmentService {
             bytes: bytes,
           );
         } catch (e) {
-          // fallback: extrato local limitado (comportamento antigo)
-          return ProcessedAttachment(
-            name: name,
-            ext: ext,
-            kind: kind,
-            contentForModel: _extractZipText(data, name),
-            label: '$name (ZIP)',
-            bytes: bytes,
-          );
+          // Se o servidor respondeu com erro, não esconda uma rejeição real usando
+          // o fallback. Para ZIPs grandes também evitamos uma descompactação local
+          // potencialmente pesada; o fallback antigo fica limitado a ZIPs pequenos.
+          if (e is DioException && e.response != null) {
+            throw Exception(_friendlyProjectUploadError(e, name));
+          }
+          if (bytes > maxLocalZipFallbackBytes) {
+            throw Exception(
+              'Não consegui indexar $name no servidor. Como o ZIP é grande, '
+              'não vou descompactá-lo localmente para evitar travamentos. '
+              'Confira a conexão e o limite de upload do backend e tente novamente. '
+              'Detalhe: $e',
+            );
+          }
+          try {
+            final data = await file.readAsBytes();
+            return ProcessedAttachment(
+              name: name,
+              ext: ext,
+              kind: kind,
+              contentForModel: _extractZipText(data, name),
+              label: '$name (extração local limitada)',
+              bytes: bytes,
+            );
+          } catch (fallbackError) {
+            throw Exception('Falha ao processar $name: $fallbackError');
+          }
         }
 
       case AttachmentKind.pdf:
@@ -262,8 +291,9 @@ class AttachmentService {
 
     for (final file in archive) {
       if (!file.isFile) continue;
-      final name = file.name;
-      if (name.contains('__MACOSX') || name.endsWith('/')) continue;
+      final name = file.name.replaceAll('\\', '/');
+      if (name.endsWith('/') || _isSensitiveArchivePath(name) || _isJunkArchivePath(name)) continue;
+      if (name.startsWith('/') || name.split('/').any((part) => part == '..')) continue;
       final ext = p.extension(name).toLowerCase();
       if (!textExts.contains(ext)) {
         buf.writeln('\n(ignorado binário: $name)');
@@ -295,6 +325,85 @@ class AttachmentService {
     return buf.toString();
   }
 
+  String _friendlyProjectUploadError(DioException error, String name) {
+    final status = error.response?.statusCode;
+    final responseData = error.response?.data;
+    String detail = '';
+    if (responseData is Map) {
+      detail = (responseData['detail'] ?? responseData['message'] ?? '').toString();
+    } else if (responseData is String) {
+      detail = responseData.trim();
+    }
+    if (status == 413) {
+      return '$name foi recusado porque o servidor ou proxy limitou o tamanho '
+          'do envio. O app aceita até ${maxZipBytes ~/ (1024 * 1024)} MiB, '
+          'mas a hospedagem pode ter um limite menor. Confira MAX_UPLOAD_MB / '
+          'MAX_BODY_MB e remova .git, venv, node_modules, build e caches. '
+          '${detail.isEmpty ? '' : 'Detalhe: $detail'}';
+    }
+    if (status == 400 && detail.isNotEmpty) {
+      return 'O servidor não aceitou $name: $detail';
+    }
+    return 'Não foi possível indexar $name no servidor'
+        '${status == null ? '' : ' (HTTP $status)'}'
+        '${detail.isEmpty ? '' : ': $detail'}';
+  }
+
+  bool _isSensitiveArchivePath(String path) {
+    final normalized = path.replaceAll('\\', '/').toLowerCase();
+    final parts = normalized.split('/').where((part) => part.isNotEmpty).toList();
+    final name = parts.isEmpty ? '' : parts.last;
+    const sensitiveDirs = {'.ssh', '.aws', '.azure', '.kube', '.gnupg', 'secrets', 'private'};
+    if (parts.take(parts.length - 1).any(sensitiveDirs.contains)) return true;
+    if (parts.take(parts.length - 1).contains('.docker') &&
+        {'config.json', '.config.json'}.contains(name)) return true;
+    for (var i = 0; i + 1 < parts.length; i++) {
+      if (parts[i] == '.config' && parts[i + 1] == 'gcloud') return true;
+    }
+    const safeTemplates = {
+      '.env.example', '.env.sample', '.env.template', '.env.dist',
+      'example.env', 'sample.env', 'credentials.example.json',
+      'service-account.example.json', '.npmrc.example', '.pypirc.example',
+    };
+    if (safeTemplates.contains(name)) return false;
+    if (name.startsWith('.env.') &&
+        (name.endsWith('.example') || name.endsWith('.sample') ||
+            name.endsWith('.template') || name.endsWith('.dist'))) {
+      return false;
+    }
+    if (name == '.env' || name.startsWith('.env.')) return true;
+    const sensitiveNames = {
+      '.npmrc', '.pypirc', '.netrc', '.git-credentials',
+      'credentials', 'credentials.json', 'secrets', 'secrets.json', 'secret.json',
+      'token', 'token.json', 'tokens.json', 'auth.json', 'client_secret.json',
+      'service_account.json', 'service_account_key.json',
+      'application_default_credentials.json',
+      'id_rsa', 'id_ed25519', 'id_ed25519_sk', 'id_ecdsa', 'id_dsa',
+    };
+    if (sensitiveNames.contains(name)) return true;
+    const sensitiveSuffixes = {
+      '.pem', '.key', '.p12', '.pfx', '.jks', '.keystore',
+      '.mobileprovision', '.tfstate', '.tfstate.backup',
+    };
+    if (sensitiveSuffixes.any(name.endsWith)) return true;
+    return (name.startsWith('service-account') ||
+            name.startsWith('firebase-adminsdk') || name.startsWith('client_secret_')) &&
+        name.endsWith('.json');
+  }
+
+  bool _isJunkArchivePath(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final parts = normalized.split('/');
+    const junkDirs = {
+      '.git', '.svn', '.hg', '.dart_tool', '.idea', '.vs', '__macosx',
+      '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'node_modules',
+      'bower_components', 'pods', 'deriveddata', 'build', 'dist', 'out', 'target',
+      '.gradle', '.next', '.nuxt', '.svelte-kit', 'coverage', '.nyc_output',
+      'vendor', 'venv', '.venv', 'env',
+    };
+    return parts.take(parts.length - 1).any((part) => junkDirs.contains(part.toLowerCase()));
+  }
+
   Future<Map<String, dynamic>> _ingestProjectZip(
     String path,
     String name,
@@ -304,7 +413,8 @@ class AttachmentService {
         baseUrl: SettingsService.instance.baseUrl,
         headers: AppConstants.authHeaders,
         connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 180),
+        sendTimeout: const Duration(minutes: 5),
+        receiveTimeout: const Duration(minutes: 5),
       ),
     );
     if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {

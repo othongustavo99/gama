@@ -242,6 +242,30 @@ class ConversationService extends ChangeNotifier {
     ConversationSyncService.instance.pushConversation(message.conversationId);
   }
 
+  /// Remove um conjunto de mensagens e sincroniza a conversa uma única vez.
+  /// Usado por editar/reenviar e regenerar a última resposta.
+  Future<void> deleteMessages(List<Message> messages, {bool sync = true}) async {
+    if (messages.isEmpty) return;
+    final conversationIds = <String>{};
+    for (final message in messages) {
+      conversationIds.add(message.conversationId);
+      try {
+        if (message.isInBox) {
+          await message.delete();
+        }
+      } catch (e) {
+        debugPrint('Não foi possível remover a mensagem ${message.id}: $e');
+      }
+    }
+    notifyListeners();
+    if (sync) {
+      for (final conversationId in conversationIds) {
+        // ignore: unawaited_futures
+        ConversationSyncService.instance.pushConversation(conversationId);
+      }
+    }
+  }
+
   Future<void> updateMessageContent(Message message, String newContent) async {
     message.content = newContent;
     await message.save();

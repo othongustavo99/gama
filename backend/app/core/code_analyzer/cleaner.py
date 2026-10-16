@@ -7,6 +7,59 @@ from __future__ import annotations
 
 from pathlib import Path
 
+
+# Templates podem ser compartilhados; arquivos com credenciais reais não.
+_SAFE_SECRET_TEMPLATES = {
+    ".env.example", ".env.sample", ".env.template", ".env.dist",
+    "example.env", "sample.env", "credentials.example.json",
+    "service-account.example.json", ".npmrc.example", ".pypirc.example",
+}
+_SENSITIVE_EXACT_NAMES = {
+    ".npmrc", ".pypirc", ".netrc", ".git-credentials",
+    "credentials", "credentials.json", "secrets", "secrets.json", "secret.json",
+    "token", "token.json", "tokens.json", "auth.json", "client_secret.json",
+    "service_account.json", "service_account_key.json",
+    "application_default_credentials.json",
+    "id_rsa", "id_ed25519", "id_ed25519_sk", "id_ecdsa", "id_dsa",
+}
+_SENSITIVE_SUFFIXES = (
+    ".pem", ".key", ".p12", ".pfx", ".jks", ".keystore",
+    ".mobileprovision", ".tfstate", ".tfstate.backup",
+)
+
+
+def is_sensitive_file(path: Path | str) -> bool:
+    """Identifica arquivos com alto risco de conter segredos. Templates são permitidos."""
+    raw = str(path).replace("\\", "/")
+    parts = tuple(part.strip().lower() for part in raw.split("/") if part.strip())
+    name = parts[-1] if parts else ""
+    if not name or name in _SAFE_SECRET_TEMPLATES:
+        return False
+    # Diretórios de credenciais são sensíveis por completo, mesmo quando seus
+    # arquivos internos têm nomes genéricos (por exemplo, .kube/config).
+    sensitive_dirs = {".ssh", ".aws", ".azure", ".kube", ".gnupg"}
+    if any(part in sensitive_dirs for part in parts[:-1]):
+        return True
+    if ".docker" in parts[:-1] and name in {"config.json", ".config.json"}:
+        return True
+    if any(parts[i:i + 2] == (".config", "gcloud") for i in range(max(0, len(parts) - 1))):
+        return True
+    if "secrets" in parts[:-1] or "private" in parts[:-1]:
+        return True
+    if name.startswith(".env.") and name.endswith((".example", ".sample", ".template", ".dist")):
+        return False
+
+    # .env, .env.local, .env.production e variantes: preserva apenas templates explícitos.
+    if name == ".env" or name.startswith(".env."):
+        return True
+    if name in _SENSITIVE_EXACT_NAMES:
+        return True
+    if name.endswith(_SENSITIVE_SUFFIXES):
+        return True
+    if name.startswith(("service-account", "firebase-adminsdk", "client_secret_")) and name.endswith(".json"):
+        return True
+    return False
+
 SKIP_DIRS = {
     ".git",
     ".svn",
@@ -231,6 +284,9 @@ def should_skip_file(path: Path) -> bool:
     name = path.name
     lower = name.lower()
     suffix = path.suffix.lower()
+
+    if is_sensitive_file(path):
+        return True
 
     if lower in KEEP_LOCK_NAMES or lower in IMPORTANT_NAMES:
         return False
