@@ -45,8 +45,6 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Message> _messages = [];
   bool _isLoading = false;
   String _streamPhase = '';
-  List<WebSource> _pendingSources = [];
-  final Map<String, List<WebSource>> _sourcesByMessageId = {};
   final Map<String, List<Map<String, dynamic>>> _artifactsByMessageId = {};
   DateTime? _lastAutoScrollAt;
   bool _scrollCallbackScheduled = false;
@@ -374,9 +372,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _loadMessages() {
     setState(() {
       _messages = _service.getMessages(widget.conversationId);
-      _sourcesByMessageId.clear();
       _artifactsByMessageId.clear();
-      _pendingSources = [];
     });
     _scrollToBottom(force: true);
   }
@@ -464,7 +460,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     setState(() {
       for (final item in removed) {
-        _sourcesByMessageId.remove(item.id);
         _artifactsByMessageId.remove(item.id);
       }
       _messages.removeRange(index, _messages.length);
@@ -490,7 +485,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     setState(() {
       for (final item in removed) {
-        _sourcesByMessageId.remove(item.id);
         _artifactsByMessageId.remove(item.id);
       }
       _messages.removeRange(assistantIndex - 1, _messages.length);
@@ -620,9 +614,19 @@ class _ChatScreenState extends State<ChatScreen> {
         filename: filename,
       );
       final file = File(savedPath);
+      final lowerName = filename.toLowerCase();
+      final kind = lowerName.endsWith('.pdf')
+          ? 'pdf'
+          : (lowerName.endsWith('.mp4') ||
+                  lowerName.endsWith('.webm') ||
+                  lowerName.endsWith('.mov') ||
+                  lowerName.endsWith('.m4v') ||
+                  lowerName.endsWith('.mkv'))
+              ? 'video'
+              : 'zip';
       await LibraryScreen.addEntry(
         name: filename,
-        kind: filename.toLowerCase().endsWith('.pdf') ? 'pdf' : 'zip',
+        kind: kind,
         bytes: await file.length(),
         sourcePath: savedPath,
       );
@@ -1051,7 +1055,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.add(userMessage);
       _isLoading = true;
       _streamPhase = 'thinking';
-      _pendingSources = [];
     });
 
     await _service.addMessage(userMessage);
@@ -1116,10 +1119,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
           if (event.phase != null) {
             setState(() => _streamPhase = event.phase!);
-          }
-
-          if (event.sources != null && event.sources!.isNotEmpty) {
-            _pendingSources = List<WebSource>.from(event.sources!);
           }
 
           // Metadados confiáveis de entrega: separam integridade do ZIP da
@@ -1195,19 +1194,11 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           }
 
-          if (_messages.isNotEmpty &&
-              _messages.last.isAssistant &&
-              _pendingSources.isNotEmpty) {
-            _sourcesByMessageId[_messages.last.id] =
-                List<WebSource>.unmodifiable(_pendingSources);
-          }
-
           if (mounted) {
             setState(() {
               _isLoading = false;
               _streamPhase = '';
-              _pendingSources = [];
-            });
+                    });
           }
 
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
@@ -1270,8 +1261,7 @@ class _ChatScreenState extends State<ChatScreen> {
             }
             _isLoading = false;
             _streamPhase = '';
-            _pendingSources = [];
-          });
+                });
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
             await _service.addMessage(_messages.last);
           }
@@ -1319,7 +1309,6 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       _isLoading = false;
       _streamPhase = '';
-      _pendingSources = [];
     });
   }
 
@@ -1733,14 +1722,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                         onTapLink: _openLink,
                                       ),
                                     if (!isUser &&
-                                        (_sourcesByMessageId[msg.id]?.isNotEmpty ?? false)) ...[
-                                      const SizedBox(height: 12),
-                                      _SourceList(
-                                        sources: _sourcesByMessageId[msg.id]!,
-                                        onTapLink: _openLink,
-                                      ),
-                                    ],
-                                    if (!isUser &&
                                         (_artifactsByMessageId[msg.id]?.isNotEmpty ?? false)) ...[
                                       const SizedBox(height: 12),
                                       _ArtifactStatusList(
@@ -1844,6 +1825,18 @@ class _ChatScreenState extends State<ChatScreen> {
                     ? 'Analisando imagem…'
                     : _streamPhase == 'project_analyzing'
                     ? 'Analisando projeto…'
+                    : _streamPhase == 'video_queued'
+                    ? 'Preparando vídeo…'
+                    : _streamPhase == 'video_generating'
+                    ? 'Gerando vídeo…'
+                    : _streamPhase == 'video_downloading'
+                    ? 'Salvando vídeo…'
+                    : _streamPhase == 'video_analyzing'
+                    ? 'Analisando quadros do vídeo…'
+                    : _streamPhase == 'video_editing'
+                    ? 'Criando versão editada…'
+                    : _streamPhase == 'video_improving'
+                    ? 'Aprimorando vídeo…'
                     : _streamPhase == 'thinking'
                     ? 'Pensando…'
                     : 'Gamma está respondendo…',
@@ -1913,6 +1906,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       child: Icon(
                         a.kind.name == 'image'
                             ? Icons.image_rounded
+                            : a.kind.name == 'video'
+                            ? Icons.movie_creation_outlined
                             : a.kind.name == 'zip'
                             ? Icons.folder_zip_rounded
                             : a.kind.name == 'pdf'
@@ -2007,6 +2002,13 @@ class _ArtifactStatusList extends StatelessWidget {
             ? Map<String, dynamic>.from(artifact['source_validation'] as Map)
             : <String, dynamic>{};
         final isZip = kind == 'zip';
+        final isVideo = kind == 'video';
+        final providerCost = double.tryParse(
+          artifact['provider_cost_usd']?.toString() ?? '',
+        );
+        final videoAudioLabel = artifact['audio_generated'] == false
+            ? 'sem áudio'
+            : 'com áudio';
         final zipOk = structural['ok'] == true;
         final syntaxStatus = source['status']?.toString() ?? '';
         final checked = source['checked_count']?.toString() ?? '0';
@@ -2028,7 +2030,7 @@ class _ArtifactStatusList extends StatelessWidget {
               Row(
                 children: [
                   Icon(
-                    isZip ? Icons.folder_zip_outlined : Icons.description_outlined,
+                    isZip ? Icons.folder_zip_outlined : isVideo ? Icons.movie_outlined : Icons.description_outlined,
                     color: GamaColors.accentBright,
                     size: 19,
                   ),
@@ -2107,6 +2109,23 @@ class _ArtifactStatusList extends StatelessWidget {
                       ),
                     ),
                 ],
+              ] else if (isVideo) ...[
+                Text(
+                  'Vídeo gerado${artifact['duration_seconds'] == null ? '' : ' · ${artifact['duration_seconds']} s'}${artifact['resolution'] == null ? '' : ' · ${artifact['resolution']}'} · $videoAudioLabel',
+                  style: const TextStyle(color: GamaColors.textSecondary, fontSize: 12),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Confira o resultado antes de compartilhar ou substituir o original.',
+                  style: TextStyle(color: GamaColors.textMuted, fontSize: 11),
+                ),
+                if (providerCost != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Custo informado pela OpenRouter: US\$${providerCost.toStringAsFixed(4)}',
+                    style: const TextStyle(color: GamaColors.textMuted, fontSize: 11),
+                  ),
+                ],
               ] else ...[
                 Text(
                   structural['ok'] == true
@@ -2128,92 +2147,6 @@ class _ArtifactStatusList extends StatelessWidget {
           ),
         );
       }).toList(growable: false),
-    );
-  }
-}
-
-class _SourceList extends StatelessWidget {
-  final List<WebSource> sources;
-  final ValueChanged<String?> onTapLink;
-
-  const _SourceList({required this.sources, required this.onTapLink});
-
-  @override
-  Widget build(BuildContext context) {
-    final visible = sources
-        .where((source) => source.url.trim().isNotEmpty)
-        .toList(growable: false);
-    if (visible.isEmpty) return const SizedBox.shrink();
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: GamaColors.surfaceCard.withOpacity(0.72),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: GamaColors.borderSoft),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.public_rounded, size: 16, color: GamaColors.accentBright),
-              const SizedBox(width: 7),
-              Text(
-                'Fontes consultadas (${visible.length})',
-                style: const TextStyle(
-                  color: GamaColors.textSecondary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          for (final source in visible.take(6))
-            InkWell(
-              onTap: () => onTapLink(source.url),
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      source.title.trim().isEmpty ? source.url : source.title.trim(),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: GamaColors.accentBright,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        decoration: TextDecoration.underline,
-                      ),
-                    ),
-                    if (source.snippet.trim().isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        source.snippet.trim(),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: GamaColors.textMuted, fontSize: 11.5),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          if (visible.length > 6)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                '+ ${visible.length - 6} fontes adicionais não exibidas',
-                style: const TextStyle(color: GamaColors.textMuted, fontSize: 11),
-              ),
-            ),
-        ],
-      ),
     );
   }
 }

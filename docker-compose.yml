@@ -35,7 +35,20 @@ services:
       model-init:
         condition: service_completed_successfully
     environment:
-      LLM_PROVIDER: ollama
+      # Preserve o modo local por padrão; defina LLM_PROVIDER=openrouter para
+      # habilitar chamadas OpenRouter, clima via ferramentas do agente e vídeo.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_HTTP_REFERER: ${OPENROUTER_HTTP_REFERER:-https://gama.app}
+      OPENROUTER_APP_TITLE: ${OPENROUTER_APP_TITLE:-Frequencia40-Gamma}
+      OPENROUTER_DEFAULT_MODEL: ${OPENROUTER_DEFAULT_MODEL:-openai/gpt-5.4-mini}
+      OPENROUTER_MODELS: ${OPENROUTER_MODELS:-openai/gpt-5.4-mini}
+      VIDEO_GEN_ENABLED: ${VIDEO_GEN_ENABLED:-1}
+      VIDEO_GEN_MODEL: ${VIDEO_GEN_MODEL:-bytedance/seedance-2.0-mini}
+      VIDEO_GEN_DEFAULT_DURATION: ${VIDEO_GEN_DEFAULT_DURATION:-5}
+      VIDEO_GEN_MAX_DURATION: ${VIDEO_GEN_MAX_DURATION:-10}
+      VIDEO_GEN_DEFAULT_RESOLUTION: ${VIDEO_GEN_DEFAULT_RESOLUTION:-480p}
       OLLAMA_URL: http://ollama:11434
       OLLAMA_DEFAULT_MODEL: ${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}
       OLLAMA_MODELS: ${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}

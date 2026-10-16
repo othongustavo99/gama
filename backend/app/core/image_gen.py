@@ -107,6 +107,15 @@ _ANALYZE = re.compile(
     r")\b",
 )
 
+_INFO_REQUEST = re.compile(r"(?i)^\s*(?:como|de que forma|qual a melhor forma|me ensine|me ensina|explique|explique-me|passo a passo|quais ferramentas|qual ferramenta|o que [eé])\b")
+
+_ASK_ADVICE = re.compile(
+    r"(?i)\b(como\s+(?:eu\s+)?(?:posso|poderia|devo|deveria)\s+melhorar|"
+    r"o\s+que\s+(?:(?:voc[eê]\s+)?(?:acha|mudaria|poderia\s+melhorar)|(?:eu\s+)?(?:posso|poderia|devo|deveria)\s+(?:melhorar|mudar))|"
+    r"quais\s+(?:s[aã]o\s+)?(?:os\s+)?melhorias|sugest[oõ]es\s+de\s+melhoria|"
+    r"avalie\s+(?:a\s+)?qualidade|aponte\s+(?:os\s+)?problemas)\b",
+)
+
 _WEAK_GENERATE = re.compile(
     r"(?i)\b(imagem de|foto de|ilustração de|desenho de|picture of|image of)\b",
 )
@@ -124,12 +133,26 @@ def detect_image_intent(
     if len(text) < 4:
         return ImageRequest(intent=ImageIntent.NONE, prompt="", confidence=0.0)
 
+    # Perguntas conceituais sobre edição/geração ficam no chat normal; com imagem
+    # anexada, a imagem pode ser analisada para orientar a resposta.
+    if _INFO_REQUEST.search(text):
+        if has_attached_images:
+            return ImageRequest(intent=ImageIntent.ANALYZE, prompt=text, confidence=0.88)
+        return ImageRequest(intent=ImageIntent.NONE, prompt="", confidence=0.0)
+
     explicit_image_improvement = bool(_IMPROVE.search(text))
     shorthand_image_improvement = bool(
         has_attached_images
         and _IMPROVE_ACTION.search(text)
         and not _CODE_TASK.search(text)
     )
+
+    # Perguntas sobre como melhorar pedem avaliação, não edição automática.
+    if has_attached_images and _ASK_ADVICE.search(text) and not re.search(
+        r"(?i)\b(melhore|melhora|melhorar|aprimora|aprimore|edite|edita|modifique|mude|troque)\s+(?:a\s+|essa\s+|esta\s+|desta\s+)?(?:imagem|foto|ilustra[cç][aã]o)\b",
+        text,
+    ):
+        return ImageRequest(intent=ImageIntent.ANALYZE, prompt=text, confidence=0.91)
 
     # 1. Análise pura (só se tiver imagem anexada e não pedir edição/geração)
     if has_attached_images and _ANALYZE.search(text):

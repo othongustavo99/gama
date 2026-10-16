@@ -15,6 +15,7 @@ from .routes.search import router as search_router
 from .routes.project import router as project_router
 from .routes.tts import router as tts_router
 from .routes.artifacts import router as artifacts_router
+from .routes.media import router as media_router, public_router as media_public_router
 from .security import body_too_large, rate_limit_chat, rate_limit_default, require_api_key
 from .core.identity import require_auth
 from .storage_status import inspect_data_storage
@@ -85,6 +86,9 @@ app.include_router(search_router, dependencies=_chat_guard)
 app.include_router(project_router, dependencies=_guard)
 app.include_router(tts_router, dependencies=_chat_guard)
 app.include_router(artifacts_router, dependencies=_guard)
+app.include_router(media_router, dependencies=_guard)
+# Referências HMAC de curta duração precisam ser acessíveis ao provedor do modelo; o endpoint valida assinatura antes de servir o arquivo.
+app.include_router(media_public_router)
 
 
 @app.get("/health")
@@ -107,6 +111,6 @@ async def health():
         "features": [
             "chat", "memory", "memory_v2", "conversations", "rolling_summary", "extract",
             "multi_provider", "web_search", "agent_tools", "code_analyzer",
-            "document_builder", "talk_skill", "image_analyzer", "image_gen", "tts",
+            "document_builder", "talk_skill", "image_analyzer", "image_gen", "video_gen", "video_analysis", "weather", "tts",
         ],
     }

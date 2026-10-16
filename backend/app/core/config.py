@@ -90,6 +90,15 @@ class Settings:
 
     VISION_MODEL = os.getenv("VISION_MODEL", _DEFAULT_MODEL).strip()
 
+    # Geração de vídeo assíncrona pela API de vídeos da OpenRouter.
+    VIDEO_GEN_MODEL = os.getenv(
+        "VIDEO_GEN_MODEL", "bytedance/seedance-2.0-mini"
+    ).strip()
+    VIDEO_GEN_ENABLED = env_bool("VIDEO_GEN_ENABLED", True)
+    VIDEO_GEN_DEFAULT_DURATION = max(1, min(int(os.getenv("VIDEO_GEN_DEFAULT_DURATION", "5")), 15))
+    VIDEO_GEN_MAX_DURATION = max(1, min(int(os.getenv("VIDEO_GEN_MAX_DURATION", "10")), 15))
+    VIDEO_GEN_DEFAULT_RESOLUTION = os.getenv("VIDEO_GEN_DEFAULT_RESOLUTION", "480p").strip().lower()
+
     # Limite de tokens de SAÍDA (evita OpenRouter 402 reservando 65k)
     MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
 

@@ -3,7 +3,7 @@
 Substitui a heurística antiga (`should_search` em modo "aggressive" pesquisava a
 web em TODA mensagem, mandando o texto cru do usuário para o buscador).
 
-Ferramentas: web_search, fetch_url, get_datetime, calculator, remember, forget_memory.
+Ferramentas: web_search, fetch_url, get_weather, get_datetime, calculator, remember, forget_memory.
 
 Defesas contra prompt injection indireta (páginas da web tentando controlar a IA):
 - fetch_url só abre URLs que o usuário enviou ou que vieram de resultados de busca,
@@ -61,6 +61,9 @@ def build_tools(web_enabled: bool = True) -> list[dict]:
                {"url": {"type": "string"}}, ["url"]),
         ]
     tools += [
+        fn("get_weather", "Consulta clima atual e previsão real pela Open-Meteo. Use sempre que a pessoa perguntar sobre clima, temperatura, chuva, vento ou previsão do tempo. Informe a cidade/localidade mencionada; se não houver local no pedido nem contexto confiável, peça a cidade em vez de adivinhar. days pode ser 1 a 7.",
+           {"location": {"type": "string", "description": "Cidade e, se necessário, estado/país; exemplo: Bragança Paulista, São Paulo, Brasil"},
+            "days": {"type": "integer", "description": "Quantidade de dias de previsão, de 1 a 7; padrão 3"}}, []),
         fn("get_datetime", "Data e hora atuais. Use sempre que a resposta depender de 'hoje', 'agora' ou datas relativas.",
            {"timezone": {"type": "string", "description": "fuso IANA, padrão America/Sao_Paulo"}}, []),
         fn("calculator", "Calcula uma expressão matemática com precisão (+ - * / // % ** , sqrt, log, sin, cos, tan, round, abs, min, max, pi, e).",
@@ -180,6 +183,19 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> tuple[str, di
             extras = {"url": url}
             return UNTRUSTED_NOTE + f"Título: {title}\n{body}", extras
 
+        if name == "get_weather":
+            from .weather import get_weather_report, format_weather_for_model
+            location = str(args.get("location") or "").strip()
+            if not location:
+                return ("Informe ao usuário que preciso da cidade/localidade para consultar o clima; não invente coordenadas nem localização atual."), extras
+            try:
+                days = int(args.get("days") or 3)
+            except (TypeError, ValueError):
+                days = 3
+            report = await get_weather_report(location, days=days)
+            extras = {"weather": report if report.get("ok") else None}
+            return UNTRUSTED_NOTE + format_weather_for_model(report), extras
+
         if name == "get_datetime":
             return _now(args.get("timezone")), extras
 
@@ -278,8 +294,10 @@ async def run_agent(
                 if c["name"] == "web_search":
                     yield {"type": "phase", "phase": "searching", "query": str(args.get("query") or "")[:200]}
                 result, extras = await execute_tool(c["name"], args, ctx)
-            if extras.get("sources") is not None:
-                yield {"type": "sources", "sources": extras["sources"], "query": extras.get("query")}
+                # Mantém compatibilidade para integrações; o Flutter atual não renderiza
+                # as fontes como caixa separada na bolha de mensagem.
+                if c["name"] == "web_search":
+                    yield {"type": "sources", "query": str(args.get("query") or "")[:200], "sources": extras.get("sources", [])}
             if extras.get("memory_saved"):
                 yield {"type": "memory_saved", "text": extras["memory_saved"]}
             if extras.get("memory_forgotten"):

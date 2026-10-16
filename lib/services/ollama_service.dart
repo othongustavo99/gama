@@ -10,30 +10,11 @@ import '../utils/message_sanitize.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
 
-class WebSource {
-  final String title;
-  final String url;
-  final String snippet;
-
-  const WebSource({required this.title, required this.url, this.snippet = ''});
-
-  factory WebSource.fromJson(Map<String, dynamic> j) {
-    return WebSource(
-      title: (j['title'] ?? '').toString(),
-      url: (j['url'] ?? j['href'] ?? '').toString(),
-      snippet: (j['snippet'] ?? j['body'] ?? '').toString(),
-    );
-  }
-}
-
 class ChatStreamEvent {
   final String? token;
   final String? memorySaved;
-  final String?
-  phase; // searching | thinking | typing | generating_image | image_ready
+  final String? phase; // searching | thinking | typing | generating_image | image_ready | video_generating
   final String? webSearchQuery;
-  final List<WebSource>? sources;
-
   /// Imagem gerada (base64 puro, sem data: prefix)
   final String? imageBase64;
   final String? imageMime;
@@ -44,7 +25,6 @@ class ChatStreamEvent {
     this.memorySaved,
     this.phase,
     this.webSearchQuery,
-    this.sources,
     this.imageBase64,
     this.imageMime,
     this.artifact,
@@ -58,7 +38,6 @@ class ChatStreamEvent {
   factory ChatStreamEvent.meta({
     String? phase,
     String? webSearchQuery,
-    List<WebSource>? sources,
     String? memorySaved,
     String? imageBase64,
     String? imageMime,
@@ -66,7 +45,6 @@ class ChatStreamEvent {
   }) => ChatStreamEvent._(
     phase: phase,
     webSearchQuery: webSearchQuery,
-    sources: sources,
     memorySaved: memorySaved,
     imageBase64: imageBase64,
     imageMime: imageMime,
@@ -78,7 +56,7 @@ class OllamaService {
   final Dio _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(minutes: 5),
+      receiveTimeout: const Duration(minutes: 12),
       sendTimeout: const Duration(seconds: 60),
       headers: const {'Accept': 'application/json'},
     ),
@@ -248,15 +226,6 @@ class OllamaService {
         final saved = meta['memory_saved'] as String?;
         final phase = meta['phase'] as String?;
         final query = meta['web_search'] as String?;
-        List<WebSource>? sources;
-        final rawSources = meta['sources'];
-        if (rawSources is List) {
-          sources = rawSources
-              .whereType<Map>()
-              .map((e) => WebSource.fromJson(Map<String, dynamic>.from(e)))
-              .where((s) => s.url.isNotEmpty)
-              .toList();
-        }
         String? imgB64;
         String? imgMime;
         Map<String, dynamic>? artifact;
@@ -272,7 +241,6 @@ class OllamaService {
         yield ChatStreamEvent.meta(
           phase: phase,
           webSearchQuery: query,
-          sources: sources,
           memorySaved: saved,
           imageBase64: imgB64,
           imageMime: imgMime,

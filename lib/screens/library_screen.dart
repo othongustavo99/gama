@@ -317,6 +317,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
         return Icons.image_outlined;
       case 'audio':
         return Icons.audiotrack_outlined;
+      case 'video':
+        return Icons.movie_outlined;
       default:
         return Icons.insert_drive_file_outlined;
     }

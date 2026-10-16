@@ -10,7 +10,7 @@ import 'settings_service.dart';
 import 'identity_service.dart';
 import 'auth_interceptor.dart';
 
-enum AttachmentKind { text, zip, pdf, document, image, audio, other }
+enum AttachmentKind { text, zip, pdf, document, image, video, audio, other }
 
 class ProcessedAttachment {
   final String name;
@@ -89,6 +89,8 @@ class AttachmentService {
   };
 
   static const imageExts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'};
+  static const videoExts = {'.mp4', '.mov', '.m4v', '.webm', '.mkv'};
+  static const maxVideoBytes = 50 * 1024 * 1024;
 
   static const audioExts = {'.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'};
 
@@ -98,6 +100,7 @@ class AttachmentService {
     if (e == '.pdf') return AttachmentKind.pdf;
     if (e == '.docx') return AttachmentKind.document;
     if (imageExts.contains(e)) return AttachmentKind.image;
+    if (videoExts.contains(e)) return AttachmentKind.video;
     if (audioExts.contains(e)) return AttachmentKind.audio;
     if (textExts.contains(e)) return AttachmentKind.text;
     return AttachmentKind.other;
@@ -127,7 +130,11 @@ class AttachmentService {
     }
     final bytes = await file.length();
     final kind = kindFor(ext);
-    final sizeLimit = kind == AttachmentKind.zip ? maxZipBytes : maxBytesPerFile;
+    final sizeLimit = kind == AttachmentKind.zip
+        ? maxZipBytes
+        : kind == AttachmentKind.video
+            ? maxVideoBytes
+            : maxBytesPerFile;
     if (bytes > sizeLimit) {
       final limitMb = sizeLimit ~/ (1024 * 1024);
       if (kind == AttachmentKind.zip) {
@@ -252,6 +259,23 @@ class AttachmentService {
           imageBase64: b64,
           mimeType: mime,
         );
+
+      case AttachmentKind.video:
+        try {
+          final uploaded = await _uploadVideo(path, name);
+          final id = uploaded['artifact_id']?.toString() ?? '';
+          if (id.isEmpty) throw Exception('O servidor não retornou o ID do vídeo.');
+          return ProcessedAttachment(
+            name: name,
+            ext: ext,
+            kind: AttachmentKind.video,
+            contentForModel: '[video_artifact_id:$id]\nVídeo anexado: $name.',
+            label: '$name (vídeo enviado)',
+            bytes: bytes,
+          );
+        } catch (e) {
+          throw Exception('Não consegui enviar o vídeo $name: $e');
+        }
 
       case AttachmentKind.audio:
         return ProcessedAttachment(
@@ -433,6 +457,33 @@ class AttachmentService {
     return Map<String, dynamic>.from(data as Map);
   }
 
+  Future<Map<String, dynamic>> _uploadVideo(String path, String name) async {
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: SettingsService.instance.baseUrl,
+        headers: AppConstants.authHeaders,
+        connectTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(minutes: 3),
+        receiveTimeout: const Duration(minutes: 3),
+      ),
+    );
+    if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
+      dio.interceptors.add(GammaAuthInterceptor());
+    }
+    final form = FormData.fromMap({
+      'file': await MultipartFile.fromFile(path, filename: name),
+    });
+    final response = await dio.post(
+      '/media/videos',
+      data: form,
+      options: Options(headers: {'X-User-Id': IdentityService.instance.userId}),
+    );
+    final data = response.data;
+    return data is Map<String, dynamic>
+        ? data
+        : Map<String, dynamic>.from(data as Map);
+  }
+
   Future<Map<String, dynamic>> _ingestProjectDocument(
     String path,
     String name,
@@ -552,6 +603,8 @@ class AttachmentService {
         kind = 'DOCX';
       else if (a.kind == AttachmentKind.image)
         kind = 'imagem';
+      else if (a.kind == AttachmentKind.video)
+        kind = 'vídeo';
       else if (a.kind == AttachmentKind.audio)
         kind = 'áudio';
       else if (a.kind == AttachmentKind.text)
@@ -565,6 +618,11 @@ class AttachmentService {
         r'\[project_id:([A-Za-z0-9_-]{6,128})\]',
       ).firstMatch(a.contentForModel);
       if (projectId != null) buf.writeln(projectId.group(0));
+      final videoId = RegExp(
+        r'\[video_artifact_id:([a-f0-9]{16})\]',
+        caseSensitive: false,
+      ).firstMatch(a.contentForModel);
+      if (videoId != null) buf.writeln(videoId.group(0));
     }
     return buf.toString().trim();
   }
