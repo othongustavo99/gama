@@ -68,7 +68,7 @@ class GamaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Frequência40 — Gamma',
+      title: 'Gama',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
@@ -227,7 +227,7 @@ class GamaStartupError extends StatelessWidget {
                 ),
                 const SizedBox(height: 20),
                 const Text(
-                  'Não foi possível iniciar a Gamma',
+                  'Não foi possível iniciar a Gama',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: GamaColors.textPrimary,

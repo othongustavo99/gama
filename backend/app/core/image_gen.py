@@ -311,7 +311,7 @@ async def generate_image(
         "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": settings.OPENROUTER_HTTP_REFERER or settings.APP_URL or "https://gama.app",
-        "X-Title": settings.OPENROUTER_APP_TITLE or "Frequencia40-Gamma",
+        "X-Title": settings.OPENROUTER_APP_TITLE or "Gama",
     }
     payload = {
         "model": model_id,

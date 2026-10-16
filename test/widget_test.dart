@@ -1,7 +1,7 @@
 // Testes unitários do app. O teste padrão do `flutter create` (contador) não
 // se aplica a este projeto e quebrava `flutter test`.
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gamma/utils/message_sanitize.dart';
+import 'package:gama/utils/message_sanitize.dart';
 
 void main() {
   group('MessageSanitize.forApi', () {

@@ -9,6 +9,7 @@ import '../models/message.dart';
 import '../utils/message_sanitize.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
+import 'plugin_settings_service.dart';
 
 class ChatStreamEvent {
   final String? token;
@@ -52,6 +53,50 @@ class ChatStreamEvent {
   );
 }
 
+
+class ChatApiException implements Exception {
+  final String message;
+  final bool retryable;
+  const ChatApiException(this.message, {this.retryable = true});
+
+  @override
+  String toString() => message;
+}
+
+ChatApiException _friendlyDioException(DioException error) {
+  final status = error.response?.statusCode;
+  if (status == 401 || status == 403) {
+    if (AppConstants.apiKey.isEmpty) {
+      return const ChatApiException(
+        'A API recusou o acesso (401/403). Este build está sem GAMA_API_KEY. '
+        'Gere o APK com --dart-define=GAMA_API_KEY=SUA_CHAVE e confirme que a chave corresponde à configurada no Railway. '
+        'Não coloque uma chave privada em um APK distribuído publicamente.',
+        retryable: false,
+      );
+    }
+    return const ChatApiException(
+      'A API recusou o acesso (401/403). Confira a chave configurada no build e a autenticação da sessão.',
+      retryable: false,
+    );
+  }
+  if (status == 429) {
+    return const ChatApiException('O servidor está ocupado ou atingiu o limite de requisições. Aguarde um pouco e tente novamente.');
+  }
+  if (status != null && status >= 500) {
+    return const ChatApiException('O servidor está temporariamente indisponível. Tente novamente em instantes.');
+  }
+  if (error.type == DioExceptionType.connectionTimeout ||
+      error.type == DioExceptionType.connectionError ||
+      error.type == DioExceptionType.sendTimeout ||
+      error.type == DioExceptionType.receiveTimeout) {
+    return const ChatApiException('Sem conexão com a Gama. Verifique a internet e tente novamente.');
+  }
+  if (status == 413) {
+    return const ChatApiException('O conteúdo enviado é grande demais. Remova alguns anexos e tente novamente.', retryable: false);
+  }
+  return const ChatApiException('Não foi possível concluir a solicitação. Tente novamente.');
+}
+
 class OllamaService {
   final Dio _dio = Dio(
     BaseOptions(
@@ -89,7 +134,10 @@ class OllamaService {
           .where((model) => model.isNotEmpty)
           .toList();
     } on DioException catch (e) {
-      throw Exception('Erro ao listar modelos: ${e.message}');
+      if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
+        throw _friendlyDioException(e);
+      }
+      throw Exception('Não foi possível listar os modelos. Verifique a conexão e tente novamente.');
     } catch (e) {
       throw Exception('Erro ao processar lista de modelos: $e');
     }
@@ -131,6 +179,7 @@ class OllamaService {
   }) async* {
     final selectedModel = model ?? SettingsService.instance.model;
     final dio = _client();
+    final pluginFlags = await PluginSettingsService.instance.load();
 
     try {
       // Sanitiza histórico: tira base64 de imagens e dumps grandes de ZIP
@@ -167,9 +216,12 @@ class OllamaService {
         data: {
           'model': selectedModel,
           'messages': requestMessages,
-          if (images != null && images.isNotEmpty) 'images': images,
+          if (images != null && images.isNotEmpty &&
+              pluginFlags['attachments'] != false && pluginFlags['vision'] != false)
+            'images': images,
           'user_id': IdentityService.instance.userId,
-          'auto_memory': true,
+          'auto_memory': pluginFlags['memory'] ?? true,
+          'plugins': pluginFlags,
           'voice_mode': voiceMode,
           if (chatMode != null) 'chat_mode': chatMode,
           if (conversationId != null && conversationId.isNotEmpty)
@@ -209,59 +261,79 @@ class OllamaService {
         yield* _parseLine(last);
       }
     } on DioException catch (e) {
-      throw Exception(
-        'Erro na API da Frequência40: ${e.message ?? e.toString()}',
-      );
-    } catch (e) {
-      throw Exception('Erro no streaming: $e');
+      throw _friendlyDioException(e);
+    } on ChatApiException {
+      rethrow;
+    } catch (_) {
+      throw const ChatApiException('Ocorreu um erro ao receber a resposta. Tente novamente.');
     }
   }
 
   Stream<ChatStreamEvent> _parseLine(String trimmed) async* {
+    Map<String, dynamic> json;
     try {
-      final json = jsonDecode(trimmed) as Map<String, dynamic>;
+      final decoded = jsonDecode(trimmed);
+      if (decoded is! Map) return;
+      json = Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      // Linhas auxiliares/eventuais keep-alives não são mensagens visíveis.
+      return;
+    }
 
-      final meta = json['gama_meta'] as Map<String, dynamic>?;
-      if (meta != null) {
-        final saved = meta['memory_saved'] as String?;
-        final phase = meta['phase'] as String?;
-        final query = meta['web_search'] as String?;
-        String? imgB64;
-        String? imgMime;
-        Map<String, dynamic>? artifact;
-        final rawArtifact = meta['artifact'];
-        if (rawArtifact is Map) {
-          artifact = Map<String, dynamic>.from(rawArtifact);
-        }
-        final img = meta['image'];
-        if (img is Map) {
-          imgB64 = img['data']?.toString();
-          imgMime = img['mime']?.toString() ?? 'image/png';
-        }
-        yield ChatStreamEvent.meta(
-          phase: phase,
-          webSearchQuery: query,
-          memorySaved: saved,
-          imageBase64: imgB64,
-          imageMime: imgMime,
-          artifact: artifact,
-        );
-        return;
+    if (json['error'] != null) {
+      final error = json['error'].toString().toLowerCase();
+      final detail = json['detail']?.toString().toLowerCase() ?? '';
+      if (error.contains('401') || error.contains('403') || detail.contains('api key')) {
+        throw _friendlyDioException(DioException(
+          requestOptions: RequestOptions(path: '/chat'),
+          response: Response<dynamic>(
+            requestOptions: RequestOptions(path: '/chat'),
+            statusCode: error.contains('403') ? 403 : 401,
+            data: json,
+          ),
+          type: DioExceptionType.badResponse,
+        ));
       }
+      if (error.contains('429') || error.contains('rate limit')) {
+        throw const ChatApiException('O servidor está ocupado ou atingiu o limite de requisições. Aguarde um pouco e tente novamente.');
+      }
+      if (error.contains('500') || error.contains('502') || error.contains('503') || error.contains('504')) {
+        throw const ChatApiException('O servidor está temporariamente indisponível. Tente novamente em instantes.');
+      }
+      throw const ChatApiException('A Gama não conseguiu concluir a resposta. Tente novamente.');
+    }
 
-      if (json['error'] != null && json['message'] is Map) {
-        final content =
-            (json['message'] as Map)['content']?.toString() ??
-            json['error'].toString();
-        if (content.isNotEmpty) yield ChatStreamEvent.token(content);
-        return;
+    final meta = json['gama_meta'];
+    if (meta is Map) {
+      final m = Map<String, dynamic>.from(meta);
+      final saved = m['memory_saved'] as String?;
+      final phase = m['phase'] as String?;
+      final query = m['web_search'] as String?;
+      String? imgB64;
+      String? imgMime;
+      Map<String, dynamic>? artifact;
+      final rawArtifact = m['artifact'];
+      if (rawArtifact is Map) artifact = Map<String, dynamic>.from(rawArtifact);
+      final img = m['image'];
+      if (img is Map) {
+        imgB64 = img['data']?.toString();
+        imgMime = img['mime']?.toString() ?? 'image/png';
       }
+      yield ChatStreamEvent.meta(
+        phase: phase,
+        webSearchQuery: query,
+        memorySaved: saved,
+        imageBase64: imgB64,
+        imageMime: imgMime,
+        artifact: artifact,
+      );
+      return;
+    }
 
-      final message = json['message'] as Map<String, dynamic>?;
-      if (message != null) {
-        final content = message['content'] as String? ?? '';
-        if (content.isNotEmpty) yield ChatStreamEvent.token(content);
-      }
-    } catch (_) {}
+    final message = json['message'];
+    if (message is Map) {
+      final content = message['content']?.toString() ?? '';
+      if (content.isNotEmpty) yield ChatStreamEvent.token(content);
+    }
   }
 }

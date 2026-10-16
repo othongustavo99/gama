@@ -27,7 +27,7 @@ def create_media_reference_url(artifact_id: str, owner: str, *, ttl_seconds: int
     if not base.startswith("https://"):
         raise RuntimeError("Configure APP_URL com a URL HTTPS pública do backend para usar vídeo como referência de edição.")
     expires = int(time.time()) + max(60, min(ttl_seconds, 3600))
-    query = urlencode({"expires": expires, "signature": signature_for(artifact_id, expires, owner)})
+    query = urlencode({"expires": expires, "signature": signature_for(artifact_id, expires, owner), "owner": owner})
     return f"{base}/media/reference/{artifact_id}?{query}"
 
 

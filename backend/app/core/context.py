@@ -192,7 +192,7 @@ class ContextManager:
         for m in messages:
             snippet = m["content"].replace("\n", " ").strip()
             snippet = snippet[:160] + ("…" if len(snippet) > 160 else "")
-            line = f"{'Usuário' if m['role'] == 'user' else 'Gamma'}: {snippet}"
+            line = f"{'Usuário' if m['role'] == 'user' else 'Gama'}: {snippet}"
             if total + len(line) > limit:
                 break
             parts.append(line)
@@ -235,10 +235,10 @@ async def refresh_summary(
     previous = (state or {}).get("summary", "") if covered else ""
     new_part = older[covered:]
     transcript = "\n".join(
-        f"{'Usuário' if m['role'] == 'user' else 'Gamma'}: {m['content'][:600]}" for m in new_part
+        f"{'Usuário' if m['role'] == 'user' else 'Gama'}: {m['content'][:600]}" for m in new_part
     )[:14_000]
     prompt = (
-        "Você mantém o resumo corrido de uma conversa longa entre um usuário e a assistente Gamma.\n\n"
+        "Você mantém o resumo corrido de uma conversa longa entre um usuário e a assistente Gama.\n\n"
         f"RESUMO ATUAL:\n{previous or '(vazio)'}\n\nNOVAS MENSAGENS:\n{transcript}\n\n"
         "Escreva o resumo ATUALIZADO em português, em tópicos curtos (até ~1800 caracteres): "
         "decisões tomadas, fatos relevantes do usuário, tarefas em andamento, arquivos/caminhos e nomes "

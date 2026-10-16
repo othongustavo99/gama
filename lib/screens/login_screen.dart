@@ -160,7 +160,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           const SizedBox(height: 20),
                           const Text(
-                            'Gamma 2.0',
+                            'Gama',
                             style: TextStyle(
                               color: GamaColors.textPrimary,
                               fontSize: 29,

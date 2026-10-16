@@ -56,7 +56,7 @@ async def lifespan(_app: FastAPI):
     await llm.aclose()
 
 
-app = FastAPI(title="Frequência40 API", version=VERSION, lifespan=lifespan)
+app = FastAPI(title="Gama API", version=VERSION, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -97,7 +97,7 @@ async def health():
     ok = await llm.health()
     return {
         "status": "ok" if ok else "degraded",
-        "service": "frequencia40",
+        "service": "gama",
         "version": VERSION,
         "provider": settings.PROVIDER,
         "web_search": settings.WEB_SEARCH_ENABLED,

@@ -10,6 +10,22 @@ import 'identity_service.dart';
 /// Sessões convidadas não autenticam em endpoints protegidos nesse modo.
 class GammaAuthInterceptor extends Interceptor {
   @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    final status = err.response?.statusCode;
+    if (status == 401 || status == 403) {
+      final message = AppConstants.apiKey.isEmpty
+          ? 'A API recusou o acesso (HTTP $status). Este build está sem GAMA_API_KEY. '
+              'Se o Railway exige essa chave, gere o APK com --dart-define=GAMA_API_KEY=SUA_CHAVE '
+              'e confirme a autenticação da sessão.'
+          : 'A API recusou o acesso (HTTP $status). Confira se GAMA_API_KEY no build corresponde '
+              'à chave do Railway e se a sessão de autenticação continua válida.';
+      handler.reject(err.copyWith(message: message));
+      return;
+    }
+    handler.next(err);
+  }
+
+  @override
   void onRequest(
     RequestOptions options,
     RequestInterceptorHandler handler,
@@ -29,7 +45,7 @@ class GammaAuthInterceptor extends Interceptor {
           error: error,
           stackTrace: stackTrace,
           type: DioExceptionType.unknown,
-          message: 'Não foi possível preparar a autenticação da Gamma.',
+          message: 'Não foi possível preparar a autenticação da Gama.',
         ),
       );
     }

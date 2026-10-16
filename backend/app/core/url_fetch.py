@@ -89,7 +89,7 @@ async def fetch_url_text(url: str, max_chars: int = 24_000) -> Tuple[str, str]:
     targets = _github_to_fetch_urls(url)
     last_err = ""
     headers = {
-        "User-Agent": "Frequencia40-Gamma/1.0 (+assistant; research)",
+        "User-Agent": "Gama/1.0 (+assistant; research)",
         "Accept": "application/vnd.github.v3+json, text/plain, text/html, */*",
     }
 

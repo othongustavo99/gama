@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
 import '../core/gama_colors.dart';
+import '../services/plugin_settings_service.dart';
 
 /// Capacidade do sistema (ligada no backend ou local).
 class _Plugin {
@@ -9,7 +8,7 @@ class _Plugin {
   final String title;
   final String subtitle;
   final IconData icon;
-  final bool serverSide; // se true, só informativo (backend decide)
+  final bool serverSide; // recurso executado no backend, controlado por requisição
   final bool defaultOn;
 
   const _Plugin({
@@ -30,8 +29,6 @@ class PluginsScreen extends StatefulWidget {
 }
 
 class _PluginsScreenState extends State<PluginsScreen> {
-  static const _prefsKey = 'gama_plugin_toggles';
-
   static const _catalog = <_Plugin>[
     _Plugin(
       id: 'web_search',
@@ -101,17 +98,9 @@ class _PluginsScreenState extends State<PluginsScreen> {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_prefsKey) ?? [];
-    final map = <String, bool>{};
+    final map = await PluginSettingsService.instance.load();
     for (final p in _catalog) {
-      map[p.id] = p.defaultOn;
-    }
-    for (final entry in raw) {
-      final parts = entry.split('=');
-      if (parts.length == 2) {
-        map[parts[0]] = parts[1] == '1';
-      }
+      map.putIfAbsent(p.id, () => p.defaultOn);
     }
     if (!mounted) return;
     setState(() {
@@ -122,29 +111,30 @@ class _PluginsScreenState extends State<PluginsScreen> {
     });
   }
 
-  Future<void> _persist() async {
-    final prefs = await SharedPreferences.getInstance();
-    final list =
-        _toggles.entries.map((e) => '${e.key}=${e.value ? '1' : '0'}').toList();
-    await prefs.setStringList(_prefsKey, list);
-  }
-
   Future<void> _set(String id, bool value, {required bool serverSide}) async {
-    if (serverSide) {
-      // Capacidade do backend: só informativo neste app.
+    final previous = _toggles[id];
+    setState(() => _toggles[id] = value);
+    try {
+      await PluginSettingsService.instance.setEnabled(id, value);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Este recurso é controlado pelo servidor. '
-            'A UI só indica se está disponível.',
+            value
+                ? 'Recurso ativado para as próximas mensagens.'
+                : 'Recurso desativado para as próximas mensagens.',
           ),
-          duration: Duration(seconds: 2),
+          duration: const Duration(seconds: 2),
         ),
       );
-      return;
+    } catch (_) {
+      if (mounted) setState(() => _toggles[id] = previous ?? true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Não foi possível salvar a configuração.')),
+        );
+      }
     }
-    setState(() => _toggles[id] = value);
-    await _persist();
   }
 
   @override
@@ -168,9 +158,8 @@ class _PluginsScreenState extends State<PluginsScreen> {
                   return const Padding(
                     padding: EdgeInsets.only(bottom: 4),
                     child: Text(
-                      'Capacidades ativas na Frequência40. '
-                      'Itens do servidor são informativos; itens locais '
-                      'podem ser ligadas/desligadas neste aparelho.',
+                      'Essas opções controlam os recursos usados nas próximas mensagens. '
+                      'As alterações são salvas neste aparelho e enviadas à API quando necessário.',
                       style: TextStyle(
                         color: GamaColors.textMuted,
                         fontSize: 13,
@@ -215,18 +204,6 @@ class _PluginsScreenState extends State<PluginsScreen> {
                                 fontSize: 12,
                               ),
                             ),
-                            if (p.serverSide)
-                              const Padding(
-                                padding: EdgeInsets.only(top: 4),
-                                child: Text(
-                                  'Servidor',
-                                  style: TextStyle(
-                                    color: GamaColors.textHint,
-                                    fontSize: 10,
-                                    letterSpacing: 0.4,
-                                  ),
-                                ),
-                              ),
                           ],
                         ),
                       ),

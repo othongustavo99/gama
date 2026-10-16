@@ -25,14 +25,14 @@ class DownloadService {
       try {
         final ext = await getExternalStorageDirectory();
         if (ext != null) {
-          final dl = Directory(p.join(ext.path, 'Download', 'Gamma'));
+          final dl = Directory(p.join(ext.path, 'Download', 'Gama'));
           if (!await dl.exists()) await dl.create(recursive: true);
           return dl;
         }
       } catch (_) {}
     }
     final docs = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(docs.path, 'GammaDownloads'));
+    final dir = Directory(p.join(docs.path, 'GamaDownloads'));
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
   }
@@ -49,6 +49,19 @@ class DownloadService {
     final file = File(p.join(dir.path, name));
     await file.writeAsString(text, encoding: utf8);
     return file.path;
+  }
+
+  Future<String> copyFile(String sourcePath, {String? filename}) async {
+    final source = File(sourcePath);
+    if (!await source.exists()) {
+      throw const FileSystemException('Arquivo de origem não encontrado');
+    }
+    final dir = await _targetDir();
+    final base = filename ?? p.basename(sourcePath);
+    final safeName = base.replaceAll(RegExp(r'[\\/\x00-\x1F]'), '_');
+    final destination = File(p.join(dir.path, safeName));
+    await source.copy(destination.path);
+    return destination.path;
   }
 
   Future<String> saveBase64Image(

@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -28,3 +28,6 @@ class ChatRequest(BaseModel):
     voice_mode: bool = False
     # programar | conversar — afeta system prompt e estilo de código
     chat_mode: Optional[str] = None
+    # Capacidades selecionadas na tela Plugins do cliente. Chaves ausentes
+    # preservam o comportamento padrão para clientes antigos.
+    plugins: Dict[str, bool] = Field(default_factory=dict)

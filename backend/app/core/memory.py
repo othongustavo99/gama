@@ -1,5 +1,5 @@
 """
-Memória de longo prazo da Gamma — por usuário (v2).
+Memória de longo prazo da Gama — por usuário (v2).
 
 Arquivo: data/memory/{user_id}.json  (formato retrocompatível com a v1)
 

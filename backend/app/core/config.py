@@ -36,7 +36,7 @@ class Settings:
     ).strip()
     OPENROUTER_APP_TITLE = os.getenv(
         "OPENROUTER_APP_TITLE",
-        os.getenv("APP_NAME", "Frequencia40-Gamma"),
+        os.getenv("APP_NAME", "Gama"),
     ).strip()
 
     # Modelo único padrão (GPT-5.4 Mini via OpenRouter)
@@ -78,7 +78,7 @@ class Settings:
     if RAILWAY_VOLUME_MOUNT_PATH:
         os.environ["DATA_DIR"] = RAILWAY_VOLUME_MOUNT_PATH
     APP_URL = os.getenv("APP_URL", "")
-    APP_NAME = os.getenv("APP_NAME", "Frequencia40-Gamma")
+    APP_NAME = os.getenv("APP_NAME", "Gama")
 
     WEB_SEARCH_ENABLED = env_bool("WEB_SEARCH_ENABLED", True)
     WEB_SEARCH_TIMEOUT = float(os.getenv("WEB_SEARCH_TIMEOUT", "12"))

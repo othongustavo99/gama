@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -23,7 +24,8 @@ class ParsedMessage {
 class GeneratedImageData {
   final String mime;
   final String base64;
-  const GeneratedImageData({required this.mime, required this.base64});
+  final String? filePath;
+  const GeneratedImageData({required this.mime, this.base64 = '', this.filePath});
 }
 
 class AttachmentPreview {
@@ -41,18 +43,26 @@ class AttachmentPreview {
 }
 
 
-final _gamaImageRe = RegExp(
-  r'\[gama_image\]\s*mime:([^\n]+)\s*data:([A-Za-z0-9+/=\s]+)\s*\[/gama_image\]',
+final _gamaImageAnyRe = RegExp(
+  r'\[gama_image_file\]\s*mime:([^\n]+)\s*path:([^\n]+)\s*\[/gama_image_file\]'
+  r'|\[gama_image\]\s*mime:([^\n]+)\s*data:([A-Za-z0-9+/=\s]+)\s*\[/gama_image\]',
   multiLine: true,
 );
 
 (String, List<GeneratedImageData>) extractGamaImages(String content) {
   final images = <GeneratedImageData>[];
-  final text = content.replaceAllMapped(_gamaImageRe, (m) {
-    images.add(GeneratedImageData(
-      mime: m.group(1)!.trim(),
-      base64: m.group(2)!.replaceAll(RegExp(r'\s'), ''),
-    ));
+  final text = content.replaceAllMapped(_gamaImageAnyRe, (m) {
+    if (m.group(1) != null) {
+      images.add(GeneratedImageData(
+        mime: m.group(1)!.trim(),
+        filePath: m.group(2)!.trim(),
+      ));
+    } else {
+      images.add(GeneratedImageData(
+        mime: m.group(3)!.trim(),
+        base64: m.group(4)!.replaceAll(RegExp(r'\s'), ''),
+      ));
+    }
     return '';
   });
   return (text.trim(), images);
@@ -197,8 +207,16 @@ class MessageContentView extends StatelessWidget {
       children: [
         if (images.isNotEmpty) ...[
           ...images.map((img) {
+            final filePath = img.filePath;
+            final fileExists = filePath != null && filePath.isNotEmpty && File(filePath).existsSync();
+            if (!fileExists && img.base64.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.only(bottom: 10),
+                child: Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
+              );
+            }
             try {
-              final bytes = base64Decode(img.base64);
+              final memoryBytes = img.base64.isEmpty ? null : base64Decode(img.base64);
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Column(
@@ -206,15 +224,19 @@ class MessageContentView extends StatelessWidget {
                   children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(14),
-                      child: Image.memory(
-                        bytes,
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
-                        errorBuilder: (_, __, ___) => const Text(
-                          '[imagem indisponível]',
-                          style: TextStyle(color: GamaColors.textMuted),
-                        ),
-                      ),
+                      child: fileExists
+                          ? Image.file(
+                              File(filePath!),
+                              fit: BoxFit.cover,
+                              gaplessPlayback: true,
+                              errorBuilder: (_, __, ___) => const Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
+                            )
+                          : Image.memory(
+                              memoryBytes!,
+                              fit: BoxFit.cover,
+                              gaplessPlayback: true,
+                              errorBuilder: (_, __, ___) => const Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
+                            ),
                     ),
                     const SizedBox(height: 6),
                     Align(
@@ -227,16 +249,14 @@ class MessageContentView extends StatelessWidget {
                         ),
                         onPressed: () async {
                           try {
-                            final path = await DownloadService.instance
-                                .saveBase64Image(
-                              img.base64,
-                              mime: img.mime,
-                            );
+                            final path = fileExists
+                                ? filePath!
+                                : await DownloadService.instance.saveBase64Image(img.base64, mime: img.mime);
                             await DownloadService.instance.openPath(path);
                           } catch (_) {}
                         },
                         icon: const Icon(Icons.download_rounded, size: 18),
-                        label: const Text('Baixar imagem'),
+                        label: const Text('Abrir / baixar imagem'),
                       ),
                     ),
                   ],

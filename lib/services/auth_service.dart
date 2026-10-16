@@ -158,7 +158,7 @@ class AuthService {
           ..headers.contentType = ContentType.html
           ..write(
             '<!DOCTYPE html><html><body style="font-family:system-ui;text-align:center;padding:48px">'
-            '<h2 style="color:#FF6B00">Gamma</h2>'
+            '<h2 style="color:#FF6B00">Gama</h2>'
             '<p>Login concluído. Pode fechar e voltar ao app.</p>'
             '</body></html>',
           );

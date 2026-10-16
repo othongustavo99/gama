@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
@@ -14,32 +15,40 @@ class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
 
   /// Copia o arquivo para pasta permanente e registra na biblioteca.
-  static Future<void> addEntry({
+  static Future<String?> addEntry({
     required String name,
     required String kind,
     required int bytes,
     String? sourcePath,
+    Uint8List? sourceBytes,
   }) async {
     String? savedPath;
-    if (sourcePath != null && sourcePath.isNotEmpty) {
+    if ((sourcePath != null && sourcePath.isNotEmpty) || sourceBytes != null) {
       try {
-        final src = File(sourcePath);
-        if (await src.exists()) {
-          final dir = await getApplicationDocumentsDirectory();
-          final libDir = Directory(p.join(dir.path, 'gama_library'));
-          if (!await libDir.exists()) {
-            await libDir.create(recursive: true);
-          }
-          final safe = name.replaceAll(RegExp(r'[^\w\.\-]+'), '_');
-          final dest = p.join(
-            libDir.path,
-            '${DateTime.now().millisecondsSinceEpoch}_$safe',
-          );
-          await src.copy(dest);
+        final dir = await getApplicationDocumentsDirectory();
+        final libDir = Directory(p.join(dir.path, 'gama_library'));
+        if (!await libDir.exists()) {
+          await libDir.create(recursive: true);
+        }
+        final safe = name.replaceAll(RegExp(r'[^\w\.\-]+'), '_');
+        final dest = p.join(
+          libDir.path,
+          '${DateTime.now().millisecondsSinceEpoch}_$safe',
+        );
+        if (sourceBytes != null) {
+          await File(dest).writeAsBytes(sourceBytes, flush: true);
           savedPath = dest;
+        } else {
+          final src = File(sourcePath!);
+          if (await src.exists()) {
+            await src.copy(dest);
+            savedPath = dest;
+          } else {
+            savedPath = sourcePath;
+          }
         }
       } catch (_) {
-        savedPath = sourcePath; // fallback: tenta o path original
+        savedPath = sourceBytes == null ? sourcePath : null;
       }
     }
 
@@ -57,6 +66,7 @@ class LibraryScreen extends StatefulWidget {
     });
     final trimmed = list.length > 100 ? list.sublist(list.length - 100) : list;
     await prefs.setString('gama_library', jsonEncode(trimmed));
+    return savedPath;
   }
 
   /// Abre arquivo/imagem da biblioteca (foto no app; PDF/ZIP no visualizador do SO).

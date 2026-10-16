@@ -1,4 +1,4 @@
-"""Extração segura de ZIP para o Code Analyzer da Gamma.
+"""Extração segura de ZIP para o Code Analyzer da Gama.
 
 O ZIP é lido uma única vez na ingestão. A análise profunda é acionada depois,
 quando o usuário pede uma revisão/correção do projeto.

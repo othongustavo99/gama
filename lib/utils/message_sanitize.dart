@@ -6,6 +6,11 @@ class MessageSanitize {
     multiLine: true,
   );
 
+  static final _gamaImageFileRe = RegExp(
+    r'\[gama_image_file\][\s\S]*?\[/gama_image_file\]',
+    multiLine: true,
+  );
+
   static final _projectDumpRe = RegExp(
     r'\[project_id:[^\]]+\][\s\S]{0,8000}?(?=(\n### |\n\[project_id:|\Z))',
     multiLine: true,
@@ -21,6 +26,7 @@ class MessageSanitize {
     var t = content;
     // Imagens geradas: não reenviar base64
     t = t.replaceAll(_gamaImageRe, '\n[imagem gerada anteriormente nesta conversa]\n');
+    t = t.replaceAll(_gamaImageFileRe, '\n[imagem gerada anteriormente nesta conversa]\n');
     // ZIP index info verbosa: manter só project_id
     t = t.replaceAllMapped(_projectDumpRe, (m) {
       final id = RegExp(r'\[project_id:([^\]]+)\]').firstMatch(m.group(0)!);

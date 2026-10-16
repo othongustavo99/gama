@@ -249,7 +249,7 @@ async def generate_video_events(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "HTTP-Referer": getattr(settings, "OPENROUTER_HTTP_REFERER", "") or getattr(settings, "APP_URL", "") or "https://gama.app",
-        "X-Title": getattr(settings, "OPENROUTER_APP_TITLE", "Frequencia40-Gamma"),
+        "X-Title": getattr(settings, "OPENROUTER_APP_TITLE", "Gama"),
     }
     base = getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
     deadline = asyncio.get_running_loop().time() + max(60, min(timeout_seconds, 900))

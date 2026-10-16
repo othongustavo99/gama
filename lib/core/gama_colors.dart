@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Design system Gamma — carvão azulado, superfícies em camadas e âmbar.
+/// Design system Gama — carvão azulado, superfícies em camadas e âmbar.
 class GamaColors {
   GamaColors._();
 

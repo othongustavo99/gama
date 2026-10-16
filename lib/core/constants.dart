@@ -1,4 +1,4 @@
-/// Constantes centrais do app Frequência40 / Gamma.
+/// Constantes centrais do app Gama.
 class AppConstants {
   /// URL base da API (HTTPS obrigatório para APK release).
   static const String apiBaseUrl =

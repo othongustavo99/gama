@@ -1,11 +1,11 @@
 {
-    "name": "gamma",
-    "short_name": "gamma",
+    "name": "Gama",
+    "short_name": "Gama",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0xFFFF6B00",
-    "description": "A new Flutter project.",
+    "description": "Assistente de IA pessoal Gama",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

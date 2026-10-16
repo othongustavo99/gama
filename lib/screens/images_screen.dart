@@ -58,8 +58,8 @@ class _ImagesScreenState extends State<ImagesScreen> {
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
-                  'Nenhuma imagem anexada ainda.\n'
-                  'Use o clipe no chat e envie PNG/JPG.',
+                  'Nenhuma imagem gerada ou anexada ainda.\n'
+                  'Use o clipe no chat ou peça à Gama para criar uma imagem.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: GamaColors.textMuted),
                 ),

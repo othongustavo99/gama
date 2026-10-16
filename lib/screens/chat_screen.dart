@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -25,6 +26,7 @@ import '../services/settings_service.dart';
 import '../services/download_service.dart';
 import '../utils/message_sanitize.dart';
 import '../services/tts_service.dart';
+import '../services/plugin_settings_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
@@ -78,6 +80,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _speakNextReply = false;
   bool _ttsEarlyStarted = false;
   bool _isSpeaking = false;
+  String? _failedAssistantMessageId;
+  String? _retryRawText;
+  List<ProcessedAttachment> _retryAttachments = <ProcessedAttachment>[];
 
   // Quando a resposta foi solicitada por voz, o texto recebido fica
   // retido até o áudio realmente começar. Depois, ele é revelado em blocos
@@ -412,7 +417,8 @@ class _ChatScreenState extends State<ChatScreen> {
     return !content.contains('Anexos para análise:') &&
         !content.contains('[arquivo:') &&
         !content.contains('[project_id:') &&
-        !content.contains('[gama_image]');
+        !content.contains('[gama_image]') &&
+        !content.contains('[gama_image_file]');
   }
 
   Future<void> _editAndResend(Message message, int index) async {
@@ -434,7 +440,7 @@ class _ChatScreenState extends State<ChatScreen> {
             maxLines: 12,
             style: const TextStyle(color: GamaColors.textPrimary),
             decoration: const InputDecoration(
-              hintText: 'Edite o pedido para a Gamma',
+              hintText: 'Edite o pedido para a Gama',
               border: OutlineInputBorder(),
             ),
           ),
@@ -549,14 +555,25 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _downloadMessage(Message message) async {
     try {
-      final imagePattern = RegExp(
+      final filePattern = RegExp(
+        r'\[gama_image_file\]\s*mime:([^\n]+)\s*path:([^\n]+)\s*\[/gama_image_file\]',
+        multiLine: true,
+      );
+      final legacyPattern = RegExp(
         r'\[gama_image\]\s*mime:([^\n]+)\s*data:([A-Za-z0-9+/=\s]+)\s*\[/gama_image\]',
         multiLine: true,
       );
       var savedImages = 0;
-      for (final match in imagePattern.allMatches(message.content)) {
+      for (final match in filePattern.allMatches(message.content)) {
+        final sourcePath = match.group(2)!.trim();
+        if (await File(sourcePath).exists()) {
+          await DownloadService.instance.copyFile(sourcePath);
+          savedImages++;
+        }
+      }
+      for (final match in legacyPattern.allMatches(message.content)) {
         await DownloadService.instance.saveBase64Image(
-          match.group(2)!,
+          match.group(2)!.replaceAll(RegExp(r'\s'), ''),
           mime: match.group(1)!.trim(),
         );
         savedImages++;
@@ -573,8 +590,8 @@ class _ChatScreenState extends State<ChatScreen> {
             ? 'Salvo ($savedImages imagem(ns))'
             : 'Arquivo salvo no dispositivo',
       );
-    } catch (error) {
-      _snack('Falha ao salvar: $error');
+    } catch (_) {
+      _snack('Não foi possível salvar a mensagem no dispositivo.');
     }
   }
 
@@ -593,7 +610,7 @@ class _ChatScreenState extends State<ChatScreen> {
           : box.localToGlobal(Offset.zero) & box.size;
       await SharePlus.instance.share(
         ShareParams(
-          title: 'Mensagem da Gamma',
+          title: 'Mensagem da Gama',
           text: text,
           sharePositionOrigin: origin,
         ),
@@ -934,7 +951,8 @@ class _ChatScreenState extends State<ChatScreen> {
     String text, {
     bool revealWhileSpeaking = false,
   }) async {
-    final want = _speakNextReply || SettingsService.instance.ttsAuto;
+    final ttsEnabled = await PluginSettingsService.instance.isEnabled('tts');
+    final want = ttsEnabled && (_speakNextReply || SettingsService.instance.ttsAuto);
     _speakNextReply = false;
     if (!want) return;
 
@@ -981,6 +999,84 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _storeGeneratedImage({
+    required String data,
+    required String mime,
+    required String messageId,
+  }) async {
+    String block;
+    try {
+      final bytes = base64Decode(data);
+      final normalizedMime = mime.toLowerCase().split(';').first.trim();
+      final ext = switch (normalizedMime) {
+        'image/jpeg' || 'image/jpg' => 'jpg',
+        'image/webp' => 'webp',
+        'image/gif' => 'gif',
+        'image/bmp' => 'bmp',
+        _ => 'png',
+      };
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final path = await LibraryScreen.addEntry(
+        name: 'gama_gerada_${timestamp}_$messageId.$ext',
+        kind: 'image',
+        bytes: bytes.length,
+        sourceBytes: bytes,
+      );
+      if (path == null || path.isEmpty) {
+        // Último recurso de compatibilidade: mantém a imagem visível caso o
+        // armazenamento local falhe, embora esse caso excepcional ocupe mais
+        // espaço no Hive do que o caminho de arquivo.
+        block = '\n[gama_image]\nmime:$normalizedMime\ndata:${base64Encode(bytes)}\n[/gama_image]\n';
+      } else {
+        block = '\n[gama_image_file]\nmime:$normalizedMime\npath:$path\n[/gama_image_file]\n';
+      }
+    } catch (_) {
+      block = '\n[gama_image]\nmime:$mime\ndata:$data\n[/gama_image]\n';
+    }
+
+    if (!mounted) return;
+    Message? target;
+    for (final message in _messages) {
+      if (message.id == messageId) {
+        target = message;
+        break;
+      }
+    }
+    final messageToUpdate = target;
+    if (messageToUpdate == null) return;
+    setState(() => messageToUpdate.content = '${messageToUpdate.content}$block');
+    if (messageToUpdate.isInBox) {
+      try {
+        await _service.updateMessageContent(messageToUpdate, messageToUpdate.content);
+      } catch (_) {}
+    }
+    _scrollToBottom();
+  }
+
+  Future<void> _retryLastFailedRequest() async {
+    if (_isLoading || _failedAssistantMessageId == null) return;
+    final failedId = _failedAssistantMessageId!;
+    final failedIndex = _messages.indexWhere((m) => m.id == failedId);
+    if (failedIndex < 0) return;
+
+    final rawText = _retryRawText ?? '';
+    final attachments = List<ProcessedAttachment>.from(_retryAttachments);
+    final start = failedIndex > 0 && _messages[failedIndex - 1].isUser
+        ? failedIndex - 1
+        : failedIndex;
+    final removed = _messages.sublist(start, failedIndex + 1);
+    setState(() {
+      _messages.removeRange(start, failedIndex + 1);
+      _failedAssistantMessageId = null;
+      _controller.text = rawText;
+      _attachments
+        ..clear()
+        ..addAll(attachments);
+    });
+    await _service.deleteMessages(removed);
+    await _sendMessage();
+  }
+
   Future<void> _sendMessage() async {
     if (_isLoading || _waitingForAttachment) return;
 
@@ -1009,7 +1105,21 @@ class _ChatScreenState extends State<ChatScreen> {
     final rawText = _controller.text.trim();
     if ((rawText.isEmpty && _attachments.isEmpty) || _isLoading) return;
 
-    // Se a Gamma ainda estiver falando a resposta anterior, interrompe
+    final pluginFlags = await PluginSettingsService.instance.load();
+    if (_attachments.isNotEmpty && pluginFlags['attachments'] == false) {
+      _snack('Anexos está desativado em Plugins. Ative o recurso para enviar arquivos.');
+      return;
+    }
+    if (_attachments.any((a) => a.isNativeImage) && pluginFlags['vision'] == false) {
+      _snack('Visão está desativada em Plugins. Ative o recurso para analisar imagens.');
+      return;
+    }
+    if (pluginFlags['tts'] == false && (_speakNextReply || SettingsService.instance.ttsAuto)) {
+      _speakNextReply = false;
+      _snack('Voz (TTS) está desativada em Plugins; a resposta será exibida em texto.');
+    }
+
+    // Se a Gama ainda estiver falando a resposta anterior, interrompe
     // imediatamente e começa a tratar a mensagem atual.
     if (_isSpeaking || TtsService.instance.isBusy) {
       await TtsService.instance.stop();
@@ -1036,9 +1146,12 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
 
-    final voiceRequested = _speakNextReply;
+    final voiceRequested = _speakNextReply && (pluginFlags['tts'] ?? true);
 
     final pending = List<ProcessedAttachment>.from(_attachments);
+    _retryRawText = rawText;
+    _retryAttachments = List<ProcessedAttachment>.from(pending);
+    _failedAssistantMessageId = null;
     final apiText = AttachmentService.buildMessageBody(rawText, pending);
     final displayText = AttachmentService.buildDisplayMessage(rawText, pending);
     final imagePayload = AttachmentService.buildImagesPayload(pending);
@@ -1104,7 +1217,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
       // Fala (botão de ouvir / TTS automático) ou modo Conversar →
       // pede resposta só em frases naturais, sem listas/código/símbolos.
-      final willSpeak = voiceRequested || SettingsService.instance.ttsAuto;
+      final willSpeak = (pluginFlags['tts'] ?? true) &&
+          (voiceRequested || SettingsService.instance.ttsAuto);
       final stream = _ollama.chatStream(
         messages: apiMessages,
         images: imagePayload.isEmpty ? null : imagePayload,
@@ -1136,14 +1250,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
           // Imagem gerada pelo backend (GPT Image 2.5 Sunburst)
           if (event.imageBase64 != null && event.imageBase64!.isNotEmpty) {
-            final mime = event.imageMime ?? 'image/png';
-            final block =
-                '\n[gama_image]\nmime:$mime\ndata:${event.imageBase64}\n[/gama_image]\n';
-            setState(() {
-              if (_messages.isNotEmpty && _messages.last.isAssistant) {
-                _messages.last.content = (_messages.last.content) + block;
-              }
-            });
+            final assistant = _messages.where((m) => m.isAssistant).toList();
+            if (assistant.isNotEmpty) {
+              unawaited(_storeGeneratedImage(
+                data: event.imageBase64!,
+                mime: event.imageMime ?? 'image/png',
+                messageId: assistant.last.id,
+              ));
+            }
           }
 
           final token = event.token;
@@ -1152,7 +1266,7 @@ class _ChatScreenState extends State<ChatScreen> {
           setState(() {
             _streamPhase = 'typing';
             if (_voiceResponsePending) {
-              // Mantém a resposta fora da UI enquanto a Gamma ainda está
+              // Mantém a resposta fora da UI enquanto a Gama ainda está
               // gerando. O conteúdo será revelado quando o áudio começar.
               _voiceResponseBuffer += token;
             } else if (_messages.isNotEmpty && _messages.last.isAssistant) {
@@ -1225,6 +1339,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 });
               }
               await _service.addMessage(_messages.last);
+              _failedAssistantMessageId = null;
+              _retryRawText = null;
+              _retryAttachments = <ProcessedAttachment>[];
             } catch (e) {
               // Se o áudio falhar, ainda mostramos a resposta completa para
               // não perder a mensagem que o servidor já gerou.
@@ -1236,6 +1353,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 });
               }
               await _service.addMessage(_messages.last);
+              _failedAssistantMessageId = null;
+              _retryRawText = null;
+              _retryAttachments = <ProcessedAttachment>[];
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -1252,31 +1372,44 @@ class _ChatScreenState extends State<ChatScreen> {
         },
         onError: (e) async {
           if (!mounted) return;
-          final errorMessage = 'Desculpa, deu erro: $e';
+          final friendly = e is ChatApiException
+              ? e.message
+              : 'A resposta foi interrompida. Verifique a conexão e tente novamente.';
+          final failed = _messages.isNotEmpty && _messages.last.isAssistant
+              ? _messages.last
+              : null;
           setState(() {
-            if (_messages.isNotEmpty && _messages.last.isAssistant) {
-              _messages.last.content = _messages.last.content.isEmpty
-                  ? errorMessage
-                  : '${_messages.last.content}\n\n[Erro: $e]';
+            if (failed != null) {
+              failed.content = failed.content.trim().isEmpty
+                  ? friendly
+                  : '${failed.content.trim()}\n\n$friendly';
+              _failedAssistantMessageId = failed.id;
             }
             _isLoading = false;
             _streamPhase = '';
-                });
-          if (_messages.isNotEmpty && _messages.last.isAssistant) {
-            await _service.addMessage(_messages.last);
-          }
+            _voiceResponsePending = false;
+            _voiceResponseBuffer = '';
+            _speakNextReply = false;
+            _isSpeaking = false;
+          });
+          if (failed != null) await _service.addMessage(failed);
         },
         cancelOnError: true,
       );
     } catch (e) {
       if (!mounted) return;
+      final friendly = e is ChatApiException
+          ? e.message
+          : 'Não foi possível enviar a mensagem. Verifique a conexão e tente novamente.';
       setState(() {
-        if (_messages.isNotEmpty) {
-          _messages.last.content = 'Desculpa, deu erro: $e';
+        if (_messages.isNotEmpty && _messages.last.isAssistant) {
+          _messages.last.content = friendly;
+          _failedAssistantMessageId = _messages.last.id;
         }
         _isLoading = false;
+        _streamPhase = '';
       });
-      if (_messages.isNotEmpty) {
+      if (_messages.isNotEmpty && _messages.last.isAssistant) {
         await _service.addMessage(_messages.last);
       }
     }
@@ -1431,7 +1564,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Gamma 2.0',
+                                'Gama 2.0',
                                 style: TextStyle(
                                   color: GamaColors.textPrimary,
                                   fontSize: 15,
@@ -1701,7 +1834,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                           ),
                                           const SizedBox(width: 8),
                                           const Text(
-                                            'GAMMA',
+                                            'GAMA',
                                             style: TextStyle(
                                               color: GamaColors.textMuted,
                                               fontSize: 10,
@@ -1721,6 +1854,17 @@ class _ChatScreenState extends State<ChatScreen> {
                                         isUser: isUser,
                                         onTapLink: _openLink,
                                       ),
+                                    if (!isUser && msg.id == _failedAssistantMessageId) ...[
+                                      const SizedBox(height: 8),
+                                      Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: OutlinedButton.icon(
+                                          onPressed: _isLoading ? null : _retryLastFailedRequest,
+                                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                                          label: const Text('Tentar novamente'),
+                                        ),
+                                      ),
+                                    ],
                                     if (!isUser &&
                                         (_artifactsByMessageId[msg.id]?.isNotEmpty ?? false)) ...[
                                       const SizedBox(height: 12),
@@ -1816,7 +1960,7 @@ class _ChatScreenState extends State<ChatScreen> {
               alignment: Alignment.centerLeft,
               child: Text(
                 _isSpeaking
-                    ? 'Gamma ainda está respondendo...'
+                    ? 'Gama ainda está respondendo...'
                     : _streamPhase == 'searching'
                     ? 'Buscando na web…'
                     : _streamPhase == 'generating_image'
@@ -1839,7 +1983,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ? 'Aprimorando vídeo…'
                     : _streamPhase == 'thinking'
                     ? 'Pensando…'
-                    : 'Gamma está respondendo…',
+                    : 'Gama está respondendo…',
                 style: TextStyle(
                   color: GamaColors.textMuted,
                   fontSize: 12,
@@ -2168,7 +2312,7 @@ class _EmptyState extends StatelessWidget {
   ];
   static const _suggestionDescriptions = [
     'Revise arquivos, documentação ou código.',
-    'Organize os próximos passos com a Gamma.',
+    'Organize os próximos passos com a Gama.',
     'Veja o que a assistente lembra sobre você.',
   ];
   static const _suggestionIcons = [
@@ -2251,7 +2395,7 @@ class _EmptyState extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               const Text(
-                'Converse, programe ou explore uma ideia.\nA Gamma ajuda você a dar o próximo passo.',
+                'Converse, programe ou explore uma ideia.\nA Gama ajuda você a dar o próximo passo.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: GamaColors.textMuted,

@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/gama_colors.dart';
+import '../services/local_notification_service.dart';
+import '../services/plugin_settings_service.dart';
 
 class _Reminder {
   final String id;
@@ -73,6 +75,19 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
       _items = list;
       _loading = false;
     });
+    try {
+      final enabled = await PluginSettingsService.instance.isEnabled('scheduled');
+      final hasFutureReminder = list.any(
+        (item) => !item.done && item.when.isAfter(DateTime.now()),
+      );
+      if (enabled && hasFutureReminder) {
+        final permitted = await LocalNotificationService.instance.requestPermission();
+        if (!permitted) {
+          _snack('Permita as notificações da Gama nas configurações do aparelho para receber lembretes.');
+        }
+      }
+      await LocalNotificationService.instance.syncSavedReminders(enabled: enabled);
+    } catch (_) {}
   }
 
   Future<void> _persist() async {
@@ -104,7 +119,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                     autofocus: true,
                     style: const TextStyle(color: GamaColors.textPrimary),
                     decoration: const InputDecoration(
-                      hintText: 'Ex: revisar PR do Gamma',
+                      hintText: 'Ex.: revisar uma tarefa',
                       hintStyle: TextStyle(color: GamaColors.textHint),
                     ),
                     maxLines: 2,
@@ -169,24 +184,58 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
     if (ok != true) return;
     final text = textCtrl.text.trim();
     if (text.isEmpty) return;
+    if (!when.isAfter(DateTime.now().add(const Duration(seconds: 5)))) {
+      _snack('Escolha um horário futuro para o lembrete.');
+      return;
+    }
 
+    final reminder = _Reminder(id: _uuid.v4(), text: text, when: when);
     setState(() {
-      _items.add(
-        _Reminder(id: _uuid.v4(), text: text, when: when),
-      );
+      _items.add(reminder);
       _items.sort((a, b) => a.when.compareTo(b.when));
     });
     await _persist();
+    try {
+      final enabled = await PluginSettingsService.instance.isEnabled('scheduled');
+      if (enabled) {
+        await LocalNotificationService.instance.schedule(
+          id: reminder.id,
+          text: text,
+          when: when,
+        );
+        _snack('Lembrete salvo e notificação agendada.');
+      } else {
+        _snack('Lembrete salvo. Ative Agendamentos em Plugins para receber notificações.');
+      }
+    } catch (e) {
+      _snack('Lembrete salvo, mas não foi possível ativar a notificação. Verifique a permissão do app.');
+    }
+  }
+
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), behavior: SnackBarBehavior.floating),
+    );
   }
 
   Future<void> _toggleDone(_Reminder r) async {
     setState(() => r.done = !r.done);
     await _persist();
+    try {
+      if (r.done) {
+        await LocalNotificationService.instance.cancel(r.id);
+      } else if (r.when.isAfter(DateTime.now()) &&
+          await PluginSettingsService.instance.isEnabled('scheduled')) {
+        await LocalNotificationService.instance.schedule(id: r.id, text: r.text, when: r.when);
+      }
+    } catch (_) {}
   }
 
   Future<void> _remove(_Reminder r) async {
     setState(() => _items.removeWhere((e) => e.id == r.id));
     await _persist();
+    try { await LocalNotificationService.instance.cancel(r.id); } catch (_) {}
   }
 
   static String _fmt(DateTime d) {

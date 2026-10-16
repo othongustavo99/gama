@@ -19,7 +19,7 @@ from .preprocessor import prepare_many
 
 logger = logging.getLogger(__name__)
 
-ANALYZER_SYSTEM = """Você é o Image Analyzer da Gamma.
+ANALYZER_SYSTEM = """Você é o Image Analyzer da Gama.
 Sua função é enxergar de forma eficiente, não responder longamente ao usuário.
 
 Analise as imagens conforme a pergunta do usuário. Classifique cada imagem

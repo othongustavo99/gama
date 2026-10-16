@@ -73,6 +73,8 @@ class GamaCore:
         conversation_id: Optional[str] = None,
         chat_mode: Optional[str] = None,
         force_deep_code_analysis: bool = False,
+        enable_memory: bool = True,
+        enable_code_analyzer: bool = True,
     ) -> Tuple[List[Dict[str, str]], Optional[str], Optional[str], List[Dict[str, str]]]:
         """
         Returns: prepared, fact_saved, search_query, sources
@@ -110,7 +112,7 @@ class GamaCore:
                     )
                     break
 
-        if auto_memory and last_user:
+        if enable_memory and auto_memory and last_user:
             try:
                 for extracted in try_extract_memories(last_user):
                     try:
@@ -136,13 +138,17 @@ class GamaCore:
 
         # Memória v2: bloco CORE estável no system prompt (bom para cache) e fatos
         # RELEVANTES à pergunta logo antes dela — sem duplicar o mesmo texto 2x.
-        try:
-            memory_block = store.core_block()
-            relevant_block, relevant_ids = store.relevant_block(last_user)
-            if relevant_ids:
-                store.mark_used(relevant_ids)
-        except Exception as e:
-            logger.warning("memory block: %s", e)
+        if enable_memory:
+            try:
+                memory_block = store.core_block()
+                relevant_block, relevant_ids = store.relevant_block(last_user)
+                if relevant_ids:
+                    store.mark_used(relevant_ids)
+            except Exception as e:
+                logger.warning("memory block: %s", e)
+                memory_block, relevant_block = "", ""
+        else:
+            # O toggle desliga leitura e escrita da memória neste turno.
             memory_block, relevant_block = "", ""
 
         mode = (chat_mode or "").strip().lower()
@@ -218,25 +224,26 @@ class GamaCore:
             prepared.append({"role": "system", "content": url_block})
 
         # ── Code Analyzer ────────────────────────────────────────────────
-        try:
-            code_ctx = await self._code_analyzer_block(
-                last_user,
-                user_id=user_id or "default",
-                session=session,
-                messages=messages,
-                force_deep=force_deep_code_analysis,
-                llm_client=ollama_client,
-                model=model,
-            )
-            if code_ctx:
-                prepared.append({"role": "system", "content": code_ctx})
-                if session.get("active_project_id"):
-                    add_action(
-                        session,
-                        f"Contexto de código injetado (project_id={session['active_project_id']})",
-                    )
-        except Exception as e:
-            logger.warning("code_analyzer: %s", e)
+        if enable_code_analyzer:
+            try:
+                code_ctx = await self._code_analyzer_block(
+                    last_user,
+                    user_id=user_id or "default",
+                    session=session,
+                    messages=messages,
+                    force_deep=force_deep_code_analysis,
+                    llm_client=ollama_client,
+                    model=model,
+                )
+                if code_ctx:
+                    prepared.append({"role": "system", "content": code_ctx})
+                    if session.get("active_project_id"):
+                        add_action(
+                            session,
+                            f"Contexto de código injetado (project_id={session['active_project_id']})",
+                        )
+            except Exception as e:
+                logger.warning("code_analyzer: %s", e)
 
         # Estado da conversa (projeto, arquivos, ações) — sempre no system
         try:

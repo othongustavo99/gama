@@ -41,7 +41,7 @@ SEARCH_MODE = (
     .lower()
 )
 
-_UA = "Frequencia40-Gamma/0.8 (+assistant; research)"
+_UA = "Gama/1.0 (+assistant; research)"
 
 _EXPLICIT = re.compile(
     r"\b("
