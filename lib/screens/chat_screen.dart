@@ -1824,21 +1824,28 @@ class _ChatScreenState extends State<ChatScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: Row(
                       children: [
-                        IconButton(
-                          style: IconButton.styleFrom(
-                            backgroundColor: GamaColors.surfaceCard,
-                            foregroundColor: GamaColors.textPrimary,
+                        // O acesso ao histórico permanece visível, como no layout original.
+                        // O Builder garante que o botão encontre o Scaffold que contém o drawer.
+                        Builder(
+                          builder: (drawerContext) => IconButton(
+                            tooltip: 'Abrir conversas',
+                            style: IconButton.styleFrom(
+                              backgroundColor: GamaColors.surfaceCard,
+                              foregroundColor: GamaColors.textPrimary,
+                              minimumSize: const Size(42, 42),
+                              padding: EdgeInsets.zero,
+                            ),
+                            icon: const Icon(Icons.menu_rounded, size: 21),
+                            onPressed: () => Scaffold.of(drawerContext).openDrawer(),
                           ),
-                          icon: const Icon(Icons.menu_rounded, size: 20),
-                          onPressed: () => Scaffold.of(context).openDrawer(),
                         ),
-                        const SizedBox(width: 5),
+                        const SizedBox(width: 7),
                         Container(
                           width: 36,
                           height: 36,
                           padding: const EdgeInsets.all(5),
                           decoration: BoxDecoration(
-                            gradient:  LinearGradient(
+                            gradient: LinearGradient(
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                               colors: [GamaColors.surfaceHover, GamaColors.surfaceCard],
@@ -1849,97 +1856,104 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: Image.asset(
                             'assets/images/image3.png',
                             fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) =>  Icon(
+                            errorBuilder: (_, __, ___) => Icon(
                               Icons.auto_awesome_rounded,
                               color: GamaColors.accent,
                               size: 22,
                             ),
                           ),
                         ),
-                        const SizedBox(width: 10),
-                         Expanded(
+                        const SizedBox(width: 9),
+                        // Os outros controles permanecem no menu de três pontos.
+                        Expanded(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                'Gama 2.0',
-                                style: TextStyle(
-                                  color: GamaColors.textPrimary,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: -0.25,
-                                ),
-                              ),
-                              SizedBox(height: 2),
-                              Text(
-                                'ASSISTENTE PESSOAL',
-                                style: TextStyle(
-                                  color: GamaColors.textMuted,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 1.1,
-                                ),
-                              ),
+                              Text('Gama 2.0', maxLines: 1, overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: GamaColors.textPrimary, fontSize: 16,
+                                  fontWeight: FontWeight.w700, letterSpacing: -0.25)),
+                              const SizedBox(height: 3),
+                              Text('ASSISTENTE PESSOAL', maxLines: 1, overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: GamaColors.textMuted, fontSize: 10,
+                                  fontWeight: FontWeight.w700, letterSpacing: 1.0)),
                             ],
                           ),
                         ),
                         PopupMenuButton<String>(
-                          tooltip: 'Selecionar modelo de IA',
-                          icon: const Icon(Icons.psychology_alt_rounded, size: 21),
-                          onSelected: (model) async {
-                            await SettingsService.instance.setModel(model);
-                            if (mounted) setState(() {});
+                          tooltip: 'Mais opções',
+                          icon: const Icon(Icons.more_vert_rounded, size: 24),
+                          onSelected: (action) async {
+                            switch (action) {
+                              case 'history':
+                                Scaffold.of(context).openDrawer();
+                                break;
+                              case 'model':
+                                final selected = await showModalBottomSheet<String>(
+                                  context: context, backgroundColor: GamaColors.surfaceElevated,
+                                  showDragHandle: true,
+                                  builder: (sheetContext) => SafeArea(
+                                    child: ListView(shrinkWrap: true, children: [
+                                      const ListTile(title: Text('Modelo de IA'),
+                                        subtitle: Text('Escolha o modelo desta conversa')),
+                                      ..._chatModels.map((model) => ListTile(
+                                        leading: Icon(model == SettingsService.instance.model
+                                          ? Icons.radio_button_checked : Icons.radio_button_off,
+                                          color: model == SettingsService.instance.model
+                                            ? GamaColors.accent : GamaColors.textMuted),
+                                        title: Text(AppConstants.labelFor(model)),
+                                        onTap: () => Navigator.pop(sheetContext, model),
+                                      )),
+                                    ]),
+                                  ),
+                                );
+                                if (selected != null) {
+                                  await SettingsService.instance.setModel(selected);
+                                  if (mounted) setState(() {});
+                                }
+                                break;
+                              case 'voice':
+                                _toggleVoiceConversation();
+                                break;
+                              case 'stop':
+                                _stopGeneration();
+                                break;
+                              case 'settings':
+                                Navigator.push(context, MaterialPageRoute(
+                                  builder: (_) => const SettingsScreen()));
+                                break;
+                              case 'clear':
+                                _clearCurrentConversation();
+                                break;
+                            }
                           },
-                          itemBuilder: (context) => _chatModels.map((model) => PopupMenuItem<String>(
-                            value: model,
-                            child: Row(
-                              children: [
-                                if (model == SettingsService.instance.model)
-                                   Icon(Icons.check_rounded, size: 16, color: GamaColors.accent)
-                                else
-                                  const SizedBox(width: 16),
-                                const SizedBox(width: 8),
-                                Flexible(child: Text(AppConstants.labelFor(model), overflow: TextOverflow.ellipsis)),
-                              ],
-                            ),
-                          )).toList(),
-                        ),
-                        IconButton(
-                          tooltip: _voiceConversationMode ? 'Interromper conversa por voz' : 'Iniciar conversa por voz',
-                          onPressed: _toggleVoiceConversation,
-                          style: IconButton.styleFrom(
-                            backgroundColor: _voiceConversationMode ? GamaColors.accentSoft : GamaColors.surfaceCard,
-                            foregroundColor: _voiceConversationMode ? GamaColors.accentBright : GamaColors.textSecondary,
-                          ),
-                          icon: Icon(_voiceConversationMode ? Icons.headset_mic_rounded : Icons.headset_rounded, size: 19),
-                        ),
-                        if (_isLoading || _isSpeaking)
-                          IconButton(
-                            style: IconButton.styleFrom(
-                              backgroundColor: GamaColors.accentSoft,
-                              foregroundColor: GamaColors.accentBright,
-                            ),
-                            icon: const Icon(Icons.stop_rounded, size: 19),
-                            tooltip: 'Parar geração',
-                            onPressed: _stopGeneration,
-                          ),
-                        IconButton(
-                          icon: const Icon(Icons.settings_outlined, size: 20),
-                          tooltip: 'Configurações',
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const SettingsScreen(),
-                              ),
-                            );
-                          },
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded, size: 20),
-                          tooltip: 'Limpar conversa',
-                          onPressed: _clearCurrentConversation,
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(value: 'history', child: ListTile(
+                              dense: true, leading: Icon(Icons.menu_rounded),
+                              title: Text('Conversas e histórico'), contentPadding: EdgeInsets.zero)),
+                            PopupMenuItem(value: 'model', child: ListTile(
+                              dense: true, leading: const Icon(Icons.psychology_alt_rounded),
+                              title: const Text('Modelo de IA'),
+                              subtitle: Text(AppConstants.labelFor(SettingsService.instance.model)),
+                              contentPadding: EdgeInsets.zero)),
+                            PopupMenuItem(value: 'voice', child: ListTile(
+                              dense: true, leading: Icon(_voiceConversationMode
+                                ? Icons.headset_mic_rounded : Icons.headset_rounded),
+                              title: Text(_voiceConversationMode
+                                ? 'Interromper conversa por voz' : 'Iniciar conversa por voz'),
+                              contentPadding: EdgeInsets.zero)),
+                            if (_isLoading || _isSpeaking)
+                              const PopupMenuItem(value: 'stop', child: ListTile(
+                                dense: true, leading: Icon(Icons.stop_rounded),
+                                title: Text('Parar geração/áudio'), contentPadding: EdgeInsets.zero)),
+                            const PopupMenuItem(value: 'settings', child: ListTile(
+                              dense: true, leading: Icon(Icons.settings_outlined),
+                              title: Text('Configurações'), contentPadding: EdgeInsets.zero)),
+                            const PopupMenuDivider(),
+                            const PopupMenuItem(value: 'clear', child: ListTile(
+                              dense: true, leading: Icon(Icons.delete_outline_rounded),
+                              title: Text('Limpar conversa'), contentPadding: EdgeInsets.zero)),
+                          ],
                         ),
                       ],
                     ),
@@ -2564,6 +2578,7 @@ class _ChatScreenState extends State<ChatScreen> {
             _speakNextReply = true;
             _sendMessage();
           },
+          onStop: _stopGeneration,
           onModeChanged: (m) async {
             setState(() => _mode = m);
             await SettingsService.instance.setMode(m);

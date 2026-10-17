@@ -30,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _ttsAuto = false;
   ThemeMode _themeMode = ThemeMode.dark;
   double _fontScale = 1.0;
+  bool _developerMode = false;
 
   @override
   void initState() {
@@ -40,6 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _ttsAuto = SettingsService.instance.ttsAuto;
     _themeMode = SettingsService.instance.themeMode;
     _fontScale = SettingsService.instance.fontScale;
+    _developerMode = SettingsService.instance.developerMode;
     _loadModels();
   }
 
@@ -169,6 +171,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await SettingsService.instance.setTtsAuto(_ttsAuto);
     await SettingsService.instance.setThemeMode(_themeMode);
     await SettingsService.instance.setFontScale(_fontScale);
+    await SettingsService.instance.setDeveloperMode(_developerMode);
 
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -253,13 +256,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: (_statusOk == true)
-                    ? GamaColors.success.withOpacity(0.12)
-                    : GamaColors.error.withOpacity(0.12),
+                    ? GamaColors.success.withValues(alpha: 0.12)
+                    : GamaColors.error.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: (_statusOk == true)
-                      ? GamaColors.success.withOpacity(0.4)
-                      : GamaColors.error.withOpacity(0.4),
+                      ? GamaColors.success.withValues(alpha: 0.4)
+                      : GamaColors.error.withValues(alpha: 0.4),
                 ),
               ),
               child: Text(
@@ -391,7 +394,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'ID: $_selectedModel',
                 style:  TextStyle(
                   color: GamaColors.textHint,
-                  fontSize: 11,
+                  fontSize: 12,
                 ),
               ),
             ),
@@ -452,6 +455,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           const SizedBox(height: 28),
+          const _SectionTitle('Desenvolvedor'),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              'Mostrar detalhes técnicos',
+              style: TextStyle(color: GamaColors.textPrimary, fontSize: 15),
+            ),
+            subtitle: Text(
+              'Exibe resultados de validação, diagnósticos e custos informados pelo provedor.',
+              style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+            ),
+            value: _developerMode,
+            activeThumbColor: GamaColors.accent,
+            onChanged: (value) async {
+              setState(() => _developerMode = value);
+              await SettingsService.instance.setDeveloperMode(value);
+            },
+          ),
+          const SizedBox(height: 28),
           const _SectionTitle('Memória'),
           const SizedBox(height: 6),
            Text(
@@ -481,7 +503,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               label: Text(_resettingMemory ? 'Resetando…' : 'Resetar memória'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: GamaColors.error,
-                side: BorderSide(color: GamaColors.error.withOpacity(0.5)),
+                side: BorderSide(color: GamaColors.error.withValues(alpha: 0.5)),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -547,7 +569,7 @@ class _SectionTitle extends StatelessWidget {
           text.toUpperCase(),
           style:  TextStyle(
             color: GamaColors.textSecondary,
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.9,
           ),

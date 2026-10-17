@@ -81,7 +81,7 @@ class AppDrawer extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style:  TextStyle(
                               color: GamaColors.textMuted,
-                              fontSize: 11,
+                              fontSize: 12,
                             ),
                           ),
                         ],
@@ -115,7 +115,7 @@ class AppDrawer extends StatelessWidget {
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: GamaColors.accent.withOpacity(0.18),
+                          color: GamaColors.accent.withValues(alpha: 0.18),
                           blurRadius: 16,
                           offset: const Offset(0, 5),
                         ),
@@ -599,7 +599,7 @@ class _ConversationTile extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(10),
               border: isSelected
-                  ? Border.all(color: GamaColors.accent.withOpacity(0.25))
+                  ? Border.all(color: GamaColors.accent.withValues(alpha: 0.25))
                   : null,
             ),
             child: ListTile(
@@ -695,7 +695,7 @@ class _ProfileAvatar extends StatelessWidget {
       decoration: BoxDecoration(
         color: GamaColors.accentSoft,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: GamaColors.accent.withOpacity(0.35)),
+        border: Border.all(color: GamaColors.accent.withValues(alpha: 0.35)),
       ),
       clipBehavior: Clip.antiAlias,
       alignment: Alignment.center,

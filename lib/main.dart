@@ -277,7 +277,7 @@ class GamaStartupError extends StatelessWidget {
                     color: GamaColors.accentSoft,
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: GamaColors.accent.withOpacity(0.35),
+                      color: GamaColors.accent.withValues(alpha: 0.35),
                     ),
                   ),
                   child:  Icon(
@@ -315,7 +315,7 @@ class GamaStartupError extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style:  TextStyle(
                     color: GamaColors.textMuted,
-                    fontSize: 11,
+                    fontSize: 12,
                   ),
                 ),
               ],

@@ -324,7 +324,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                         'PENDENTES',
                         style: TextStyle(
                           color: GamaColors.textMuted,
-                          fontSize: 11,
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.6,
                         ),
@@ -338,7 +338,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                         'CONCLUÍDOS',
                         style: TextStyle(
                           color: GamaColors.textMuted,
-                          fontSize: 11,
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.6,
                         ),

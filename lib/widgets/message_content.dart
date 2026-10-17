@@ -375,31 +375,31 @@ class _MarkdownMessage extends StatelessWidget {
       code: textStyle.copyWith(fontSize: 13, fontFamily: 'monospace'),
       codeblockDecoration: BoxDecoration(
         color: isUser
-            ? Colors.black.withOpacity(0.22)
+            ? Colors.black.withValues(alpha: 0.22)
             : const Color(0xFF0E0E10),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: isUser
-              ? Colors.white.withOpacity(0.12)
+              ? Colors.white.withValues(alpha: 0.12)
               : GamaColors.border,
         ),
       ),
       blockquote: textStyle.copyWith(
         color: isUser
-            ? Colors.white.withOpacity(0.9)
+            ? Colors.white.withValues(alpha: 0.9)
             : GamaColors.textSecondary,
         fontSize: 14,
         height: 1.45,
       ),
       blockquotePadding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       blockquoteDecoration: BoxDecoration(
-        color: isUser ? Colors.black.withOpacity(0.18) : GamaColors.surfaceCard,
+        color: isUser ? Colors.black.withValues(alpha: 0.18) : GamaColors.surfaceCard,
         borderRadius: BorderRadius.circular(10),
         border: Border(
           left: BorderSide(
             color: isUser
                 ? Colors.white38
-                : GamaColors.accent.withOpacity(0.55),
+                : GamaColors.accent.withValues(alpha: 0.55),
             width: 3,
           ),
         ),
@@ -411,7 +411,7 @@ class _MarkdownMessage extends StatelessWidget {
       tableHead: textStyle.copyWith(fontWeight: FontWeight.w700),
       tableBody: textStyle.copyWith(fontSize: 13),
       tableBorder: TableBorder.all(
-        color: isUser ? Colors.white.withOpacity(0.25) : GamaColors.border,
+        color: isUser ? Colors.white.withValues(alpha: 0.25) : GamaColors.border,
         width: 1,
       ),
       tableCellsPadding: const EdgeInsets.symmetric(
@@ -549,10 +549,10 @@ class _CopyableCodeBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final background = isUser
-        ? Colors.black.withOpacity(0.22)
+        ? Colors.black.withValues(alpha: 0.22)
         : const Color(0xFF0E0E10);
     final border = isUser
-        ? Colors.white.withOpacity(0.12)
+        ? Colors.white.withValues(alpha: 0.12)
         : GamaColors.border;
     final foreground = isUser ? Colors.white : GamaColors.textPrimary;
     final muted = isUser ? Colors.white70 : GamaColors.textMuted;
@@ -572,7 +572,7 @@ class _CopyableCodeBlock extends StatelessWidget {
             height: 38,
             padding: const EdgeInsets.only(left: 12, right: 6),
             decoration: BoxDecoration(
-              color: Colors.black.withOpacity(isUser ? 0.10 : 0.18),
+              color: Colors.black.withValues(alpha: isUser ? 0.10 : 0.18),
               border: Border(bottom: BorderSide(color: border)),
             ),
             child: Row(
@@ -692,7 +692,7 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
       child: Table(
         defaultColumnWidth: const IntrinsicColumnWidth(),
         border: TableBorder.all(
-          color: isUser ? Colors.white.withOpacity(0.25) : GamaColors.border,
+          color: isUser ? Colors.white.withValues(alpha: 0.25) : GamaColors.border,
           width: 1,
         ),
         children: rows,
@@ -717,12 +717,12 @@ class _AttachmentChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: isUser
-            ? Colors.white.withOpacity(0.10)
+            ? Colors.white.withValues(alpha: 0.10)
             : GamaColors.surfaceCard,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: isUser
-              ? Colors.white.withOpacity(0.12)
+              ? Colors.white.withValues(alpha: 0.12)
               : GamaColors.border,
         ),
       ),

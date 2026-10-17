@@ -16,6 +16,7 @@ class SettingsService extends ChangeNotifier {
   static const String _keyFishVoiceId = 'gama_fish_voice_id';
   static const String _keyThemeMode = 'gama_theme_mode';
   static const String _keyFontScale = 'gama_font_scale';
+  static const String _keyDeveloperMode = 'gama_developer_mode';
 
   late SharedPreferences _prefs;
   bool _initialized = false;
@@ -82,6 +83,11 @@ class SettingsService extends ChangeNotifier {
     return value.clamp(0.85, 1.30).toDouble();
   }
 
+  bool get developerMode {
+    _ensureInitialized();
+    return _prefs.getBool(_keyDeveloperMode) ?? false;
+  }
+
   Future<void> setBaseUrl(String url) async {
     _ensureInitialized();
     final cleaned = url.trim().replaceAll(RegExp(r'/$'), '');
@@ -134,6 +140,12 @@ class SettingsService extends ChangeNotifier {
     _ensureInitialized();
     final safe = value.clamp(0.85, 1.30).toDouble();
     await _prefs.setDouble(_keyFontScale, safe);
+    notifyListeners();
+  }
+
+  Future<void> setDeveloperMode(bool value) async {
+    _ensureInitialized();
+    await _prefs.setBool(_keyDeveloperMode, value);
     notifyListeners();
   }
 }

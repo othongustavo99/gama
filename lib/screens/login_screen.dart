@@ -86,7 +86,7 @@ class _LoginScreenState extends State<LoginScreen> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
-                  colors: [GamaColors.accent.withOpacity(0.14), Colors.transparent],
+                  colors: [GamaColors.accent.withValues(alpha: 0.14), Colors.transparent],
                 ),
               ),
             ),
@@ -100,7 +100,7 @@ class _LoginScreenState extends State<LoginScreen> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
-                  colors: [GamaColors.accentCool.withOpacity(0.08), Colors.transparent],
+                  colors: [GamaColors.accentCool.withValues(alpha: 0.08), Colors.transparent],
                 ),
               ),
             ),
@@ -129,7 +129,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         border: Border.all(color: GamaColors.borderSoft),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.25),
+                            color: Colors.black.withValues(alpha: 0.25),
                             blurRadius: 32,
                             offset: const Offset(0, 16),
                           ),
@@ -148,7 +148,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               border: Border.all(color: GamaColors.border),
                               boxShadow: [
                                 BoxShadow(
-                                  color: GamaColors.accent.withOpacity(0.13),
+                                  color: GamaColors.accent.withValues(alpha: 0.13),
                                   blurRadius: 24,
                                 ),
                               ],
@@ -184,10 +184,10 @@ class _LoginScreenState extends State<LoginScreen> {
                               width: double.infinity,
                               padding: const EdgeInsets.all(13),
                               decoration: BoxDecoration(
-                                color: GamaColors.error.withOpacity(0.10),
+                                color: GamaColors.error.withValues(alpha: 0.10),
                                 borderRadius: BorderRadius.circular(14),
                                 border: Border.all(
-                                  color: GamaColors.error.withOpacity(0.28),
+                                  color: GamaColors.error.withValues(alpha: 0.28),
                                 ),
                               ),
                               child: Text(
@@ -272,7 +272,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
                                     color: GamaColors.textMuted,
-                                    fontSize: 11,
+                                    fontSize: 12,
                                   ),
                                 ),
                               ),
