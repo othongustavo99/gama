@@ -35,14 +35,14 @@ class ProjectsScreen extends StatelessWidget {
                         color: GamaColors.accentSoft,
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      child: const Icon(
+                      child:  Icon(
                         Icons.folder_special_rounded,
                         color: GamaColors.accent,
                         size: 32,
                       ),
                     ),
                     const SizedBox(height: 20),
-                    const Text(
+                     Text(
                       'Nenhum projeto ainda',
                       style: TextStyle(
                         color: GamaColors.textPrimary,
@@ -51,7 +51,7 @@ class ProjectsScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    const Text(
+                     Text(
                       'Fixe uma conversa no menu ⋮ do histórico (drawer) '
                       'para ela aparecer aqui como espaço de trabalho.',
                       textAlign: TextAlign.center,
@@ -83,22 +83,22 @@ class ProjectsScreen extends StatelessWidget {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  leading: const Icon(
+                  leading:  Icon(
                     Icons.push_pin_rounded,
                     color: GamaColors.accent,
                   ),
                   title: Text(
                     c.title,
-                    style: const TextStyle(color: GamaColors.textPrimary),
+                    style:  TextStyle(color: GamaColors.textPrimary),
                   ),
                   subtitle: Text(
                     'Atualizado $dd/$mm $hh:$mi',
-                    style: const TextStyle(
+                    style:  TextStyle(
                       color: GamaColors.textMuted,
                       fontSize: 12,
                     ),
                   ),
-                  trailing: const Icon(
+                  trailing:  Icon(
                     Icons.chevron_right_rounded,
                     color: GamaColors.textMuted,
                   ),
@@ -111,14 +111,14 @@ class ProjectsScreen extends StatelessWidget {
                       context: context,
                       builder: (ctx) => AlertDialog(
                         backgroundColor: GamaColors.surfaceCard,
-                        title: const Text(
+                        title:  Text(
                           'Desafixar projeto?',
                           style: TextStyle(color: GamaColors.textPrimary),
                         ),
                         content: Text(
                           'A conversa "${c.title}" sai da lista de projetos, '
                           'mas continua no histórico.',
-                          style: const TextStyle(color: GamaColors.textSecondary),
+                          style:  TextStyle(color: GamaColors.textSecondary),
                         ),
                         actions: [
                           TextButton(

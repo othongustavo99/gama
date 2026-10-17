@@ -26,6 +26,7 @@ class ProcessedAttachment {
   /// Imagem nativa: base64 puro (sem data:...). Null se não for imagem.
   final String? imageBase64;
   final String? mimeType;
+  final String? sourcePath;
 
   ProcessedAttachment({
     required this.name,
@@ -36,6 +37,7 @@ class ProcessedAttachment {
     required this.bytes,
     this.imageBase64,
     this.mimeType,
+    this.sourcePath,
   });
 
   bool get isNativeImage =>
@@ -157,6 +159,7 @@ class AttachmentService {
           contentForModel: _clip(text),
           label: name,
           bytes: bytes,
+          sourcePath: path,
         );
 
       case AttachmentKind.zip:
@@ -179,7 +182,8 @@ class AttachmentService {
             contentForModel: body,
             label: name,
             bytes: bytes,
-          );
+          sourcePath: path,
+        );
         } catch (e) {
           // Se o servidor respondeu com erro, não esconda uma rejeição real usando
           // o fallback. Para ZIPs grandes também evitamos uma descompactação local
@@ -204,7 +208,8 @@ class AttachmentService {
               contentForModel: _extractZipText(data, name),
               label: '$name (extração local limitada)',
               bytes: bytes,
-            );
+            sourcePath: path,
+        );
           } catch (fallbackError) {
             throw Exception('Falha ao processar $name: $fallbackError');
           }
@@ -235,6 +240,7 @@ class AttachmentService {
           contentForModel: text,
           label: '$name (${ext == '.docx' ? 'DOCX' : 'PDF'})',
           bytes: bytes,
+          sourcePath: path,
         );
 
       case AttachmentKind.image:
@@ -258,6 +264,7 @@ class AttachmentService {
           bytes: bytes,
           imageBase64: b64,
           mimeType: mime,
+          sourcePath: path,
         );
 
       case AttachmentKind.video:
@@ -272,7 +279,8 @@ class AttachmentService {
             contentForModel: '[video_artifact_id:$id]\nVídeo anexado: $name.',
             label: '$name (vídeo enviado)',
             bytes: bytes,
-          );
+          sourcePath: path,
+        );
         } catch (e) {
           throw Exception('Não consegui enviar o vídeo $name: $e');
         }
@@ -287,6 +295,7 @@ class AttachmentService {
               'Transcrição automática ainda não está ativa.',
           label: '$name (áudio)',
           bytes: bytes,
+          sourcePath: path,
         );
 
       case AttachmentKind.other:
@@ -297,6 +306,7 @@ class AttachmentService {
           contentForModel: '[Arquivo: $name, $bytes bytes, tipo $ext]',
           label: name,
           bytes: bytes,
+          sourcePath: path,
         );
     }
   }

@@ -132,7 +132,7 @@ class LibraryScreen extends StatefulWidget {
                       Expanded(
                         child: Text(
                           name,
-                          style: const TextStyle(
+                          style:  TextStyle(
                             color: GamaColors.textPrimary,
                             fontWeight: FontWeight.w600,
                           ),
@@ -141,7 +141,7 @@ class LibraryScreen extends StatefulWidget {
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(
+                        icon:  Icon(
                           Icons.close,
                           color: GamaColors.textMuted,
                         ),
@@ -157,7 +157,7 @@ class LibraryScreen extends StatefulWidget {
                     child: Image.file(
                       file,
                       fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Padding(
+                      errorBuilder: (_, __, ___) =>  Padding(
                         padding: EdgeInsets.all(24),
                         child: Text(
                           'Não foi possível carregar a imagem',
@@ -234,7 +234,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           if (_items.isNotEmpty)
             TextButton(
               onPressed: _clear,
-              child: const Text(
+              child:  Text(
                 'Limpar',
                 style: TextStyle(color: GamaColors.error),
               ),
@@ -242,7 +242,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
       ),
       body: _items.isEmpty
-          ? const Center(
+          ?  Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
@@ -284,7 +284,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               children: [
                                 Text(
                                   it['name']?.toString() ?? '',
-                                  style: const TextStyle(
+                                  style:  TextStyle(
                                     color: GamaColors.textPrimary,
                                     fontWeight: FontWeight.w500,
                                   ),
@@ -292,7 +292,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 Text(
                                   '${it['kind']} · ${_fmtBytes(it['bytes'] as int? ?? 0)}'
                                   '${hasFile ? '' : ' · (sem arquivo)'}',
-                                  style: const TextStyle(
+                                  style:  TextStyle(
                                     color: GamaColors.textMuted,
                                     fontSize: 12,
                                   ),

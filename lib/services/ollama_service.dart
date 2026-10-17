@@ -16,6 +16,7 @@ class ChatStreamEvent {
   final String? memorySaved;
   final String? phase; // searching | thinking | typing | generating_image | image_ready | video_generating
   final String? webSearchQuery;
+  final List<Map<String, dynamic>>? sources;
   /// Imagem gerada (base64 puro, sem data: prefix)
   final String? imageBase64;
   final String? imageMime;
@@ -26,6 +27,7 @@ class ChatStreamEvent {
     this.memorySaved,
     this.phase,
     this.webSearchQuery,
+    this.sources,
     this.imageBase64,
     this.imageMime,
     this.artifact,
@@ -39,6 +41,7 @@ class ChatStreamEvent {
   factory ChatStreamEvent.meta({
     String? phase,
     String? webSearchQuery,
+    List<Map<String, dynamic>>? sources,
     String? memorySaved,
     String? imageBase64,
     String? imageMime,
@@ -46,6 +49,7 @@ class ChatStreamEvent {
   }) => ChatStreamEvent._(
     phase: phase,
     webSearchQuery: webSearchQuery,
+    sources: sources,
     memorySaved: memorySaved,
     imageBase64: imageBase64,
     imageMime: imageMime,
@@ -116,6 +120,36 @@ class OllamaService {
     _dio.options.baseUrl = SettingsService.instance.baseUrl;
     _dio.options.headers.addAll(AppConstants.authHeaders);
     return _dio;
+  }
+
+  /// Pede ao mesmo modelo selecionado um título curto para o histórico.
+  /// Falhas são tratadas pelo chamador com um título local de fallback.
+  Future<String?> generateConversationTitle({
+    required String userMessage,
+    required String assistantMessage,
+  }) async {
+    try {
+      final dio = _client();
+      final response = await dio.post(
+        '/conversations/title',
+        data: {
+          'model': SettingsService.instance.model,
+          'user_message': userMessage.length > 5000
+              ? userMessage.substring(0, 5000)
+              : userMessage,
+          'assistant_message': assistantMessage.length > 5000
+              ? assistantMessage.substring(0, 5000)
+              : assistantMessage,
+        },
+        options: Options(receiveTimeout: const Duration(seconds: 25)),
+      );
+      if (response.data is! Map) return null;
+      final title = (response.data as Map)['title']?.toString().trim();
+      if (title == null || title.isEmpty) return null;
+      return title;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<List<String>> listModels() async {
@@ -311,6 +345,14 @@ class OllamaService {
       final query = m['web_search'] as String?;
       String? imgB64;
       String? imgMime;
+      List<Map<String, dynamic>>? sources;
+      final rawSources = m['sources'];
+      if (rawSources is List) {
+        sources = rawSources
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false);
+      }
       Map<String, dynamic>? artifact;
       final rawArtifact = m['artifact'];
       if (rawArtifact is Map) artifact = Map<String, dynamic>.from(rawArtifact);
@@ -322,6 +364,7 @@ class OllamaService {
       yield ChatStreamEvent.meta(
         phase: phase,
         webSearchQuery: query,
+        sources: sources,
         memorySaved: saved,
         imageBase64: imgB64,
         imageMime: imgMime,

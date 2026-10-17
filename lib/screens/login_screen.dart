@@ -120,7 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Container(
                       padding: const EdgeInsets.fromLTRB(24, 30, 24, 24),
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
+                        gradient:  LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
                           colors: [GamaColors.surfaceElevated, GamaColors.surface],
@@ -159,7 +159,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                          const Text(
+                           Text(
                             'Gama',
                             style: TextStyle(
                               color: GamaColors.textPrimary,
@@ -169,7 +169,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                           const SizedBox(height: 8),
-                          const Text(
+                           Text(
                             'Seu espaço para programar, criar\ne conversar com inteligência.',
                             textAlign: TextAlign.center,
                             style: TextStyle(
@@ -193,7 +193,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               child: Text(
                                 _error!,
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(
+                                style:  TextStyle(
                                   color: GamaColors.error,
                                   fontSize: 12,
                                   height: 1.4,
@@ -248,7 +248,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               onPressed: _loading ? null : _onGuest,
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: GamaColors.textPrimary,
-                                side: const BorderSide(color: GamaColors.border),
+                                side:  BorderSide(color: GamaColors.border),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(16),
                                 ),
@@ -257,7 +257,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                          const Row(
+                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(

@@ -11,8 +11,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
+import '../core/constants.dart';
 import '../models/message.dart';
 import '../services/attachment_service.dart';
 import '../services/conversation_service.dart';
@@ -50,6 +52,14 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, List<Map<String, dynamic>>> _artifactsByMessageId = {};
   DateTime? _lastAutoScrollAt;
   bool _scrollCallbackScheduled = false;
+  bool _showScrollToBottom = false;
+  Timer? _streamUiTimer;
+  Timer? _voiceAutoSendTimer;
+  bool _voiceConversationMode = false;
+  bool _titleGenerationInProgress = false;
+  List<String> _chatModels = List<String>.from(AppConstants.availableModels);
+  final Map<String, List<Map<String, dynamic>>> _sourcesByMessageId = {};
+  final Map<String, int> _feedbackByMessageId = {};
   StreamSubscription<ChatStreamEvent>? _streamSubscription;
 
   /// Arquivos anexados (ainda não enviados)
@@ -97,6 +107,277 @@ class _ChatScreenState extends State<ChatScreen> {
     _mode = SettingsService.instance.mode;
     _loadMessages();
     _initSpeech();
+    _scrollController.addListener(_handleScrollChange);
+    unawaited(_loadChatModels());
+    unawaited(_loadFeedback());
+  }
+
+
+  Future<void> _loadChatModels() async {
+    try {
+      final models = await _ollama.listModels();
+      if (!mounted || models.isEmpty) return;
+      final selected = SettingsService.instance.model;
+      setState(() {
+        _chatModels = List<String>.unmodifiable({
+          ...models,
+          if (selected.isNotEmpty) selected,
+        });
+      });
+    } catch (_) {
+      // A lista local fica disponível quando o backend está offline.
+    }
+  }
+
+  Future<void> _loadFeedback() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final prefix = 'gama_message_feedback_';
+      final loaded = <String, int>{};
+      for (final key in prefs.getKeys()) {
+        if (!key.startsWith(prefix)) continue;
+        final value = prefs.getInt(key);
+        if (value == 1 || value == -1) {
+          loaded[key.substring(prefix.length)] = value!;
+        }
+      }
+      if (mounted) setState(() => _feedbackByMessageId.addAll(loaded));
+    } catch (_) {}
+  }
+
+  Future<void> _setMessageFeedback(Message message, int value) async {
+    final next = _feedbackByMessageId[message.id] == value ? 0 : value;
+    setState(() {
+      if (next == 0) {
+        _feedbackByMessageId.remove(message.id);
+      } else {
+        _feedbackByMessageId[message.id] = next;
+      }
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = 'gama_message_feedback_${message.id}';
+      if (next == 0) {
+        await prefs.remove(key);
+      } else {
+        await prefs.setInt(key, next);
+      }
+    } catch (_) {}
+  }
+
+  void _handleScrollChange() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    final nearBottom = position.maxScrollExtent - position.pixels <= 140;
+    final show = !nearBottom;
+    if (show == _showScrollToBottom) return;
+    _showScrollToBottom = show;
+    _nearBottomCache = nearBottom;
+    if (mounted) setState(() {});
+  }
+
+  bool _nearBottomCache = true;
+
+  void _scheduleStreamUiRefresh() {
+    if (_streamUiTimer?.isActive ?? false) return;
+    _streamUiTimer = Timer(const Duration(milliseconds: 50), () {
+      _streamUiTimer = null;
+      if (!mounted) return;
+      setState(() {});
+      _scrollToBottom();
+    });
+  }
+
+  String _fallbackConversationTitle(String prompt) {
+    final cleaned = prompt
+        .replaceAll(RegExp(r'https?://\S+'), '')
+        .replaceAll(RegExp(r'[`*_#>\[\]()]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    final words = cleaned.split(' ').where((word) => word.isNotEmpty).take(5).toList();
+    if (words.isEmpty) return 'Nova conversa';
+    if (words.length < 3) return words.join(' ');
+    return words.join(' ');
+  }
+
+  Future<void> _ensureConversationTitle({
+    required String userMessage,
+    required String assistantMessage,
+  }) async {
+    if (_titleGenerationInProgress) return;
+    final conversation = _service.conversationById(widget.conversationId);
+    if (conversation == null ||
+        (conversation.title.trim().isNotEmpty && conversation.title != 'Nova conversa')) {
+      return;
+    }
+    _titleGenerationInProgress = true;
+    try {
+      final generated = await _ollama.generateConversationTitle(
+        userMessage: userMessage,
+        assistantMessage: assistantMessage,
+      );
+      final title = (generated == null || generated.trim().isEmpty)
+          ? _fallbackConversationTitle(userMessage)
+          : generated.trim().replaceAll(RegExp(r'[\r\n"`]'), '').split(RegExp(r'\s+')).take(7).join(' ');
+      if (title.isNotEmpty && mounted) {
+        final latest = _service.conversationById(widget.conversationId);
+        if (latest != null && latest.title == 'Nova conversa') {
+          await _service.renameConversation(widget.conversationId, title);
+        }
+      }
+    } finally {
+      _titleGenerationInProgress = false;
+    }
+  }
+
+  bool _looksTruncated(String content) {
+    final text = content.trimRight();
+    if (text.length < 180) return false;
+    final fenceCount = '```'.allMatches(text).length;
+    if (fenceCount.isOdd) return true;
+    // Heurística conservadora: finais de frase completos não ganham o botão.
+    return RegExp(r'(\.\.\.|…|[:,;—-])$').hasMatch(text) ||
+        !RegExp(r'[.!?…)]$').hasMatch(text);
+  }
+
+  Future<void> _continueResponse() async {
+    if (_isLoading) return;
+    _controller.text = 'Continue a resposta anterior de onde parou, sem repetir o que já foi explicado.';
+    await _sendMessage();
+  }
+
+  Future<void> _submitFollowUp(String prompt) async {
+    if (_isLoading) return;
+    _controller.text = prompt;
+    await _sendMessage();
+  }
+
+  Future<void> _toggleVoiceConversation() async {
+    if (_voiceConversationMode && (_isSpeaking || TtsService.instance.isBusy)) {
+      // Interrupção por toque durante a reprodução: para a fala, mantém o
+      // modo de voz ativo e reabre o microfone para a próxima mensagem.
+      try { await TtsService.instance.stop(); } catch (_) {}
+      if (mounted) setState(() => _isSpeaking = false);
+      _micArmed = false;
+      _speechSessionId++;
+      try { await _speech.stop(); } catch (_) {}
+      if (mounted) setState(() => _isListening = false);
+      await _toggleListen();
+      if (mounted && _micArmed) _snack('Resposta interrompida. Pode falar.');
+      return;
+    }
+    if (_voiceConversationMode) {
+      _voiceConversationMode = false;
+      _voiceAutoSendTimer?.cancel();
+      _voiceAutoSendTimer = null;
+      _micArmed = false;
+      _speechSessionId++;
+      _speechRestartScheduled = false;
+      try { await _speech.stop(); } catch (_) {}
+      try { await TtsService.instance.stop(); } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _isListening = false;
+          _isSpeaking = false;
+        });
+        _snack('Conversa por voz encerrada.');
+      }
+      return;
+    }
+    _voiceConversationMode = true;
+    if (mounted) setState(() {});
+    if (!_micArmed) await _toggleListen();
+    if (!mounted) return;
+    if (_micArmed) {
+      _snack('Conversa por voz ativada. Toque no ícone para interromper a fala ou encerrar.');
+    } else {
+      _voiceConversationMode = false;
+      setState(() {});
+      _snack('Não foi possível iniciar a conversa por voz. Verifique a permissão e a disponibilidade do microfone.');
+    }
+  }
+
+  Future<void> _resumeVoiceConversation() async {
+    if (!mounted || !_voiceConversationMode || _isLoading || _micArmed) return;
+    try {
+      await _toggleListen();
+    } catch (_) {}
+  }
+
+  Widget _sourceChips(String messageId) {
+    final sources = _sourcesByMessageId[messageId] ?? const <Map<String, dynamic>>[];
+    if (sources.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'FONTES',
+            style: TextStyle(
+              color: GamaColors.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: sources.take(6).map((source) {
+              final rawUrl = (source['url'] ?? source['link'] ?? '').toString().trim();
+              final uri = Uri.tryParse(rawUrl);
+              final domain = uri != null && uri.host.isNotEmpty
+                  ? uri.host.replaceFirst(RegExp(r'^www\.'), '')
+                  : (source['source'] ?? source['title'] ?? 'Fonte').toString();
+              final title = (source['title'] ?? domain).toString();
+              return ActionChip(
+                avatar: const Icon(Icons.link_rounded, size: 14),
+                label: Text(domain, maxLines: 1, overflow: TextOverflow.ellipsis),
+                tooltip: title,
+                visualDensity: VisualDensity.compact,
+                backgroundColor: GamaColors.surfaceCard,
+                side: BorderSide(color: GamaColors.borderSoft),
+                onPressed: rawUrl.startsWith('http://') || rawUrl.startsWith('https://')
+                    ? () => _openLink(rawUrl)
+                    : null,
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPendingImagePreview(ProcessedAttachment attachment) {
+    final path = attachment.sourcePath;
+    if (path == null || path.isEmpty) return;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        backgroundColor: GamaColors.surfaceElevated,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520, maxHeight: 560),
+                child: Image.file(File(path), fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Text('Não foi possível abrir esta imagem.')),
+              ),
+              const SizedBox(height: 8),
+              Text(attachment.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Fechar')),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// Junta o trecho confirmado com o parcial da sessão atual.
@@ -302,6 +583,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _applySpeechToField();
 
+    if (_voiceConversationMode && isFinal && words.isNotEmpty && !_isLoading) {
+      _voiceAutoSendTimer?.cancel();
+      _voiceAutoSendTimer = Timer(const Duration(milliseconds: 450), () {
+        _voiceAutoSendTimer = null;
+        if (!mounted || !_voiceConversationMode || _isLoading || _controller.text.trim().isEmpty) return;
+        _speakNextReply = true;
+        unawaited(_sendMessage());
+      });
+    }
+
     // Se o Android marcou a sessão como final enquanto o botão ainda está
     // ligado, o próximo status fará a troca automática sem desligar o mic.
   }
@@ -378,6 +669,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _messages = _service.getMessages(widget.conversationId);
       _artifactsByMessageId.clear();
+      _sourcesByMessageId.clear();
     });
     _scrollToBottom(force: true);
   }
@@ -399,7 +691,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollCallbackScheduled = false;
       if (!_scrollController.hasClients) return;
       final position = _scrollController.position;
-      if (force || position.pixels >= position.maxScrollExtent - 120) {
+      if (force || _nearBottomCache || position.pixels >= position.maxScrollExtent - 120) {
         _scrollController.animateTo(
           position.maxScrollExtent,
           duration: Duration(milliseconds: force ? 180 : 90),
@@ -430,7 +722,7 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: GamaColors.surfaceElevated,
-        title: const Text('Editar mensagem', style: TextStyle(color: GamaColors.textPrimary)),
+        title:  Text('Editar mensagem', style: TextStyle(color: GamaColors.textPrimary)),
         content: SizedBox(
           width: 560,
           child: TextField(
@@ -438,7 +730,7 @@ class _ChatScreenState extends State<ChatScreen> {
             autofocus: true,
             minLines: 3,
             maxLines: 12,
-            style: const TextStyle(color: GamaColors.textPrimary),
+            style:  TextStyle(color: GamaColors.textPrimary),
             decoration: const InputDecoration(
               hintText: 'Edite o pedido para a Gama',
               border: OutlineInputBorder(),
@@ -467,6 +759,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       for (final item in removed) {
         _artifactsByMessageId.remove(item.id);
+        _sourcesByMessageId.remove(item.id);
       }
       _messages.removeRange(index, _messages.length);
       _controller.text = edited.trim();
@@ -492,6 +785,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       for (final item in removed) {
         _artifactsByMessageId.remove(item.id);
+        _sourcesByMessageId.remove(item.id);
       }
       _messages.removeRange(assistantIndex - 1, _messages.length);
       _controller.text = prompt.content;
@@ -683,7 +977,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                const Text(
+                 Text(
                   'Anexar',
                   style: TextStyle(
                     color: GamaColors.textPrimary,
@@ -693,15 +987,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 const SizedBox(height: 8),
                 ListTile(
-                  leading: const Icon(
+                  leading:  Icon(
                     Icons.photo_camera_outlined,
                     color: GamaColors.accent,
                   ),
-                  title: const Text(
+                  title:  Text(
                     'Câmera',
                     style: TextStyle(color: GamaColors.textPrimary),
                   ),
-                  subtitle: const Text(
+                  subtitle:  Text(
                     'Tirar foto',
                     style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
                   ),
@@ -711,15 +1005,15 @@ class _ChatScreenState extends State<ChatScreen> {
                   },
                 ),
                 ListTile(
-                  leading: const Icon(
+                  leading:  Icon(
                     Icons.photo_library_outlined,
                     color: GamaColors.accent,
                   ),
-                  title: const Text(
+                  title:  Text(
                     'Galeria',
                     style: TextStyle(color: GamaColors.textPrimary),
                   ),
-                  subtitle: const Text(
+                  subtitle:  Text(
                     'Escolher imagem',
                     style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
                   ),
@@ -729,15 +1023,15 @@ class _ChatScreenState extends State<ChatScreen> {
                   },
                 ),
                 ListTile(
-                  leading: const Icon(
+                  leading:  Icon(
                     Icons.folder_open_rounded,
                     color: GamaColors.accent,
                   ),
-                  title: const Text(
+                  title:  Text(
                     'Arquivos',
                     style: TextStyle(color: GamaColors.textPrimary),
                   ),
-                  subtitle: const Text(
+                  subtitle:  Text(
                     'PDF, ZIP, código, documentos…',
                     style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
                   ),
@@ -888,20 +1182,20 @@ class _ChatScreenState extends State<ChatScreen> {
             context: context,
             builder: (ctx) => AlertDialog(
               backgroundColor: GamaColors.surfaceCard,
-              title: const Text(
+              title:  Text(
                 'Memória',
                 style: TextStyle(color: GamaColors.textPrimary),
               ),
               content: SingleChildScrollView(
                 child: Text(
                   body,
-                  style: const TextStyle(color: GamaColors.textSecondary),
+                  style:  TextStyle(color: GamaColors.textSecondary),
                 ),
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(ctx),
-                  child: const Text(
+                  child:  Text(
                     'Fechar',
                     style: TextStyle(color: GamaColors.accent),
                   ),
@@ -1102,6 +1396,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    if (_voiceConversationMode) _speakNextReply = true;
     final rawText = _controller.text.trim();
     if ((rawText.isEmpty && _attachments.isEmpty) || _isLoading) return;
 
@@ -1178,15 +1473,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _speechLastFinalText = '';
     _scrollToBottom(force: true);
 
-    final conv = _service.currentConversation;
-    if (conv != null && (conv.title == 'Nova conversa' || conv.title.isEmpty)) {
-      final preview = rawText.isNotEmpty ? rawText : 'Arquivo(s) anexado(s)';
-      final shortTitle = preview.length > 40
-          ? '${preview.substring(0, 40)}...'
-          : preview;
-      await _service.renameConversation(widget.conversationId, shortTitle);
-    }
-
     final assistantMessage = Message(
       id: '${DateTime.now().millisecondsSinceEpoch}_ai',
       role: 'assistant',
@@ -1234,6 +1520,10 @@ class _ChatScreenState extends State<ChatScreen> {
           if (event.phase != null) {
             setState(() => _streamPhase = event.phase!);
           }
+          if (event.sources != null && _messages.isNotEmpty && _messages.last.isAssistant) {
+            _sourcesByMessageId[_messages.last.id] = List<Map<String, dynamic>>.from(event.sources!);
+            setState(() {});
+          }
 
           // Metadados confiáveis de entrega: separam integridade do ZIP da
           // validação sintática real dos arquivos que ele contém.
@@ -1263,22 +1553,23 @@ class _ChatScreenState extends State<ChatScreen> {
           final token = event.token;
           if (token == null) return;
 
-          setState(() {
-            _streamPhase = 'typing';
-            if (_voiceResponsePending) {
-              // Mantém a resposta fora da UI enquanto a Gama ainda está
-              // gerando. O conteúdo será revelado quando o áudio começar.
-              _voiceResponseBuffer += token;
-            } else if (_messages.isNotEmpty && _messages.last.isAssistant) {
-              _messages.last.content += token;
-            }
-          });
-
-          if (!_voiceResponsePending) {
-            _scrollToBottom();
+          _streamPhase = 'typing';
+          if (_voiceResponsePending) {
+            // Mantém a resposta fora da UI enquanto a Gama ainda está
+            // gerando. O conteúdo será revelado quando o áudio começar.
+            _voiceResponseBuffer += token;
+          } else if (_messages.isNotEmpty && _messages.last.isAssistant) {
+            _messages.last.content += token;
+            // Re-renderiza no máximo a cada ~50 ms, em vez de redesenhar
+            // MarkdownBody para cada token do streaming.
+            _scheduleStreamUiRefresh();
           }
+
+          if (!_voiceResponsePending) _scrollToBottom();
         },
         onDone: () async {
+          _streamUiTimer?.cancel();
+          _streamUiTimer = null;
           final isVoiceReply = _voiceResponsePending;
           _voiceResponseBuffer = _voiceResponseBuffer.replaceAll(
             RegExp(
@@ -1339,6 +1630,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 });
               }
               await _service.addMessage(_messages.last);
+              unawaited(_ensureConversationTitle(userMessage: rawText.isEmpty ? 'Arquivo anexado' : rawText, assistantMessage: responseText));
               _failedAssistantMessageId = null;
               _retryRawText = null;
               _retryAttachments = <ProcessedAttachment>[];
@@ -1353,6 +1645,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 });
               }
               await _service.addMessage(_messages.last);
+              unawaited(_ensureConversationTitle(userMessage: rawText.isEmpty ? 'Arquivo anexado' : rawText, assistantMessage: responseText));
               _failedAssistantMessageId = null;
               _retryRawText = null;
               _retryAttachments = <ProcessedAttachment>[];
@@ -1367,10 +1660,13 @@ class _ChatScreenState extends State<ChatScreen> {
             } finally {
               _voiceResponsePending = false;
               _voiceResponseBuffer = '';
+              if (_voiceConversationMode) unawaited(_resumeVoiceConversation());
             }
           }
         },
         onError: (e) async {
+          _streamUiTimer?.cancel();
+          _streamUiTimer = null;
           if (!mounted) return;
           final friendly = e is ChatApiException
               ? e.message
@@ -1450,25 +1746,25 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: GamaColors.surfaceCard,
-        title: const Text(
+        title:  Text(
           'Limpar esta conversa?',
           style: TextStyle(color: GamaColors.textPrimary),
         ),
-        content: const Text(
+        content:  Text(
           'Isso apaga todas as mensagens desta conversa.',
           style: TextStyle(color: GamaColors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text(
+            child:  Text(
               'Cancelar',
               style: TextStyle(color: GamaColors.textSecondary),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text(
+            child:  Text(
               'Apagar',
               style: TextStyle(color: GamaColors.error),
             ),
@@ -1493,6 +1789,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _speech.stop();
     } catch (_) {}
     _streamSubscription?.cancel();
+    _streamUiTimer?.cancel();
+    _voiceAutoSendTimer?.cancel();
+    _scrollController.removeListener(_handleScrollChange);
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -1506,7 +1805,7 @@ class _ChatScreenState extends State<ChatScreen> {
         Container(
           decoration: BoxDecoration(
             color: GamaColors.surface,
-            border: const Border(
+            border:  Border(
               bottom: BorderSide(color: GamaColors.divider, width: 1),
             ),
             boxShadow: [
@@ -1539,7 +1838,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           height: 36,
                           padding: const EdgeInsets.all(5),
                           decoration: BoxDecoration(
-                            gradient: const LinearGradient(
+                            gradient:  LinearGradient(
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                               colors: [GamaColors.surfaceHover, GamaColors.surfaceCard],
@@ -1550,7 +1849,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: Image.asset(
                             'assets/images/image3.png',
                             fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => const Icon(
+                            errorBuilder: (_, __, ___) =>  Icon(
                               Icons.auto_awesome_rounded,
                               color: GamaColors.accent,
                               size: 22,
@@ -1558,7 +1857,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                         const SizedBox(width: 10),
-                        const Expanded(
+                         Expanded(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1584,6 +1883,36 @@ class _ChatScreenState extends State<ChatScreen> {
                               ),
                             ],
                           ),
+                        ),
+                        PopupMenuButton<String>(
+                          tooltip: 'Selecionar modelo de IA',
+                          icon: const Icon(Icons.psychology_alt_rounded, size: 21),
+                          onSelected: (model) async {
+                            await SettingsService.instance.setModel(model);
+                            if (mounted) setState(() {});
+                          },
+                          itemBuilder: (context) => _chatModels.map((model) => PopupMenuItem<String>(
+                            value: model,
+                            child: Row(
+                              children: [
+                                if (model == SettingsService.instance.model)
+                                   Icon(Icons.check_rounded, size: 16, color: GamaColors.accent)
+                                else
+                                  const SizedBox(width: 16),
+                                const SizedBox(width: 8),
+                                Flexible(child: Text(AppConstants.labelFor(model), overflow: TextOverflow.ellipsis)),
+                              ],
+                            ),
+                          )).toList(),
+                        ),
+                        IconButton(
+                          tooltip: _voiceConversationMode ? 'Interromper conversa por voz' : 'Iniciar conversa por voz',
+                          onPressed: _toggleVoiceConversation,
+                          style: IconButton.styleFrom(
+                            backgroundColor: _voiceConversationMode ? GamaColors.accentSoft : GamaColors.surfaceCard,
+                            foregroundColor: _voiceConversationMode ? GamaColors.accentBright : GamaColors.textSecondary,
+                          ),
+                          icon: Icon(_voiceConversationMode ? Icons.headset_mic_rounded : Icons.headset_rounded, size: 19),
                         ),
                         if (_isLoading || _isSpeaking)
                           IconButton(
@@ -1654,6 +1983,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         itemBuilder: (context, index) {
                           final msg = _messages[index];
                           final isUser = msg.isUser;
+                          final isLastAssistant = !isUser && index == _messages.length - 1;
 
                           return Align(
                             alignment: isUser
@@ -1683,15 +2013,15 @@ class _ChatScreenState extends State<ChatScreen> {
                                           children: [
                                             if (!_isLoading && isUser && _canReusePrompt(msg))
                                               ListTile(
-                                                leading: const Icon(
+                                                leading:  Icon(
                                                   Icons.edit_note_rounded,
                                                   color: GamaColors.accent,
                                                 ),
-                                                title: const Text(
+                                                title:  Text(
                                                   'Editar e reenviar',
                                                   style: TextStyle(color: GamaColors.textPrimary),
                                                 ),
-                                                subtitle: const Text(
+                                                subtitle:  Text(
                                                   'Substitui esta mensagem e as respostas seguintes',
                                                   style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
                                                 ),
@@ -1704,26 +2034,26 @@ class _ChatScreenState extends State<ChatScreen> {
                                                 _messages[index - 1].isUser &&
                                                 _canReusePrompt(_messages[index - 1]))
                                               ListTile(
-                                                leading: const Icon(
+                                                leading:  Icon(
                                                   Icons.refresh_rounded,
                                                   color: GamaColors.accent,
                                                 ),
-                                                title: const Text(
+                                                title:  Text(
                                                   'Regenerar resposta',
                                                   style: TextStyle(color: GamaColors.textPrimary),
                                                 ),
-                                                subtitle: const Text(
+                                                subtitle:  Text(
                                                   'Tenta outra resposta para a última mensagem',
                                                   style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
                                                 ),
                                                 onTap: () => Navigator.pop(ctx, 'regenerate'),
                                               ),
                                             ListTile(
-                                              leading: const Icon(
+                                              leading:  Icon(
                                                 Icons.copy_rounded,
                                                 color: GamaColors.accent,
                                               ),
-                                              title: const Text(
+                                              title:  Text(
                                                 'Copiar texto',
                                                 style: TextStyle(
                                                   color: GamaColors.textPrimary,
@@ -1733,11 +2063,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                                   Navigator.pop(ctx, 'copy'),
                                             ),
                                             ListTile(
-                                              leading: const Icon(
+                                              leading:  Icon(
                                                 Icons.download_rounded,
                                                 color: GamaColors.accent,
                                               ),
-                                              title: const Text(
+                                              title:  Text(
                                                 'Baixar no dispositivo',
                                                 style: TextStyle(
                                                   color: GamaColors.textPrimary,
@@ -1778,7 +2108,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ? null
                                       : GamaColors.bubbleAssistant,
                                   gradient: isUser
-                                      ? const LinearGradient(
+                                      ?  LinearGradient(
                                           begin: Alignment.topLeft,
                                           end: Alignment.bottomRight,
                                           colors: [
@@ -1826,14 +2156,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                               color: GamaColors.accentSoft,
                                               borderRadius: BorderRadius.circular(7),
                                             ),
-                                            child: const Icon(
+                                            child:  Icon(
                                               Icons.auto_awesome_rounded,
                                               size: 13,
                                               color: GamaColors.accentBright,
                                             ),
                                           ),
                                           const SizedBox(width: 8),
-                                          const Text(
+                                           Text(
                                             'GAMA',
                                             style: TextStyle(
                                               color: GamaColors.textMuted,
@@ -1879,15 +2209,44 @@ class _ChatScreenState extends State<ChatScreen> {
                                         },
                                       ),
                                     ],
+                                    if (!isUser && (_sourcesByMessageId[msg.id]?.isNotEmpty ?? false))
+                                      _sourceChips(msg.id),
                                   ],
                                 ),
                               ),
                                 ),
-                            if (!isUser && msg.content.trim().isNotEmpty)
+                            if (isLastAssistant && !_isLoading && msg.content.trim().isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 2, top: 7, bottom: 2),
+                                child: Wrap(
+                                  spacing: 7,
+                                  runSpacing: 6,
+                                  children: [
+                                    ActionChip(
+                                      avatar: const Icon(Icons.lightbulb_outline_rounded, size: 15),
+                                      label: const Text('Dê um exemplo'),
+                                      onPressed: () => _submitFollowUp('Dê um exemplo prático da resposta anterior.'),
+                                    ),
+                                    ActionChip(
+                                      avatar: const Icon(Icons.summarize_outlined, size: 15),
+                                      label: const Text('Resumir'),
+                                      onPressed: () => _submitFollowUp('Resuma a resposta anterior mantendo os pontos essenciais.'),
+                                    ),
+                                    ActionChip(
+                                      avatar: const Icon(Icons.add_circle_outline_rounded, size: 15),
+                                      label: const Text('Aprofundar'),
+                                      onPressed: () => _submitFollowUp('Aprofunde a resposta anterior com mais contexto e detalhes relevantes.'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (msg.content.trim().isNotEmpty)
                               Padding(
                                 padding: const EdgeInsets.only(left: 2, top: 1),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
+                                child: Wrap(
+                                  spacing: 2,
+                                  runSpacing: 0,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
                                   children: [
                                     IconButton(
                                       tooltip: 'Copiar',
@@ -1897,48 +2256,92 @@ class _ChatScreenState extends State<ChatScreen> {
                                       hoverColor: GamaColors.accentSoft,
                                       iconSize: 17,
                                       padding: const EdgeInsets.all(7),
-                                      constraints: const BoxConstraints.tightFor(
-                                        width: 34,
-                                        height: 34,
-                                      ),
+                                      constraints: const BoxConstraints.tightFor(width: 34, height: 34),
                                       visualDensity: VisualDensity.compact,
                                     ),
-                                    const SizedBox(width: 5),
-                                    IconButton(
-                                      tooltip: 'Baixar no dispositivo',
-                                      onPressed: () => _downloadMessage(msg),
-                                      icon: const Icon(Icons.download_rounded),
-                                      color: GamaColors.textMuted,
-                                      hoverColor: GamaColors.accentSoft,
-                                      iconSize: 18,
-                                      padding: const EdgeInsets.all(7),
-                                      constraints: const BoxConstraints.tightFor(
-                                        width: 34,
-                                        height: 34,
-                                      ),
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                    const SizedBox(width: 5),
-                                    Builder(
-                                      builder: (shareContext) => IconButton(
-                                        tooltip: 'Compartilhar',
-                                        onPressed: () => _shareMessage(
-                                          msg,
-                                          shareContext,
-                                        ),
-                                        icon: const Icon(Icons.share_rounded),
+                                    if (isUser && !_isLoading && _canReusePrompt(msg)) ...[
+                                      IconButton(
+                                        tooltip: 'Editar e reenviar',
+                                        onPressed: () => _editAndResend(msg, index),
+                                        icon: const Icon(Icons.edit_note_rounded),
                                         color: GamaColors.textMuted,
                                         hoverColor: GamaColors.accentSoft,
-                                        iconSize: 17,
+                                        iconSize: 18,
                                         padding: const EdgeInsets.all(7),
-                                        constraints:
-                                            const BoxConstraints.tightFor(
-                                          width: 34,
-                                          height: 34,
-                                        ),
+                                        constraints: const BoxConstraints.tightFor(width: 34, height: 34),
                                         visualDensity: VisualDensity.compact,
                                       ),
-                                    ),
+                                      if (index + 1 == _messages.length - 1 && _messages.length > 1 && _messages.last.isAssistant)
+                                        IconButton(
+                                          tooltip: 'Regenerar resposta',
+                                          onPressed: () => _regenerateResponse(index + 1),
+                                          icon: const Icon(Icons.refresh_rounded),
+                                          color: GamaColors.textMuted,
+                                          hoverColor: GamaColors.accentSoft,
+                                          iconSize: 18,
+                                          padding: const EdgeInsets.all(7),
+                                          constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                    ],
+                                    if (!isUser) ...[
+                                      const SizedBox(width: 5),
+                                      IconButton(
+                                        tooltip: 'Baixar no dispositivo',
+                                        onPressed: () => _downloadMessage(msg),
+                                        icon: const Icon(Icons.download_rounded),
+                                        color: GamaColors.textMuted,
+                                        hoverColor: GamaColors.accentSoft,
+                                        iconSize: 18,
+                                        padding: const EdgeInsets.all(7),
+                                        constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                      const SizedBox(width: 5),
+                                      Builder(
+                                        builder: (shareContext) => IconButton(
+                                          tooltip: 'Compartilhar',
+                                          onPressed: () => _shareMessage(msg, shareContext),
+                                          icon: const Icon(Icons.share_rounded),
+                                          color: GamaColors.textMuted,
+                                          hoverColor: GamaColors.accentSoft,
+                                          iconSize: 17,
+                                          padding: const EdgeInsets.all(7),
+                                          constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Boa resposta',
+                                        onPressed: () => _setMessageFeedback(msg, 1),
+                                        icon: Icon(Icons.thumb_up_alt_outlined,
+                                          color: _feedbackByMessageId[msg.id] == 1 ? GamaColors.accent : GamaColors.textMuted),
+                                        iconSize: 17,
+                                        padding: const EdgeInsets.all(7),
+                                        constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Resposta ruim',
+                                        onPressed: () => _setMessageFeedback(msg, -1),
+                                        icon: Icon(Icons.thumb_down_alt_outlined,
+                                          color: _feedbackByMessageId[msg.id] == -1 ? GamaColors.accent : GamaColors.textMuted),
+                                        iconSize: 17,
+                                        padding: const EdgeInsets.all(7),
+                                        constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+                                        visualDensity: VisualDensity.compact,
+                                      ),
+                                      if (isLastAssistant && !_isLoading && _looksTruncated(msg.content))
+                                        TextButton.icon(
+                                          onPressed: _continueResponse,
+                                          icon: const Icon(Icons.more_horiz_rounded, size: 17),
+                                          label: const Text('Continuar'),
+                                          style: TextButton.styleFrom(
+                                            visualDensity: VisualDensity.compact,
+                                            padding: const EdgeInsets.symmetric(horizontal: 7),
+                                          ),
+                                        ),
+                                    ],
                                   ],
                                 ),
                               ),
@@ -1949,6 +2352,23 @@ class _ChatScreenState extends State<ChatScreen> {
                         },
                       ),
               ),
+              if (_showScrollToBottom)
+                Positioned(
+                  right: 16,
+                  bottom: 14,
+                  child: AnimatedOpacity(
+                    opacity: _showScrollToBottom ? 1 : 0,
+                    duration: const Duration(milliseconds: 150),
+                    child: FloatingActionButton.small(
+                      heroTag: 'gama_scroll_to_bottom',
+                      tooltip: 'Ir para o fim da conversa',
+                      backgroundColor: GamaColors.surfaceElevated,
+                      foregroundColor: GamaColors.accentBright,
+                      onPressed: () => _scrollToBottom(force: true),
+                      child: const Icon(Icons.keyboard_arrow_down_rounded, size: 26),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -2007,7 +2427,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: Row(
               children: [
-                const SizedBox(
+                 SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(
@@ -2019,7 +2439,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: Text(
                     _processingLabel ?? 'Processando anexo…',
-                    style: const TextStyle(
+                    style:  TextStyle(
                       color: GamaColors.textPrimary,
                       fontSize: 13,
                     ),
@@ -2037,6 +2457,53 @@ class _ChatScreenState extends State<ChatScreen> {
               spacing: 8,
               runSpacing: 8,
               children: _attachments.map((a) {
+                if (a.kind.name == 'image' && a.sourcePath != null) {
+                  return Container(
+                    width: 220,
+                    padding: const EdgeInsets.all(7),
+                    decoration: BoxDecoration(
+                      color: GamaColors.surfaceCard,
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(color: GamaColors.border),
+                    ),
+                    child: Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () => _showPendingImagePreview(a),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.file(
+                              File(a.sourcePath!),
+                              width: 56,
+                              height: 56,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                width: 56,
+                                height: 56,
+                                color: GamaColors.surfaceHover,
+                                child: const Icon(Icons.broken_image_outlined),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(child: GestureDetector(
+                          onTap: () => _showPendingImagePreview(a),
+                          child: Text(a.name, maxLines: 2, overflow: TextOverflow.ellipsis,
+                            style:  TextStyle(fontSize: 11, color: GamaColors.textPrimary)),
+                        )),
+                        IconButton(
+                          tooltip: 'Remover anexo',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => setState(() => _attachments.remove(a)),
+                          icon: const Icon(Icons.close_rounded, size: 17),
+                          constraints: const BoxConstraints.tightFor(width: 28, height: 32),
+                          padding: EdgeInsets.zero,
+                        ),
+                      ],
+                    ),
+                  );
+                }
                 return Container(
                   padding: const EdgeInsets.only(left: 4, right: 4),
                   decoration: BoxDecoration(
@@ -2063,14 +2530,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     label: Text(
                       a.label,
-                      style: const TextStyle(
+                      style:  TextStyle(
                         fontSize: 12,
                         color: GamaColors.textPrimary,
                       ),
                     ),
                     backgroundColor: Colors.transparent,
                     side: BorderSide.none,
-                    deleteIcon: const Icon(
+                    deleteIcon:  Icon(
                       Icons.close_rounded,
                       size: 16,
                       color: GamaColors.textMuted,
@@ -2184,7 +2651,7 @@ class _ArtifactStatusList extends StatelessWidget {
                       filename,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style:  TextStyle(
                         color: GamaColors.textPrimary,
                         fontSize: 12.5,
                         fontWeight: FontWeight.w700,
@@ -2209,7 +2676,7 @@ class _ArtifactStatusList extends StatelessWidget {
                         zipOk
                             ? 'Integridade do ZIP: passou (estrutura/CRC)'
                             : 'Integridade do ZIP: falhou',
-                        style: const TextStyle(color: GamaColors.textSecondary, fontSize: 12),
+                        style:  TextStyle(color: GamaColors.textSecondary, fontSize: 12),
                       ),
                     ),
                   ],
@@ -2231,7 +2698,7 @@ class _ArtifactStatusList extends StatelessWidget {
                     Expanded(
                       child: Text(
                         _validationLabel(source),
-                        style: const TextStyle(color: GamaColors.textSecondary, fontSize: 12),
+                        style:  TextStyle(color: GamaColors.textSecondary, fontSize: 12),
                       ),
                     ),
                   ],
@@ -2240,7 +2707,7 @@ class _ArtifactStatusList extends StatelessWidget {
                   const SizedBox(height: 5),
                   Text(
                     'Arquivos verificados: $checked · não verificados: $unverified · problemas: $issues',
-                    style: const TextStyle(color: GamaColors.textMuted, fontSize: 11),
+                    style:  TextStyle(color: GamaColors.textMuted, fontSize: 11),
                   ),
                   if (source['note'] is String)
                     Padding(
@@ -2249,17 +2716,17 @@ class _ArtifactStatusList extends StatelessWidget {
                         source['note'].toString(),
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: GamaColors.textMuted, fontSize: 10.5),
+                        style:  TextStyle(color: GamaColors.textMuted, fontSize: 10.5),
                       ),
                     ),
                 ],
               ] else if (isVideo) ...[
                 Text(
                   'Vídeo gerado${artifact['duration_seconds'] == null ? '' : ' · ${artifact['duration_seconds']} s'}${artifact['resolution'] == null ? '' : ' · ${artifact['resolution']}'} · $videoAudioLabel',
-                  style: const TextStyle(color: GamaColors.textSecondary, fontSize: 12),
+                  style:  TextStyle(color: GamaColors.textSecondary, fontSize: 12),
                 ),
                 const SizedBox(height: 4),
-                const Text(
+                 Text(
                   'Confira o resultado antes de compartilhar ou substituir o original.',
                   style: TextStyle(color: GamaColors.textMuted, fontSize: 11),
                 ),
@@ -2267,7 +2734,7 @@ class _ArtifactStatusList extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     'Custo informado pela OpenRouter: US\$${providerCost.toStringAsFixed(4)}',
-                    style: const TextStyle(color: GamaColors.textMuted, fontSize: 11),
+                    style:  TextStyle(color: GamaColors.textMuted, fontSize: 11),
                   ),
                 ],
               ] else ...[
@@ -2275,7 +2742,7 @@ class _ArtifactStatusList extends StatelessWidget {
                   structural['ok'] == true
                       ? 'Arquivo gerado e validado estruturalmente.'
                       : 'O arquivo precisa de verificação adicional.',
-                  style: const TextStyle(color: GamaColors.textSecondary, fontSize: 12),
+                  style:  TextStyle(color: GamaColors.textSecondary, fontSize: 12),
                 ),
               ],
               const SizedBox(height: 8),
@@ -2336,7 +2803,7 @@ class _EmptyState extends StatelessWidget {
                 height: 94,
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
+                  gradient:  LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [GamaColors.surfaceHover, GamaColors.surfaceCard],
@@ -2364,7 +2831,7 @@ class _EmptyState extends StatelessWidget {
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: GamaColors.borderSoft),
                 ),
-                child: const Row(
+                child:  Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.circle, color: GamaColors.success, size: 7),
@@ -2382,7 +2849,7 @@ class _EmptyState extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 15),
-              const Text(
+               Text(
                 'O que vamos criar hoje?',
                 textAlign: TextAlign.center,
                 style: TextStyle(
@@ -2394,7 +2861,7 @@ class _EmptyState extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 10),
-              const Text(
+               Text(
                 'Converse, programe ou explore uma ideia.\nA Gama ajuda você a dar o próximo passo.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
@@ -2443,7 +2910,7 @@ class _EmptyState extends StatelessWidget {
                                 children: [
                                   Text(
                                     _suggestionTitles[index],
-                                    style: const TextStyle(
+                                    style:  TextStyle(
                                       color: GamaColors.textPrimary,
                                       fontSize: 13.5,
                                       fontWeight: FontWeight.w600,
@@ -2452,7 +2919,7 @@ class _EmptyState extends StatelessWidget {
                                   const SizedBox(height: 4),
                                   Text(
                                     _suggestionDescriptions[index],
-                                    style: const TextStyle(
+                                    style:  TextStyle(
                                       color: GamaColors.textMuted,
                                       fontSize: 11.5,
                                       height: 1.35,
@@ -2461,7 +2928,7 @@ class _EmptyState extends StatelessWidget {
                                 ],
                               ),
                             ),
-                            const Icon(
+                             Icon(
                               Icons.arrow_forward_rounded,
                               color: GamaColors.textMuted,
                               size: 18,

@@ -146,7 +146,7 @@ class _PluginsScreenState extends State<PluginsScreen> {
         title: const Text('Plugins'),
       ),
       body: _loading
-          ? const Center(
+          ?  Center(
               child: CircularProgressIndicator(color: GamaColors.accent),
             )
           : ListView.separated(
@@ -155,7 +155,7 @@ class _PluginsScreenState extends State<PluginsScreen> {
               separatorBuilder: (_, __) => const SizedBox(height: 8),
               itemBuilder: (_, i) {
                 if (i == 0) {
-                  return const Padding(
+                  return  Padding(
                     padding: EdgeInsets.only(bottom: 4),
                     child: Text(
                       'Essas opções controlam os recursos usados nas próximas mensagens. '
@@ -191,7 +191,7 @@ class _PluginsScreenState extends State<PluginsScreen> {
                           children: [
                             Text(
                               p.title,
-                              style: const TextStyle(
+                              style:  TextStyle(
                                 color: GamaColors.textPrimary,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -199,7 +199,7 @@ class _PluginsScreenState extends State<PluginsScreen> {
                             const SizedBox(height: 2),
                             Text(
                               p.subtitle,
-                              style: const TextStyle(
+                              style:  TextStyle(
                                 color: GamaColors.textMuted,
                                 fontSize: 12,
                               ),

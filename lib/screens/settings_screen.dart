@@ -28,6 +28,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _statusMessage;
   bool? _statusOk;
   bool _ttsAuto = false;
+  ThemeMode _themeMode = ThemeMode.dark;
+  double _fontScale = 1.0;
 
   @override
   void initState() {
@@ -36,6 +38,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _selectedModel = SettingsService.instance.model;
     _mode = SettingsService.instance.mode;
     _ttsAuto = SettingsService.instance.ttsAuto;
+    _themeMode = SettingsService.instance.themeMode;
+    _fontScale = SettingsService.instance.fontScale;
     _loadModels();
   }
 
@@ -118,11 +122,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: GamaColors.surfaceCard,
-        title: const Text(
+        title:  Text(
           'Resetar memória?',
           style: TextStyle(color: GamaColors.textPrimary),
         ),
-        content: const Text(
+        content:  Text(
           'Todos os fatos que a Gama guardou sobre você serão apagados. '
           'Essa ação não pode ser desfeita.',
           style: TextStyle(color: GamaColors.textMuted, height: 1.4),
@@ -163,6 +167,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await SettingsService.instance.setModel(_selectedModel!);
     }
     await SettingsService.instance.setTtsAuto(_ttsAuto);
+    await SettingsService.instance.setThemeMode(_themeMode);
+    await SettingsService.instance.setFontScale(_fontScale);
 
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -185,23 +191,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 10),
           TextField(
             controller: _urlController,
-            style: const TextStyle(color: GamaColors.textPrimary, fontSize: 15),
+            style:  TextStyle(color: GamaColors.textPrimary, fontSize: 15),
             decoration: InputDecoration(
               hintText: 'https://sua-api.com',
-              hintStyle: const TextStyle(color: GamaColors.textHint),
+              hintStyle:  TextStyle(color: GamaColors.textHint),
               filled: true,
               fillColor: GamaColors.surfaceInput,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: GamaColors.border),
+                borderSide:  BorderSide(color: GamaColors.border),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: GamaColors.border),
+                borderSide:  BorderSide(color: GamaColors.border),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(
+                borderSide:  BorderSide(
                   color: GamaColors.accent,
                   width: 1.2,
                 ),
@@ -220,7 +226,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: OutlinedButton.icon(
               onPressed: _testing ? null : _testConnection,
               icon: _testing
-                  ? const SizedBox(
+                  ?  SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
@@ -232,7 +238,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               label: Text(_testing ? 'Testando…' : 'Testar conexão'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: GamaColors.textPrimary,
-                side: const BorderSide(color: GamaColors.border),
+                side:  BorderSide(color: GamaColors.border),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -297,7 +303,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _mode == GamaMode.programar
                 ? 'Otimizado para código, debug e análise de projetos.'
                 : 'Otimizado para diálogo rápido e respostas faláveis (voz).',
-            style: const TextStyle(
+            style:  TextStyle(
               color: GamaColors.textMuted,
               fontSize: 12,
               height: 1.35,
@@ -308,7 +314,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               const Expanded(child: _SectionTitle('Modelo')),
               if (_loadingModels)
-                const SizedBox(
+                 SizedBox(
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(
@@ -320,7 +326,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 IconButton(
                   tooltip: 'Atualizar lista do servidor',
                   onPressed: _loadModels,
-                  icon: const Icon(
+                  icon:  Icon(
                     Icons.refresh_rounded,
                     size: 20,
                     color: GamaColors.textMuted,
@@ -346,10 +352,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       : (_models.isEmpty
                             ? 'Nenhum modelo disponível'
                             : 'Selecione um modelo'),
-                  style: const TextStyle(color: GamaColors.textMuted),
+                  style:  TextStyle(color: GamaColors.textMuted),
                 ),
                 dropdownColor: GamaColors.surfaceCard,
-                style: const TextStyle(
+                style:  TextStyle(
                   color: GamaColors.textPrimary,
                   fontSize: 15,
                 ),
@@ -370,7 +376,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           if (_models.isEmpty && !_loadingModels)
-            const Padding(
+             Padding(
               padding: EdgeInsets.only(top: 8),
               child: Text(
                 'Nenhum modelo retornado pelo backend. Teste a conexão ou '
@@ -383,7 +389,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.only(top: 6),
               child: Text(
                 'ID: $_selectedModel',
-                style: const TextStyle(
+                style:  TextStyle(
                   color: GamaColors.textHint,
                   fontSize: 11,
                 ),
@@ -394,11 +400,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 6),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text(
+            title:  Text(
               'Ler respostas automaticamente',
               style: TextStyle(color: GamaColors.textPrimary, fontSize: 15),
             ),
-            subtitle: const Text(
+            subtitle:  Text(
               'TTS ao finalizar cada resposta do assistente',
               style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
             ),
@@ -407,9 +413,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) => setState(() => _ttsAuto = v),
           ),
           const SizedBox(height: 28),
+          const _SectionTitle('Aparência e acessibilidade'),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<ThemeMode>(
+            value: _themeMode,
+            decoration: const InputDecoration(
+              labelText: 'Tema do aplicativo',
+              helperText: 'Escolha o tema escuro, claro ou o tema do sistema.',
+            ),
+            items: const [
+              DropdownMenuItem(value: ThemeMode.dark, child: Text('Escuro')),
+              DropdownMenuItem(value: ThemeMode.light, child: Text('Claro')),
+              DropdownMenuItem(value: ThemeMode.system, child: Text('Seguir sistema')),
+            ],
+            onChanged: (value) async {
+              if (value == null) return;
+              setState(() => _themeMode = value);
+              await SettingsService.instance.setThemeMode(value);
+            },
+          ),
+          const SizedBox(height: 14),
+          DropdownButtonFormField<double>(
+            value: _fontScale,
+            decoration: const InputDecoration(
+              labelText: 'Tamanho do texto',
+              helperText: 'Ajusta o texto no aplicativo sem alterar o tamanho do sistema.',
+            ),
+            items: const [
+              DropdownMenuItem(value: 0.9, child: Text('Pequeno · 90%')),
+              DropdownMenuItem(value: 1.0, child: Text('Padrão · 100%')),
+              DropdownMenuItem(value: 1.1, child: Text('Grande · 110%')),
+              DropdownMenuItem(value: 1.2, child: Text('Muito grande · 120%')),
+            ],
+            onChanged: (value) async {
+              if (value == null) return;
+              setState(() => _fontScale = value);
+              await SettingsService.instance.setFontScale(value);
+            },
+          ),
+          const SizedBox(height: 28),
           const _SectionTitle('Memória'),
           const SizedBox(height: 6),
-          const Text(
+           Text(
             'Apaga tudo o que a Gama lembra sobre você (nome, preferências, '
             'projetos…).',
             style: TextStyle(
@@ -424,7 +469,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: OutlinedButton.icon(
               onPressed: _resettingMemory ? null : _resetMemory,
               icon: _resettingMemory
-                  ? const SizedBox(
+                  ?  SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
@@ -465,7 +510,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          const Text(
+           Text(
             'Emulador Android: http://10.0.2.2:8000\n'
             'Celular físico: IP da máquina onde a API está rodando.\n'
             'Release: use sempre HTTPS.',
@@ -500,7 +545,7 @@ class _SectionTitle extends StatelessWidget {
         const SizedBox(width: 9),
         Text(
           text.toUpperCase(),
-          style: const TextStyle(
+          style:  TextStyle(
             color: GamaColors.textSecondary,
             fontSize: 11,
             fontWeight: FontWeight.w700,

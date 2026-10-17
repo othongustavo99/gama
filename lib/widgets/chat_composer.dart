@@ -34,7 +34,7 @@ class ChatComposer extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: GamaColors.surface,
-        border: const Border(top: BorderSide(color: GamaColors.divider)),
+        border:  Border(top: BorderSide(color: GamaColors.divider)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.18),
@@ -138,7 +138,7 @@ class ChatComposer extends StatelessWidget {
                     Expanded(
                       child: TextField(
                         controller: controller,
-                        style: const TextStyle(
+                        style:  TextStyle(
                           color: GamaColors.textPrimary,
                           fontSize: 15.5,
                           height: 1.35,
@@ -151,7 +151,7 @@ class ChatComposer extends StatelessWidget {
                           hintText: isListening
                               ? 'Ouvindo… o texto aparece aqui'
                               : 'Fazer uma pergunta',
-                          hintStyle: const TextStyle(
+                          hintStyle:  TextStyle(
                             color: GamaColors.textMuted,
                             fontSize: 14.5,
                           ),

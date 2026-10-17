@@ -210,7 +210,7 @@ class MessageContentView extends StatelessWidget {
             final filePath = img.filePath;
             final fileExists = filePath != null && filePath.isNotEmpty && File(filePath).existsSync();
             if (!fileExists && img.base64.isEmpty) {
-              return const Padding(
+              return  Padding(
                 padding: EdgeInsets.only(bottom: 10),
                 child: Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
               );
@@ -229,13 +229,13 @@ class MessageContentView extends StatelessWidget {
                               File(filePath!),
                               fit: BoxFit.cover,
                               gaplessPlayback: true,
-                              errorBuilder: (_, __, ___) => const Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
+                              errorBuilder: (_, __, ___) =>  Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
                             )
                           : Image.memory(
                               memoryBytes!,
                               fit: BoxFit.cover,
                               gaplessPlayback: true,
-                              errorBuilder: (_, __, ___) => const Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
+                              errorBuilder: (_, __, ___) =>  Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
                             ),
                     ),
                     const SizedBox(height: 6),
@@ -328,11 +328,13 @@ class _MarkdownMessage extends StatelessWidget {
           if (part.isCode)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: _CopyableCodeBlock(
-                code: part.content,
-                language: part.language,
-                isUser: isUser,
-                textStyle: textStyle,
+              child: RepaintBoundary(
+                child: _CopyableCodeBlock(
+                  code: part.content,
+                  language: part.language,
+                  isUser: isUser,
+                  textStyle: textStyle,
+                ),
               ),
             )
           else if (part.content.trim().isNotEmpty)

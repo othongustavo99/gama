@@ -107,7 +107,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
           builder: (ctx, setLocal) {
             return AlertDialog(
               backgroundColor: GamaColors.surfaceCard,
-              title: const Text(
+              title:  Text(
                 'Novo lembrete',
                 style: TextStyle(color: GamaColors.textPrimary),
               ),
@@ -117,8 +117,8 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                   TextField(
                     controller: textCtrl,
                     autofocus: true,
-                    style: const TextStyle(color: GamaColors.textPrimary),
-                    decoration: const InputDecoration(
+                    style:  TextStyle(color: GamaColors.textPrimary),
+                    decoration:  InputDecoration(
                       hintText: 'Ex.: revisar uma tarefa',
                       hintStyle: TextStyle(color: GamaColors.textHint),
                     ),
@@ -127,12 +127,12 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                   const SizedBox(height: 16),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.event, color: GamaColors.accent),
+                    leading:  Icon(Icons.event, color: GamaColors.accent),
                     title: Text(
                       _fmt(when),
-                      style: const TextStyle(color: GamaColors.textPrimary),
+                      style:  TextStyle(color: GamaColors.textPrimary),
                     ),
-                    trailing: const Icon(
+                    trailing:  Icon(
                       Icons.edit_calendar_rounded,
                       color: GamaColors.textMuted,
                     ),
@@ -270,7 +270,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
         child: const Icon(Icons.add, color: Colors.white),
       ),
       body: _loading
-          ? const Center(
+          ?  Center(
               child: CircularProgressIndicator(color: GamaColors.accent),
             )
           : _items.isEmpty
@@ -287,14 +287,14 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                             color: GamaColors.accentSoft,
                             borderRadius: BorderRadius.circular(16),
                           ),
-                          child: const Icon(
+                          child:  Icon(
                             Icons.schedule_rounded,
                             color: GamaColors.accent,
                             size: 32,
                           ),
                         ),
                         const SizedBox(height: 20),
-                        const Text(
+                         Text(
                           'Nenhum lembrete ainda',
                           style: TextStyle(
                             color: GamaColors.textPrimary,
@@ -303,7 +303,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                           ),
                         ),
                         const SizedBox(height: 10),
-                        const Text(
+                         Text(
                           'Crie lembretes locais neste aparelho.\n'
                           'Eles ficam só no seu dispositivo (não vão para o servidor).',
                           textAlign: TextAlign.center,
@@ -320,7 +320,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
                   children: [
                     if (pending.isNotEmpty) ...[
-                      const Text(
+                       Text(
                         'PENDENTES',
                         style: TextStyle(
                           color: GamaColors.textMuted,
@@ -334,7 +334,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                     ],
                     if (done.isNotEmpty) ...[
                       const SizedBox(height: 20),
-                      const Text(
+                       Text(
                         'CONCLUÍDOS',
                         style: TextStyle(
                           color: GamaColors.textMuted,
@@ -387,7 +387,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
           ),
           trailing: IconButton(
             onPressed: () => _remove(r),
-            icon: const Icon(
+            icon:  Icon(
               Icons.delete_outline_rounded,
               color: GamaColors.textMuted,
               size: 20,

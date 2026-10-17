@@ -31,6 +31,7 @@ class AppDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final service = ConversationService.instance;
+    String conversationQuery = '';
 
     return Drawer(
       backgroundColor: GamaColors.surface,
@@ -44,7 +45,7 @@ class AppDrawer extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.fromLTRB(12, 14, 8, 14),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
+                  gradient:  LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [GamaColors.surfaceCard, GamaColors.surfaceElevated],
@@ -64,7 +65,7 @@ class AppDrawer extends StatelessWidget {
                             IdentityService.instance.displayName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style:  TextStyle(
                               color: GamaColors.textPrimary,
                               fontSize: 14,
                               fontWeight: FontWeight.w700,
@@ -78,7 +79,7 @@ class AppDrawer extends StatelessWidget {
                                     : 'Conta de convidado'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style:  TextStyle(
                               color: GamaColors.textMuted,
                               fontSize: 11,
                             ),
@@ -106,7 +107,7 @@ class AppDrawer extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
+                      gradient:  LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                         colors: [GamaColors.accentBright, GamaColors.accentMuted],
@@ -172,7 +173,7 @@ class AppDrawer extends StatelessWidget {
               onTap: onOpenPlugins ?? () => _comingSoon(context),
             ),
 
-            const Padding(
+             Padding(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Divider(color: GamaColors.divider, height: 1),
             ),
@@ -181,62 +182,100 @@ class AppDrawer extends StatelessWidget {
             Expanded(
               child: ListenableBuilder(
                 listenable: service,
-                builder: (context, _) {
-                  final pinned = service.pinnedConversations;
-                  final recent = service.recentConversations;
+                builder: (context, _) => StatefulBuilder(
+                  builder: (context, setLocalState) {
+                    final query = conversationQuery.trim().toLowerCase();
+                    final pinned = service.pinnedConversations
+                        .where((c) => _matchesConversation(service, c, query))
+                        .toList();
+                    final recent = service.recentConversations
+                        .where((c) => _matchesConversation(service, c, query))
+                        .toList();
+                    final groupedRecent = _groupRecentConversations(recent);
+                    final hasAny = pinned.isNotEmpty || recent.isNotEmpty;
 
-                  if (pinned.isEmpty && recent.isEmpty) {
-                    return const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Text(
-                          'Nenhuma conversa ainda',
-                          style: TextStyle(
-                            color: GamaColors.textMuted,
-                            fontSize: 13,
+                    return Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+                          child: TextField(
+                            decoration: InputDecoration(
+                              hintText: 'Buscar título ou mensagem',
+                              prefixIcon: const Icon(Icons.search_rounded, size: 19),
+                              suffixIcon: query.isEmpty
+                                  ? null
+                                  : IconButton(
+                                      tooltip: 'Limpar busca',
+                                      icon: const Icon(Icons.close_rounded, size: 18),
+                                      onPressed: () => setLocalState(() => conversationQuery = ''),
+                                    ),
+                              filled: true,
+                              fillColor: GamaColors.surfaceCard,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(13),
+                                borderSide:  BorderSide(color: GamaColors.border),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(13),
+                                borderSide:  BorderSide(color: GamaColors.border),
+                              ),
+                            ),
+                            style:  TextStyle(color: GamaColors.textPrimary, fontSize: 13),
+                            onChanged: (value) => setLocalState(() => conversationQuery = value),
                           ),
                         ),
-                      ),
+                        Expanded(
+                          child: !hasAny
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(24),
+                                    child: Text(
+                                      query.isEmpty ? 'Nenhuma conversa ainda' : 'Nenhuma conversa encontrada',
+                                      style:  TextStyle(color: GamaColors.textMuted, fontSize: 13),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                )
+                              : ListView(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  children: [
+                                    if (pinned.isNotEmpty) ...[
+                                      const _SectionLabel('Fixados'),
+                                      ...pinned.map((c) => _ConversationTile(
+                                        conversation: c,
+                                        isSelected: c.id == service.currentConversationId,
+                                        onTap: () => onSelectConversation(c.id),
+                                        onPin: () => service.togglePin(c.id),
+                                        onDelete: () => _confirmDelete(context, c),
+                                        onRename: () => _renameDialog(context, c),
+                                      )),
+                                    ],
+                                    for (final entry in groupedRecent.entries)
+                                      if (entry.value.isNotEmpty) ...[
+                                        _SectionLabel(entry.key),
+                                        ...entry.value.map((c) => _ConversationTile(
+                                          conversation: c,
+                                          isSelected: c.id == service.currentConversationId,
+                                          onTap: () => onSelectConversation(c.id),
+                                          onPin: () => service.togglePin(c.id),
+                                          onDelete: () => _confirmDelete(context, c),
+                                          onRename: () => _renameDialog(context, c),
+                                        )),
+                                      ],
+                                  ],
+                                ),
+                        ),
+                      ],
                     );
-                  }
-
-                  return ListView(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    children: [
-                      if (pinned.isNotEmpty) ...[
-                        const _SectionLabel('Fixados'),
-                        ...pinned.map(
-                          (c) => _ConversationTile(
-                            conversation: c,
-                            isSelected: c.id == service.currentConversationId,
-                            onTap: () => onSelectConversation(c.id),
-                            onPin: () => service.togglePin(c.id),
-                            onDelete: () => _confirmDelete(context, c),
-                            onRename: () => _renameDialog(context, c),
-                          ),
-                        ),
-                      ],
-                      if (recent.isNotEmpty) ...[
-                        const _SectionLabel('Recentes'),
-                        ...recent.map(
-                          (c) => _ConversationTile(
-                            conversation: c,
-                            isSelected: c.id == service.currentConversationId,
-                            onTap: () => onSelectConversation(c.id),
-                            onPin: () => service.togglePin(c.id),
-                            onDelete: () => _confirmDelete(context, c),
-                            onRename: () => _renameDialog(context, c),
-                          ),
-                        ),
-                      ],
-                    ],
-                  );
-                },
+                  },
+                ),
               ),
             ),
 
             // ===== RODAPÉ =====
-            const Divider(color: GamaColors.divider, height: 1),
+             Divider(color: GamaColors.divider, height: 1),
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
               child: ListTile(
@@ -248,13 +287,13 @@ class AppDrawer extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: GamaColors.border),
                   ),
-                  child: const Icon(
+                  child:  Icon(
                     Icons.settings_outlined,
                     color: GamaColors.textSecondary,
                     size: 18,
                   ),
                 ),
-                title: const Text(
+                title:  Text(
                   'Configurações',
                   style: TextStyle(
                     color: GamaColors.textPrimary,
@@ -286,13 +325,13 @@ class AppDrawer extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: GamaColors.border),
                   ),
-                  child: const Icon(
+                  child:  Icon(
                     Icons.logout_rounded,
                     color: GamaColors.error,
                     size: 18,
                   ),
                 ),
-                title: const Text(
+                title:  Text(
                   'Sair da conta',
                   style: TextStyle(
                     color: GamaColors.error,
@@ -343,25 +382,25 @@ class AppDrawer extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: GamaColors.surfaceCard,
-        title: const Text(
+        title:  Text(
           'Apagar conversa?',
           style: TextStyle(color: GamaColors.textPrimary),
         ),
         content: Text(
           '“${c.title}” será apagada permanentemente.',
-          style: const TextStyle(color: GamaColors.textSecondary),
+          style:  TextStyle(color: GamaColors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text(
+            child:  Text(
               'Cancelar',
               style: TextStyle(color: GamaColors.textSecondary),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
+            child:  Text(
               'Apagar',
               style: TextStyle(color: GamaColors.error),
             ),
@@ -382,27 +421,27 @@ class AppDrawer extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: GamaColors.surfaceCard,
-        title: const Text(
+        title:  Text(
           'Renomear conversa',
           style: TextStyle(color: GamaColors.textPrimary),
         ),
         content: TextField(
           controller: controller,
           autofocus: true,
-          style: const TextStyle(color: GamaColors.textPrimary),
+          style:  TextStyle(color: GamaColors.textPrimary),
           decoration: const InputDecoration(hintText: 'Título da conversa'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text(
+            child:  Text(
               'Cancelar',
               style: TextStyle(color: GamaColors.textSecondary),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text(
+            child:  Text(
               'Salvar',
               style: TextStyle(color: GamaColors.accent),
             ),
@@ -429,7 +468,7 @@ class _SectionLabel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
       child: Text(
         text,
-        style: const TextStyle(
+        style:  TextStyle(
           color: GamaColors.textMuted,
           fontSize: 12,
           fontWeight: FontWeight.w600,
@@ -438,6 +477,51 @@ class _SectionLabel extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _matchesConversation(
+  ConversationService service,
+  Conversation conversation,
+  String query,
+) {
+  if (query.isEmpty) return true;
+  if (conversation.title.toLowerCase().contains(query)) return true;
+  // O histórico pode conter imagens inline antigas em base64. Removemos esses
+  // blocos da busca para evitar varrer dezenas de megabytes sem valor textual.
+  final hiddenImage = RegExp(
+    r'\[gama_image\][\s\S]*?\[/gama_image\]|\[gama_image_file\][\s\S]*?\[/gama_image_file\]',
+    caseSensitive: false,
+  );
+  for (final message in service.getMessages(conversation.id)) {
+    final text = message.content.replaceAll(hiddenImage, ' ').toLowerCase();
+    if (text.contains(query)) return true;
+  }
+  return false;
+}
+
+Map<String, List<Conversation>> _groupRecentConversations(List<Conversation> conversations) {
+  final groups = <String, List<Conversation>>{
+    'Hoje': [],
+    'Ontem': [],
+    'Últimos 7 dias': [],
+    'Mais antigas': [],
+  };
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  for (final conversation in conversations) {
+    final updated = conversation.updatedAt.toLocal();
+    final day = DateTime(updated.year, updated.month, updated.day);
+    final daysAgo = today.difference(day).inDays;
+    final group = daysAgo <= 0
+        ? 'Hoje'
+        : daysAgo == 1
+            ? 'Ontem'
+            : daysAgo <= 7
+                ? 'Últimos 7 dias'
+                : 'Mais antigas';
+    groups[group]!.add(conversation);
+  }
+  return groups;
 }
 
 class _DrawerItem extends StatelessWidget {
@@ -468,7 +552,7 @@ class _DrawerItem extends StatelessWidget {
       ),
         title: Text(
           label,
-          style: const TextStyle(
+          style:  TextStyle(
             color: GamaColors.textPrimary,
             fontSize: 14,
             fontWeight: FontWeight.w400,
@@ -529,7 +613,7 @@ class _ConversationTile extends StatelessWidget {
                       ),
                     )
                   : conversation.isPinned
-                  ? const Icon(
+                  ?  Icon(
                       Icons.push_pin,
                       size: 14,
                       color: GamaColors.textMuted,
@@ -551,7 +635,7 @@ class _ConversationTile extends StatelessWidget {
               contentPadding: const EdgeInsets.only(left: 10, right: 4),
               visualDensity: VisualDensity.compact,
               trailing: PopupMenuButton<String>(
-                icon: const Icon(
+                icon:  Icon(
                   Icons.more_horiz,
                   color: GamaColors.textMuted,
                   size: 18,
@@ -567,17 +651,17 @@ class _ConversationTile extends StatelessWidget {
                     value: 'pin',
                     child: Text(
                       conversation.isPinned ? 'Desafixar' : 'Fixar',
-                      style: const TextStyle(color: GamaColors.textPrimary),
+                      style:  TextStyle(color: GamaColors.textPrimary),
                     ),
                   ),
-                  const PopupMenuItem(
+                   PopupMenuItem(
                     value: 'rename',
                     child: Text(
                       'Renomear',
                       style: TextStyle(color: GamaColors.textPrimary),
                     ),
                   ),
-                  const PopupMenuItem(
+                   PopupMenuItem(
                     value: 'delete',
                     child: Text(
                       'Apagar',
@@ -623,7 +707,7 @@ class _ProfileAvatar extends StatelessWidget {
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => Text(
                 letter,
-                style: const TextStyle(
+                style:  TextStyle(
                   color: GamaColors.accent,
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
@@ -632,7 +716,7 @@ class _ProfileAvatar extends StatelessWidget {
             )
           : Text(
               letter,
-              style: const TextStyle(
+              style:  TextStyle(
                 color: GamaColors.accent,
                 fontSize: 18,
                 fontWeight: FontWeight.w700,

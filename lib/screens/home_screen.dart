@@ -132,7 +132,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             body: currentId == null
-                ? const Center(
+                ?  Center(
                     child: SizedBox(
                       width: 28,
                       height: 28,

@@ -50,11 +50,11 @@ class _ImagesScreenState extends State<ImagesScreen> {
         title: const Text('Imagens'),
       ),
       body: _loading
-          ? const Center(
+          ?  Center(
               child: CircularProgressIndicator(color: GamaColors.accent),
             )
           : _items.isEmpty
-          ? const Center(
+          ?  Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
@@ -99,14 +99,14 @@ class _ImagesScreenState extends State<ImagesScreen> {
                                 ? Image.file(
                                     File(path!),
                                     fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => const Center(
+                                    errorBuilder: (_, __, ___) =>  Center(
                                       child: Icon(
                                         Icons.broken_image_outlined,
                                         color: GamaColors.textMuted,
                                       ),
                                     ),
                                   )
-                                : const Center(
+                                :  Center(
                                     child: Icon(
                                       Icons.image_not_supported_outlined,
                                       color: GamaColors.textMuted,
@@ -120,7 +120,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
                             name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style:  TextStyle(
                               color: GamaColors.textSecondary,
                               fontSize: 12,
                             ),

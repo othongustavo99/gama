@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import 'core/gama_colors.dart';
@@ -65,128 +66,188 @@ Future<void> main() async {
 class GamaApp extends StatelessWidget {
   const GamaApp({super.key});
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Gama',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        useMaterial3: true,
-        scaffoldBackgroundColor: GamaColors.background,
-        colorScheme: const ColorScheme.dark(
-          primary: GamaColors.accent,
-          secondary: GamaColors.accentCool,
-          surface: GamaColors.surface,
-          error: GamaColors.error,
-          onPrimary: Colors.white,
-          onSecondary: Colors.white,
-          onSurface: GamaColors.textPrimary,
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: GamaColors.surface,
-          foregroundColor: GamaColors.textPrimary,
-          elevation: 0,
-          scrolledUnderElevation: 0,
-          centerTitle: false,
-          titleTextStyle: TextStyle(
-            color: GamaColors.textPrimary,
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            letterSpacing: -0.3,
-          ),
-        ),
-        iconTheme: const IconThemeData(color: GamaColors.textSecondary),
-        bottomSheetTheme: const BottomSheetThemeData(
-          backgroundColor: GamaColors.surfaceElevated,
-          modalBackgroundColor: GamaColors.surfaceElevated,
-          surfaceTintColor: Colors.transparent,
-          dragHandleColor: GamaColors.textMuted,
-        ),
-        progressIndicatorTheme: const ProgressIndicatorThemeData(
-          color: GamaColors.accent,
-          linearTrackColor: GamaColors.borderSoft,
-        ),
-        textSelectionTheme: const TextSelectionThemeData(
-          cursorColor: GamaColors.accent,
-          selectionColor: GamaColors.accentSoft,
-          selectionHandleColor: GamaColors.accent,
-        ),
-        dividerColor: GamaColors.divider,
-        snackBarTheme: SnackBarThemeData(
-          backgroundColor: GamaColors.surfaceCard,
-          contentTextStyle: const TextStyle(color: GamaColors.textPrimary),
-          behavior: SnackBarBehavior.floating,
-          elevation: 8,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: const BorderSide(color: GamaColors.border, width: 0.5),
-          ),
-        ),
-        dialogTheme: DialogThemeData(
-          backgroundColor: GamaColors.surfaceCard,
-          elevation: 12,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-            side: const BorderSide(color: GamaColors.border, width: 0.5),
-          ),
-        ),
-        popupMenuTheme: PopupMenuThemeData(
-          color: GamaColors.surfaceCard,
-          elevation: 10,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: const BorderSide(color: GamaColors.border, width: 0.5),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: GamaColors.surfaceInput,
-          hintStyle: const TextStyle(color: GamaColors.textMuted),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: GamaColors.border),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: GamaColors.border),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: GamaColors.accent, width: 1.4),
-          ),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: GamaColors.textPrimary,
-            side: const BorderSide(color: GamaColors.border),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(foregroundColor: GamaColors.accentBright),
-        ),
-        chipTheme: ChipThemeData(
-          backgroundColor: GamaColors.surfaceCard,
-          selectedColor: GamaColors.accentSoft,
-          side: const BorderSide(color: GamaColors.border),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          labelStyle: const TextStyle(color: GamaColors.textSecondary),
+  ThemeData _theme(Brightness brightness) {
+    final isDark = brightness == Brightness.dark;
+    GamaColors.setLightMode(!isDark);
+    final background = isDark ? GamaColors.background : const Color(0xFFF6F7F9);
+    final surface = isDark ? GamaColors.surface : Colors.white;
+    final textPrimary = isDark ? GamaColors.textPrimary : const Color(0xFF171A20);
+    final textSecondary = isDark ? GamaColors.textSecondary : const Color(0xFF535B66);
+    final border = isDark ? GamaColors.border : const Color(0xFFD9DEE5);
+    final scheme = isDark
+        ?  ColorScheme.dark(
+            primary: GamaColors.accent,
+            secondary: GamaColors.accentCool,
+            surface: GamaColors.surface,
+            error: GamaColors.error,
+            onPrimary: Colors.white,
+            onSecondary: Colors.white,
+            onSurface: GamaColors.textPrimary,
+          )
+        : ColorScheme.light(
+            primary: GamaColors.accentMuted,
+            secondary: GamaColors.accentCool,
+            surface: surface,
+            error: GamaColors.error,
+            onPrimary: Colors.white,
+            onSecondary: Colors.white,
+            onSurface: textPrimary,
+          );
+    return ThemeData(
+      brightness: brightness,
+      useMaterial3: true,
+      scaffoldBackgroundColor: background,
+      colorScheme: scheme,
+      appBarTheme: AppBarTheme(
+        backgroundColor: surface,
+        foregroundColor: textPrimary,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: false,
+        titleTextStyle: TextStyle(
+          color: textPrimary,
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.3,
         ),
       ),
-      home: const SplashScreen(),
+      iconTheme: IconThemeData(color: textSecondary),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: surface,
+        modalBackgroundColor: surface,
+        surfaceTintColor: Colors.transparent,
+        dragHandleColor: textSecondary,
+      ),
+      progressIndicatorTheme:  ProgressIndicatorThemeData(
+        color: GamaColors.accent,
+      ),
+      textSelectionTheme:  TextSelectionThemeData(
+        cursorColor: GamaColors.accent,
+        selectionColor: GamaColors.accentSoft,
+        selectionHandleColor: GamaColors.accent,
+      ),
+      dividerColor: border,
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: surface,
+        contentTextStyle: TextStyle(color: textPrimary),
+        behavior: SnackBarBehavior.floating,
+        elevation: 8,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: border, width: 0.5),
+        ),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: surface,
+        elevation: 12,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: border, width: 0.5),
+        ),
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: surface,
+        elevation: 10,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: border, width: 0.5),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: isDark ? GamaColors.surfaceInput : const Color(0xFFF0F2F5),
+        hintStyle: TextStyle(color: textSecondary),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(color: border),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(color: border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide:  BorderSide(color: GamaColors.accent, width: 1.4),
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: textPrimary,
+          side: BorderSide(color: border),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: GamaColors.accentMuted),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: surface,
+        selectedColor: isDark ? GamaColors.accentSoft : const Color(0xFFFFE9DA),
+        side: BorderSide(color: border),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        labelStyle: TextStyle(color: textSecondary),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: SettingsService.instance,
+      builder: (context, _) {
+        final scale = SettingsService.instance.fontScale;
+        final mode = SettingsService.instance.themeMode;
+        final lightTheme = _theme(Brightness.light);
+        final darkTheme = _theme(Brightness.dark);
+        final useLightPalette = mode == ThemeMode.light ||
+            (mode == ThemeMode.system &&
+                WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.light);
+        GamaColors.setLightMode(useLightPalette);
+        return MaterialApp(
+          title: 'Gama',
+          debugShowCheckedModeBanner: false,
+          theme: lightTheme,
+          darkTheme: darkTheme,
+          themeMode: mode,
+          locale: const Locale('pt', 'BR'),
+          supportedLocales: const [Locale('pt', 'BR'), Locale('en')],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          builder: (context, child) {
+            final media = MediaQuery.of(context);
+            final useLight = mode == ThemeMode.light ||
+                (mode == ThemeMode.system && media.platformBrightness == Brightness.light);
+            GamaColors.setLightMode(useLight);
+            SystemChrome.setSystemUIOverlayStyle(
+              SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness: useLight ? Brightness.dark : Brightness.light,
+                systemNavigationBarColor: useLight ? const Color(0xFFF6F7F9) : Colors.black,
+                systemNavigationBarIconBrightness: useLight ? Brightness.dark : Brightness.light,
+                systemNavigationBarDividerColor: useLight ? const Color(0xFFD9DEE5) : Colors.black,
+                systemNavigationBarContrastEnforced: false,
+              ),
+            );
+            final systemScale = media.textScaler.scale(1.0);
+            return MediaQuery(
+              data: media.copyWith(
+                textScaler: TextScaler.linear(systemScale * scale),
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
+          home: const SplashScreen(),
+        );
+      },
     );
   }
 }
@@ -219,14 +280,14 @@ class GamaStartupError extends StatelessWidget {
                       color: GamaColors.accent.withOpacity(0.35),
                     ),
                   ),
-                  child: const Icon(
+                  child:  Icon(
                     Icons.warning_amber_rounded,
                     color: GamaColors.accent,
                     size: 36,
                   ),
                 ),
                 const SizedBox(height: 20),
-                const Text(
+                 Text(
                   'Não foi possível iniciar a Gama',
                   textAlign: TextAlign.center,
                   style: TextStyle(
@@ -237,7 +298,7 @@ class GamaStartupError extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 10),
-                const Text(
+                 Text(
                   'O histórico não foi apagado. Feche e abra o app novamente.\n'
                   'Se o problema persistir, faça uma cópia dos dados antes de qualquer reparo.',
                   textAlign: TextAlign.center,
@@ -252,7 +313,7 @@ class GamaStartupError extends StatelessWidget {
                   textAlign: TextAlign.center,
                   maxLines: 4,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style:  TextStyle(
                     color: GamaColors.textMuted,
                     fontSize: 11,
                   ),
