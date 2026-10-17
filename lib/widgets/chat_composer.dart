@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../core/gama_colors.dart';
 import '../services/settings_service.dart';
 
-/// Barra: modo · + · mic (STT com texto ao vivo) · campo · ondas (TTS) · enviar
-/// Polimento visual moderno — input glass, chips mais suaves e botão de envio com glow.
+/// Barra de envio no estilo da home:
+/// - Caixa arredondada única
+/// - Campo de texto SEM fundo/caixa própria (só o placeholder)
+/// - Linha de ferramentas: modo · + · mic · ondas · enviar
 class ChatComposer extends StatelessWidget {
   final TextEditingController controller;
   final bool isLoading;
@@ -16,6 +18,7 @@ class ChatComposer extends StatelessWidget {
   final VoidCallback onSpeakSend;
   final VoidCallback? onStop;
   final ValueChanged<GamaMode> onModeChanged;
+
   const ChatComposer({
     super.key,
     required this.controller,
@@ -29,6 +32,7 @@ class ChatComposer extends StatelessWidget {
     this.onStop,
     required this.onModeChanged,
   });
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -46,77 +50,112 @@ class ChatComposer extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _ModeChip(
-                        label: 'Programar',
-                        icon: Icons.code_rounded,
-                        selected: mode == GamaMode.programar,
-                        onTap: () => onModeChanged(GamaMode.programar),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            decoration: BoxDecoration(
+              color: GamaColors.surfaceCard,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: isListening
+                    ? GamaColors.accent.withOpacity(0.55)
+                    : GamaColors.border,
+                width: isListening ? 1.2 : 1,
+              ),
+              boxShadow: isListening
+                  ? [
+                      BoxShadow(
+                        color: GamaColors.accentGlow,
+                        blurRadius: 16,
+                        offset: const Offset(0, 2),
                       ),
-                      const SizedBox(width: 8),
-                      _ModeChip(
-                        label: 'Conversar',
-                        icon: Icons.chat_bubble_outline_rounded,
-                        selected: mode == GamaMode.conversar,
-                        onTap: () => onModeChanged(GamaMode.conversar),
+                    ]
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.18),
+                        blurRadius: 16,
+                        offset: const Offset(0, 5),
                       ),
                     ],
+            ),
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Campo de texto — SEM caixa de fundo por trás do placeholder
+                TextField(
+                  controller: controller,
+                  style: TextStyle(
+                    color: GamaColors.textPrimary,
+                    fontSize: 15.5,
+                    height: 1.35,
+                    letterSpacing: 0.1,
                   ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                decoration: BoxDecoration(
-                  color: GamaColors.surfaceCard,
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: isListening
-                        ? GamaColors.accent.withOpacity(0.55)
-                        : GamaColors.border,
-                    width: isListening ? 1.2 : 1,
+                  maxLines: 5,
+                  minLines: 1,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(
+                    hintText: isListening
+                        ? 'Ouvindo… o texto aparece aqui'
+                        : 'Escreva sua mensagem...',
+                    hintStyle: TextStyle(
+                      color: GamaColors.textMuted,
+                      fontSize: 14.5,
+                    ),
+                    // Remove qualquer fundo/caixa do tema global
+                    filled: false,
+                    fillColor: Colors.transparent,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    disabledBorder: InputBorder.none,
+                    errorBorder: InputBorder.none,
+                    focusedErrorBorder: InputBorder.none,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 2,
+                      vertical: 6,
+                    ),
                   ),
-                  boxShadow: isListening
-                      ? [
-                          BoxShadow(
-                            color: GamaColors.accentGlow,
-                            blurRadius: 16,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 2),
-                          ),
-                        ]
-                      : [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.18),
-                            blurRadius: 16,
-                            offset: const Offset(0, 5),
-                          ),
-                        ],
+                  onSubmitted: (_) {
+                    if (!isLoading) onSend();
+                  },
                 ),
-                padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                const SizedBox(height: 6),
+                // Linha de ferramentas (igual à captura)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
+                    // Chip de modo (Programar / Conversar)
+                    _ModeChip(
+                      label: mode == GamaMode.programar
+                          ? 'Programar'
+                          : 'Conversar',
+                      icon: mode == GamaMode.programar
+                          ? Icons.code_rounded
+                          : Icons.chat_bubble_outline_rounded,
+                      selected: true,
+                      onTap: () {
+                        final next = mode == GamaMode.programar
+                            ? GamaMode.conversar
+                            : GamaMode.programar;
+                        onModeChanged(next);
+                      },
+                    ),
+                    const Spacer(),
                     IconButton(
                       onPressed: isLoading ? null : onAttach,
                       tooltip: 'Anexar',
                       style: IconButton.styleFrom(
                         foregroundColor: GamaColors.textSecondary,
                         disabledForegroundColor: GamaColors.textHint,
+                        visualDensity: VisualDensity.compact,
                       ),
                       icon: const Icon(
                         Icons.add_circle_outline_rounded,
-                        size: 24,
+                        size: 22,
                       ),
                     ),
                     IconButton(
@@ -129,46 +168,11 @@ class ChatComposer extends StatelessWidget {
                             ? GamaColors.accent
                             : GamaColors.textSecondary,
                         disabledForegroundColor: GamaColors.textHint,
+                        visualDensity: VisualDensity.compact,
                       ),
                       icon: Icon(
                         isListening ? Icons.mic : Icons.mic_none_rounded,
-                        size: 24,
-                      ),
-                    ),
-                    Expanded(
-                      child: TextField(
-                        controller: controller,
-                        style: TextStyle(
-                          color: GamaColors.textPrimary,
-                          fontSize: 15.5,
-                          height: 1.35,
-                          letterSpacing: 0.1,
-                        ),
-                        maxLines: 5,
-                        minLines: 1,
-                        textCapitalization: TextCapitalization.sentences,
-                        decoration: InputDecoration(
-                          hintText: isListening
-                              ? 'Ouvindo… o texto aparece aqui'
-                              : 'Escreva sua mensagem',
-                          hintStyle: TextStyle(
-                            color: GamaColors.textMuted,
-                            fontSize: 14.5,
-                          ),
-                          // Evita que o preenchimento global do tema crie
-                          // uma caixa escura retangular atrás do texto.
-                          filled: false,
-                          fillColor: Colors.transparent,
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 12,
-                          ),
-                        ),
-                        onSubmitted: (_) {
-                          if (!isLoading) onSend();
-                        },
+                        size: 22,
                       ),
                     ),
                     IconButton(
@@ -177,37 +181,36 @@ class ChatComposer extends StatelessWidget {
                       style: IconButton.styleFrom(
                         foregroundColor: GamaColors.textSecondary,
                         disabledForegroundColor: GamaColors.textHint,
+                        visualDensity: VisualDensity.compact,
                       ),
-                      icon: const Icon(Icons.graphic_eq_rounded, size: 22),
+                      icon: const Icon(Icons.graphic_eq_rounded, size: 20),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 3, right: 3),
-                      child: Material(
-                        color: isLoading
-                            ? GamaColors.accent.withOpacity(0.45)
-                            : GamaColors.accent,
+                    const SizedBox(width: 4),
+                    Material(
+                      color: isLoading
+                          ? GamaColors.accent.withOpacity(0.45)
+                          : GamaColors.accent,
+                      borderRadius: BorderRadius.circular(14),
+                      elevation: isLoading ? 0 : 2,
+                      shadowColor: GamaColors.accentGlow,
+                      child: InkWell(
                         borderRadius: BorderRadius.circular(14),
-                        elevation: isLoading ? 0 : 2,
-                        shadowColor: GamaColors.accentGlow,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(14),
-                          onTap: isLoading ? onStop : onSend,
-                          child: const SizedBox(
-                            width: 42,
-                            height: 42,
-                            child: Icon(
-                              Icons.arrow_upward_rounded,
-                              color: Colors.white,
-                              size: 21,
-                            ),
+                        onTap: isLoading ? onStop : onSend,
+                        child: const SizedBox(
+                          width: 40,
+                          height: 40,
+                          child: Icon(
+                            Icons.arrow_upward_rounded,
+                            color: Colors.white,
+                            size: 20,
                           ),
                         ),
                       ),
                     ),
                   ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -227,6 +230,7 @@ class _ModeChip extends StatelessWidget {
     required this.selected,
     required this.onTap,
   });
+
   @override
   Widget build(BuildContext context) {
     return Material(
@@ -237,7 +241,7 @@ class _ModeChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
@@ -246,35 +250,32 @@ class _ModeChip extends StatelessWidget {
                   : GamaColors.border,
               width: selected ? 1.1 : 1,
             ),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: GamaColors.accentGlow.withOpacity(0.35),
-                      blurRadius: 8,
-                      offset: const Offset(0, 1),
-                    ),
-                  ]
-                : null,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 icon,
-                size: 15,
+                size: 14,
                 color: selected ? GamaColors.accent : GamaColors.textMuted,
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 5),
               Text(
                 label,
                 style: TextStyle(
                   color: selected
                       ? GamaColors.accentBright
                       : GamaColors.textSecondary,
-                  fontSize: 12.5,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.1,
                 ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 16,
+                color: selected ? GamaColors.accent : GamaColors.textMuted,
               ),
             ],
           ),
