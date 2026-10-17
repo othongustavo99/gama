@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, AsyncIterator, Optional
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -267,12 +268,25 @@ async def generate_video_events(
             if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", job_id):
                 yield {"type": "error", "error": "O provedor não retornou um identificador válido para o vídeo."}
                 return
+            # Use the polling_url oficial retornado pela OpenRouter. Aceita caminho
+            # relativo ou URL absoluta, mas não permite polling em outro host.
+            raw_polling_url = str(job.get("polling_url") or f"{base}/videos/{job_id}").strip()
+            polling_url = urljoin(base.rstrip("/") + "/", raw_polling_url)
+            base_parts = urlparse(base)
+            polling_parts = urlparse(polling_url)
+            if (
+                polling_parts.scheme != base_parts.scheme
+                or polling_parts.netloc != base_parts.netloc
+                or not polling_parts.path.startswith(base_parts.path.rstrip("/") + "/videos/")
+            ):
+                yield {"type": "error", "error": "O provedor retornou uma URL de acompanhamento inválida."}
+                return
             yield {"type": "phase", "phase": "video_generating"}
             poll_delay = 4.0
             latest: dict[str, Any] = job
             while asyncio.get_running_loop().time() < deadline:
                 await asyncio.sleep(poll_delay)
-                status_response = await client.get(f"{base}/videos/{job_id}", headers=headers)
+                status_response = await client.get(polling_url, headers=headers)
                 if status_response.status_code >= 400:
                     logger.warning("OpenRouter video polling failed status=%s", status_response.status_code)
                     yield {"type": "error", "error": f"Não consegui consultar o andamento do vídeo (HTTP {status_response.status_code})."}
@@ -292,9 +306,29 @@ async def generate_video_events(
                 return
 
             yield {"type": "phase", "phase": "video_downloading"}
-            content = await client.get(f"{base}/videos/{job_id}/content?index=0", headers=headers)
+            # A API documentada devolve os links do arquivo em unsigned_urls.
+            # Não envie os headers da OpenRouter para o host de armazenamento.
+            raw_video_urls = latest.get("unsigned_urls")
+            if isinstance(raw_video_urls, str):
+                raw_video_urls = [raw_video_urls]
+            video_url = next(
+                (
+                    value.strip()
+                    for value in (raw_video_urls if isinstance(raw_video_urls, list) else [])
+                    if isinstance(value, str) and value.strip()
+                ),
+                "",
+            )
+            if not video_url:
+                yield {"type": "error", "error": "O provedor concluiu a geração, mas não retornou uma URL para baixar o vídeo."}
+                return
+            video_parts = urlparse(video_url)
+            if video_parts.scheme != "https" or not video_parts.netloc:
+                yield {"type": "error", "error": "O provedor retornou uma URL de vídeo inválida."}
+                return
+            content = await client.get(video_url)
             if content.status_code >= 400:
-                yield {"type": "error", "error": f"O vídeo foi gerado, mas não consegui baixá-lo do provedor (HTTP {content.status_code})."}
+                yield {"type": "error", "error": f"O vídeo foi gerado, mas não consegui baixá-lo do provedor de arquivos (HTTP {content.status_code})."}
                 return
             data = content.content
             if len(data) < 128 or not (data[4:8] == b"ftyp" or data.startswith(b"\x1aE\xdf\xa3")):

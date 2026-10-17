@@ -272,6 +272,7 @@ async def artifact_download(
     media = {
         "zip": "application/zip",
         "pdf": "application/pdf",
+        "video": "video/mp4",
     }.get(info.get("kind", ""), "application/octet-stream")
     return FileResponse(
         path=info["path"],

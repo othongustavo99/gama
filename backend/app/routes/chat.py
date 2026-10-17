@@ -29,6 +29,14 @@ from ..core.file_bundle import chat_with_continuation, generate_files_per_file
 from ..core.conversation_session import load_session, session_key
 from ..core.code_analyzer.source_detector import parse_github_url
 from ..core.identity import current_user_id
+from ..core.video_gen import (
+    VideoIntent,
+    build_video_prompt,
+    detect_video_intent,
+    generate_video_events,
+    parse_video_options,
+)
+from ..core.document_builder.store import save_artifact
 from ..core.code_analyzer.index_store import load_meta
 
 logger = logging.getLogger(__name__)
@@ -698,6 +706,17 @@ async def chat(
         and image_req.intent in (ImageIntent.GENERATE, ImageIntent.EDIT, ImageIntent.IMPROVE)
     )
 
+    # Video Generator: o módulo já existia, mas não era acionado pela rota /chat.
+    # Só intercepta pedidos explícitos de criação/animação, sem desviar análise comum.
+    video_req = detect_video_intent(
+        last_user,
+        has_attached_images=has_imgs,
+    ) if last_user else None
+    want_video_gen = bool(
+        video_req is not None
+        and video_req.intent in (VideoIntent.CREATE, VideoIntent.ANIMATE)
+    )
+
     # Image Analyzer: faz a leitura visual eficiente antes do modelo principal.
     # Se falhar, o fluxo multimodal antigo continua como fallback.
     image_analysis_context = ""
@@ -718,6 +737,108 @@ async def chat(
 
         try:
             nonlocal image_analysis_context, image_analysis_ok
+            # --- Video Generator: criação de vídeo por texto ou animação de imagem ---
+            if want_video_gen and video_req is not None:
+                if not bool(plugin_flags.get("video_gen", True)):
+                    reply = "A geração de vídeo está desativada em Plugins. Ative-a e tente novamente."
+                    yield json.dumps({"message": {"role": "assistant", "content": reply}, "done": False}, ensure_ascii=False) + "\n"
+                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
+                    return
+                if not getattr(app_settings, "VIDEO_GEN_ENABLED", True):
+                    reply = "A geração de vídeo está desativada no backend. Configure VIDEO_GEN_ENABLED=true no Railway."
+                    yield json.dumps({"message": {"role": "assistant", "content": reply}, "done": False}, ensure_ascii=False) + "\n"
+                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
+                    return
+                video_intent = video_req.intent
+                video_prompt = build_video_prompt(last_user, intent=video_intent)
+                video_options = parse_video_options(last_user)
+                reference_images = []
+                if video_intent == VideoIntent.ANIMATE:
+                    for image in (request.images or []):
+                        image_data = getattr(image, "data", None)
+                        if image_data:
+                            reference_images.append({
+                                "mime": (
+                                    getattr(image, "mime", None)
+                                    or getattr(image, "mime_type", None)
+                                    or "image/jpeg"
+                                ),
+                                "data": image_data,
+                            })
+                generated_artifact = None
+                generation_error = None
+                try:
+                    async for video_event in generate_video_events(
+                        video_prompt,
+                        duration=video_options["duration"],
+                        resolution=video_options["resolution"],
+                        aspect_ratio=video_options["aspect_ratio"],
+                        reference_images=(reference_images if reference_images else None),
+                        generate_audio=video_options["generate_audio"],
+                    ):
+                        event_type = video_event.get("type")
+                        if event_type == "phase":
+                            phase = str(video_event.get("phase") or "video_generating")
+                            yield json.dumps({"gama_meta": {"phase": phase}}, ensure_ascii=False) + "\n"
+                        elif event_type == "error":
+                            generation_error = str(video_event.get("error") or "O provedor não conseguiu gerar o vídeo.")[:600]
+                        elif event_type == "completed":
+                            video_bytes = video_event.get("data")
+                            if not isinstance(video_bytes, bytes) or not video_bytes:
+                                generation_error = "O provedor não retornou um arquivo de vídeo válido."
+                                continue
+                            try:
+                                stored = save_artifact(
+                                    kind="video",
+                                    filename="gama_video_gerado.mp4",
+                                    data=video_bytes,
+                                    user_id=user_id,
+                                    meta={
+                                        "duration_seconds": video_options["duration"],
+                                        "resolution": video_options["resolution"],
+                                        "aspect_ratio": video_options["aspect_ratio"],
+                                        "audio_generated": video_options["generate_audio"],
+                                        "provider_cost_usd": video_event.get("cost"),
+                                        "model": video_event.get("model"),
+                                    },
+                                )
+                                generated_artifact = {
+                                    "artifact_id": stored.get("artifact_id"),
+                                    "filename": stored.get("filename", "gama_video_gerado.mp4"),
+                                    "kind": "video",
+                                    "size": stored.get("size", len(video_bytes)),
+                                    "duration_seconds": video_options["duration"],
+                                    "resolution": video_options["resolution"],
+                                    "aspect_ratio": video_options["aspect_ratio"],
+                                    "audio_generated": video_options["generate_audio"],
+                                    "provider_cost_usd": video_event.get("cost"),
+                                    "model": video_event.get("model"),
+                                }
+                                yield json.dumps(
+                                    {"gama_meta": {"phase": "artifact_ready", "artifact": generated_artifact}},
+                                    ensure_ascii=False,
+                                ) + "\n"
+                            except Exception:
+                                logger.exception("Could not save generated video artifact")
+                                generation_error = (
+                                    "O vídeo foi gerado, mas não consegui salvá-lo na Biblioteca. "
+                                    "Verifique o espaço disponível no armazenamento do Railway."
+                                )
+                except Exception:
+                    logger.exception("Video generation flow failed")
+                    generation_error = "Falha inesperada ao gerar o vídeo. Tente novamente."
+                if generated_artifact:
+                    reply = (
+                        "Vídeo gerado com sucesso. O arquivo está disponível no cartão abaixo "
+                        "e também pode ser salvo na Biblioteca."
+                    )
+                else:
+                    reply = "Não consegui gerar o vídeo. " + (
+                        generation_error or "O serviço de vídeo não retornou um resultado válido."
+                    )
+                yield json.dumps({"message": {"role": "assistant", "content": reply}, "done": False}, ensure_ascii=False) + "\n"
+                yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
+                return
             # --- fase: geração de imagem (quando o usuário pede para criar/imaginar) ---
                         # --- fase: geração / edição / melhoria de imagem ---
             if want_image_gen and image_req is not None:
