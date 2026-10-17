@@ -326,7 +326,8 @@ async def generate_video_events(
             if video_parts.scheme != "https" or not video_parts.netloc:
                 yield {"type": "error", "error": "O provedor retornou uma URL de vídeo inválida."}
                 return
-            content = await client.get(video_url)
+            auth_headers = headers if video_parts.netloc.lower() == urlparse(base).netloc.lower() else None
+            content = await client.get(video_url, headers=auth_headers)
             if content.status_code >= 400:
                 yield {"type": "error", "error": f"O vídeo foi gerado, mas não consegui baixá-lo do provedor de arquivos (HTTP {content.status_code})."}
                 return

@@ -1,23 +1,17 @@
-CORREÇÃO REAL DA GERAÇÃO DE VÍDEOS — GAMA
+CORREÇÃO HTTP 401 NO DOWNLOAD DE VÍDEOS — GAMA
 
-Você tem razão: o pacote anterior só integrava a rota do chat e o tipo MIME. Ele deixava intacta uma falha no downloader: o backend tentava buscar o arquivo em /videos/{id}/content?index=0, enquanto a API documentada da OpenRouter retorna os endereços de saída em unsigned_urls. Esta versão corrige os dois lados do fluxo.
+Esta versão corrige o caso em que o provedor termina a geração, mas o download falha com HTTP 401. O endpoint de conteúdo da OpenRouter exige o cabeçalho Authorization: Bearer quando o URL aponta para openrouter.ai. O script agora envia essa autenticação apenas para o host da OpenRouter; não encaminha a chave para hosts de armazenamento externos.
 
-O script altera no máximo estes três arquivos existentes:
-- backend/app/routes/chat.py — aciona o gerador de vídeo para pedidos explícitos e emite os metadados que o app já entende.
-- backend/app/core/video_gen.py — usa polling_url devolvida pela OpenRouter e baixa o MP4 por unsigned_urls, sem enviar a chave da OpenRouter ao host de arquivos.
-- backend/app/routes/artifacts.py — informa o MIME video/mp4 no download.
+O pacote também preserva a integração do gerador no chat e o MIME video/mp4 já incluídos na correção anterior. Altera no máximo:
+- backend/app/routes/chat.py
+- backend/app/core/video_gen.py
+- backend/app/routes/artifacts.py
 
-APLICAÇÃO (Windows / VS Code)
-1. Extraia o ZIP na raiz do seu repositório gama, ao lado da pasta backend.
-2. Abra o terminal nessa mesma pasta.
-3. Execute: python aplicar_correcao_video.py
-4. Revise: git diff --check
-5. Confira os arquivos alterados com: git diff -- backend/app/routes/chat.py backend/app/core/video_gen.py backend/app/routes/artifacts.py
-6. Faça commit e push para disparar o redeploy do Railway.
+APLICAÇÃO
+1. Extraia o ZIP na raiz do repositório gama, onde existe a pasta backend.
+2. Abra o terminal nessa pasta e execute: python aplicar_correcao_video.py
+3. Confira: git diff --check
+4. Confira as alterações: git diff -- backend/app/routes/chat.py backend/app/core/video_gen.py backend/app/routes/artifacts.py
+5. Faça commit/push e aguarde o redeploy do Railway.
 
-Segurança e limites
-- O script cria backups .bak_video_... antes de substituir arquivos.
-- Valida a sintaxe dos três arquivos antes de gravar qualquer alteração; se um trecho esperado não bater, para sem gravar.
-- Não muda Flutter, memória, TTS, STT, drawer nem outras habilidades.
-- Não coloca chaves de API no pacote.
-- A geração real ainda depende de LLM_PROVIDER=openrouter, OPENROUTER_API_KEY válida, VIDEO_GEN_ENABLED=true e saldo/provedor disponível. Não consegui fazer uma geração real com suas credenciais.
+O script cria backups antes de gravar e valida a sintaxe Python. Não altera Flutter, memória, voz, STT, drawer nem outras habilidades. A geração real ainda depende de OPENROUTER_API_KEY válida, VIDEO_GEN_ENABLED=true, modelo disponível e saldo do provedor. Não foi possível testar com as credenciais reais do Railway.

@@ -236,7 +236,11 @@ NEW_VIDEO_DOWNLOAD = '''            yield {"type": "phase", "phase": "video_down
             if video_parts.scheme != "https" or not video_parts.netloc:
                 yield {"type": "error", "error": "O provedor retornou uma URL de vídeo inválida."}
                 return
-            content = await client.get(video_url)
+            # unsigned_urls da OpenRouter ainda exigem Bearer quando o link
+            # aponta para openrouter.ai; URLs de storage externo podem ser públicas.
+            # Nunca encaminhe a chave da OpenRouter para um host externo.
+            auth_headers = headers if video_parts.netloc.lower() == urlparse(base).netloc.lower() else None
+            content = await client.get(video_url, headers=auth_headers)
             if content.status_code >= 400:
                 yield {"type": "error", "error": f"O vídeo foi gerado, mas não consegui baixá-lo do provedor de arquivos (HTTP {content.status_code})."}
                 return
@@ -246,8 +250,16 @@ NEW_VIDEO_DOWNLOAD = '''            yield {"type": "phase", "phase": "video_down
 
 def patch_video_gen(source: str) -> str:
     """Patch OpenRouter poll/download to match the documented video API."""
+    # Se o patch anterior já estiver instalado, atualize apenas a chamada de
+    # download que causava HTTP 401 no endpoint autenticado da OpenRouter.
     if VIDEO_API_FIX_MARKER in source and 'latest.get("unsigned_urls")' in source:
-        return source
+        old_download_call = '            content = await client.get(video_url)\n'
+        new_download_call = '            auth_headers = headers if video_parts.netloc.lower() == urlparse(base).netloc.lower() else None\n            content = await client.get(video_url, headers=auth_headers)\n'
+        if new_download_call in source:
+            return source
+        if old_download_call in source:
+            return source.replace(old_download_call, new_download_call, 1)
+        fail("o downloader de vídeo já está parcialmente alterado; nenhum arquivo foi modificado.")
     if 'latest.get("unsigned_urls")' in source or VIDEO_API_FIX_MARKER in source:
         fail("backend/app/core/video_gen.py contém uma correção parcial; revise o arquivo antes de aplicar.")
     typing_anchor = "from typing import Any, AsyncIterator, Optional\n"
