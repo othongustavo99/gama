@@ -104,7 +104,7 @@ class LocalNotificationService {
     if (!allowed) throw StateError('Permissão de notificações não concedida.');
 
     await _plugin.zonedSchedule(
-      _notificationId(id),
+      id: _notificationId(id),
       title: 'Lembrete da Gama',
       body: text,
       scheduledDate: tz.TZDateTime.from(when, tz.local),
@@ -143,7 +143,7 @@ class LocalNotificationService {
   Future<void> cancel(String id) async {
     if (kIsWeb) return;
     await initialize();
-    await _plugin.cancel(_notificationId(id));
+    await _plugin.cancel(id: _notificationId(id));
   }
 
   Future<void> syncSavedReminders({required bool enabled}) async {
@@ -169,7 +169,7 @@ class LocalNotificationService {
       final pending = await _plugin.pendingNotificationRequests();
       for (final notification in pending) {
         if (reminderIds.contains(notification.id)) {
-          await _plugin.cancel(notification.id);
+          await _plugin.cancel(id: notification.id);
         }
       }
       return;
@@ -190,7 +190,7 @@ class LocalNotificationService {
         // syncSavedReminders é executado ao abrir a tela e após mudanças de
         // configuração; a permissão já concedida não gera novo diálogo.
         await _plugin.zonedSchedule(
-          _notificationId(id),
+          id: _notificationId(id),
           title: 'Lembrete da Gama',
           body: text,
           scheduledDate: tz.TZDateTime.from(when, tz.local),
@@ -218,7 +218,7 @@ class LocalNotificationService {
     final pending = await _plugin.pendingNotificationRequests();
     for (final notification in pending) {
       if (!liveIds.contains(notification.id)) {
-        await _plugin.cancel(notification.id);
+        await _plugin.cancel(id: notification.id);
       }
     }
   }
