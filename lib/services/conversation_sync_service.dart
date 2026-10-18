@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import '../core/constants.dart';
 import 'auth_interceptor.dart';
+import 'auth_service.dart';
 import '../models/message.dart';
 import 'conversation_service.dart';
 import 'identity_service.dart';
@@ -28,6 +29,16 @@ class ConversationSyncService {
   bool _syncing = false;
   DateTime? _lastFullSync;
 
+  Future<bool> _hasGoogleSession() async {
+    if (IdentityService.instance.provider != 'google') return false;
+    try {
+      final token = await AuthService.instance.bearerToken();
+      return token != null && token.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Dio _client() {
     if (!_dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
       _dio.interceptors.add(GammaAuthInterceptor(client: _dio));
@@ -42,6 +53,7 @@ class ConversationSyncService {
   /// Sincronização completa: puxa do servidor e envia o que o local tem de mais novo.
   Future<void> syncAll({bool force = false}) async {
     if (_syncing) return;
+    if (!await _hasGoogleSession()) return;
     if (!force &&
         _lastFullSync != null &&
         DateTime.now().difference(_lastFullSync!) <
@@ -66,6 +78,7 @@ class ConversationSyncService {
 
   /// Envia uma conversa específica (após mensagem / rename / pin).
   Future<void> pushConversation(String id) async {
+    if (!await _hasGoogleSession()) return;
     final local = ConversationService.instance;
     if (!local.conversationHasMessages(id)) return;
 
@@ -111,6 +124,7 @@ class ConversationSyncService {
 
   /// Envia só a mensagem que mudou; evita reenviar o histórico em cada turno.
   Future<void> pushMessage(Message message) async {
+    if (!await _hasGoogleSession()) return;
     try {
       final conv = ConversationService.instance.conversationById(
         message.conversationId,
@@ -131,6 +145,7 @@ class ConversationSyncService {
   }
 
   Future<void> pushConversationMetadata(String id) async {
+    if (!await _hasGoogleSession()) return;
     final conv = ConversationService.instance.conversationById(id);
     if (conv == null) return;
     try {
@@ -154,6 +169,7 @@ class ConversationSyncService {
 
   Future<void> deleteMessages(String conversationId, List<String> ids) async {
     if (ids.isEmpty) return;
+    if (!await _hasGoogleSession()) return;
     try {
       final res = await _client().post(
         '/conversations/$conversationId/messages/delete',
@@ -183,6 +199,7 @@ class ConversationSyncService {
   };
 
   Future<void> deleteRemote(String id) async {
+    if (!await _hasGoogleSession()) return;
     try {
       await _client().delete('/conversations/$id');
     } catch (e) {

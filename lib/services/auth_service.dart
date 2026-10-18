@@ -44,9 +44,9 @@ class AuthService {
 
   late final GoogleSignIn _google = GoogleSignIn(
     scopes: const ['email', 'profile'],
-    serverClientId: (serverClientId != null && serverClientId!.isNotEmpty)
-        ? serverClientId
-        : null,
+    serverClientId: serverClientId.trim().isEmpty
+        ? null
+        : serverClientId.trim(),
   );
 
   bool get isDesktop =>
@@ -67,10 +67,14 @@ class AuthService {
       }
       return _refreshDesktopIdToken();
     }
+    if (_hasFreshCachedIdToken()) return _idToken;
     try {
       final account = _google.currentUser ?? await _google.signInSilently();
       final auth = await account?.authentication;
-      return auth?.idToken;
+      final token = auth?.idToken;
+      if (token == null || token.isEmpty) return null;
+      _cacheIdToken(token);
+      return token;
     } catch (e) {
       debugPrint('bearerToken: $e');
       return null;
@@ -87,6 +91,7 @@ class AuthService {
       final auth = await account?.authentication;
       final token = auth?.idToken;
       if (token == null || token.isEmpty) return null;
+      _cacheIdToken(token);
       if (account != null) {
         await IdentityService.instance.bindGoogleUser(
           googleId: account.id,
@@ -149,6 +154,36 @@ class AuthService {
     }
   }
 
+  bool _hasFreshCachedIdToken() =>
+      _idToken != null &&
+      _idTokenExpiry != null &&
+      DateTime.now().isBefore(
+        _idTokenExpiry!.subtract(const Duration(minutes: 2)),
+      );
+
+  void _cacheIdToken(String token) {
+    _idToken = token;
+    var expiry = DateTime.now().add(const Duration(minutes: 55));
+    try {
+      final parts = token.split('.');
+      if (parts.length == 3) {
+        final payload = jsonDecode(
+          utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+        );
+        if (payload is Map && payload['exp'] is num) {
+          expiry = DateTime.fromMillisecondsSinceEpoch(
+            (payload['exp'] as num).toInt() * 1000,
+            isUtc: true,
+          ).toLocal();
+        }
+      }
+    } catch (_) {
+      // Tokens válidos continuam utilizáveis por até 55 min se não der para
+      // ler o exp localmente; o servidor segue sendo quem valida a assinatura.
+    }
+    _idTokenExpiry = expiry;
+  }
+
   Future<bool> signInWithGoogle() async {
     if (isDesktop) return _signInDesktop();
     return _signInMobile();
@@ -156,8 +191,25 @@ class AuthService {
 
   Future<bool> _signInMobile() async {
     try {
+      if (serverClientId.trim().isEmpty) {
+        throw StateError(
+          'GOOGLE_SERVER_CLIENT_ID não foi configurado. Use o ID OAuth de '
+          'cliente Web do Google Cloud ao compilar o app.',
+        );
+      }
       final account = await _google.signIn();
       if (account == null) return false;
+
+      final authentication = await account.authentication;
+      final idToken = authentication.idToken;
+      if (idToken == null || idToken.isEmpty) {
+        throw StateError(
+          'O Google concluiu o login, mas não retornou um ID token. '
+          'Confira se GOOGLE_SERVER_CLIENT_ID é o OAuth de cliente Web e '
+          'se o mesmo ID está em GOOGLE_OAUTH_CLIENT_IDS no servidor.',
+        );
+      }
+      _cacheIdToken(idToken);
 
       await IdentityService.instance.bindGoogleUser(
         googleId: account.id,
@@ -357,12 +409,17 @@ class AuthService {
   }
 
   Future<bool> trySilentGoogle() async {
-    // O fluxo OAuth desktop atual não persiste refresh token de forma segura.
-    // Após reiniciar o app, solicite novo login em vez de marcar uma sessão sem Bearer como válida.
+    // Sessões convidadas permanecem locais e não tentam sincronização remota.
+    if (IdentityService.instance.provider != 'google') {
+      return IdentityService.instance.isLoggedIn;
+    }
     if (isDesktop) return (await bearerToken()) != null;
     try {
-      final account = await _google.signInSilently();
-      if (account == null) return IdentityService.instance.isLoggedIn;
+      final account = await _google.signInSilently(suppressErrors: false);
+      if (account == null) return false;
+      final idToken = (await account.authentication).idToken;
+      if (idToken == null || idToken.isEmpty) return false;
+      _cacheIdToken(idToken);
       await IdentityService.instance.bindGoogleUser(
         googleId: account.id,
         name: account.displayName,
@@ -371,7 +428,7 @@ class AuthService {
       );
       return true;
     } catch (_) {
-      return IdentityService.instance.isLoggedIn;
+      return false;
     }
   }
 

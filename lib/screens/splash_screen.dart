@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
-
+import '../services/auth_service.dart';
 import '../services/identity_service.dart';
 import 'home_screen.dart';
 import 'login_screen.dart';
@@ -26,11 +26,11 @@ class _SplashScreenState extends State<SplashScreen> {
     // tempo mínimo da splash visual
     await Future.delayed(const Duration(seconds: 2));
     await IdentityService.instance.init();
+    final sessionValid = await AuthService.instance.trySilentGoogle();
 
     if (!mounted) return;
 
-    final id = IdentityService.instance;
-    final next = id.isLoggedIn ? const HomeScreen() : const LoginScreen();
+    final next = sessionValid ? const HomeScreen() : const LoginScreen();
 
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
