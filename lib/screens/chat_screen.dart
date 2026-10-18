@@ -1382,7 +1382,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!isLastAssistant) {
       return Align(
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: SizedBox(height: 48, child: moreButton),
+        child: Transform.translate(
+          offset: isUser ? const Offset(0, -8) : Offset.zero,
+          child: SizedBox(height: 48, child: moreButton),
+        ),
       );
     }
 
