@@ -17,7 +17,7 @@ from .routes.tts import router as tts_router
 from .routes.artifacts import router as artifacts_router
 from .routes.media import router as media_router, public_router as media_public_router
 from .security import body_too_large, rate_limit_chat, rate_limit_default, require_api_key
-from .core.identity import require_auth
+from .core.identity import require_auth, google_oauth_client_ids
 from .storage_status import inspect_data_storage
 
 logger = logging.getLogger("gama")
@@ -50,6 +50,8 @@ async def lifespan(_app: FastAPI):
         logger.warning("GAMA_API_KEY ausente: a proteção por chave de API está desativada.")
     if not require_auth():
         logger.warning("GAMA_REQUIRE_AUTH está desativado: rotas legadas aceitam X-User-Id informado pelo cliente.")
+    elif not google_oauth_client_ids():
+        logger.error("GOOGLE_OAUTH_CLIENT_IDS ausente: autenticação Google recusará todas as sessões.")
     if settings.CORS_ORIGINS == ["*"]:
         logger.info("CORS aberto (*). Restrinja com CORS_ORIGINS se houver cliente web.")
     yield
@@ -93,24 +95,5 @@ app.include_router(media_public_router)
 
 @app.get("/health")
 async def health():
-    """Público e leve (healthcheck do Railway/Docker). O estado do LLM é cacheado."""
-    ok = await llm.health()
-    return {
-        "status": "ok" if ok else "degraded",
-        "service": "gama",
-        "version": VERSION,
-        "provider": settings.PROVIDER,
-        "web_search": settings.WEB_SEARCH_ENABLED,
-        "agent_tools": settings.AGENT_TOOLS_ENABLED and settings.PROVIDER == "openrouter",
-        "auth_required": bool(settings.GAMA_API_KEY),
-        "user_auth_required": require_auth(),
-        "llm": "online" if ok else "offline",
-        "ollama": "online" if ok and settings.PROVIDER == "ollama" else ("n/a" if settings.PROVIDER != "ollama" else "offline"),
-        "openrouter": "online" if ok and settings.PROVIDER == "openrouter" else ("n/a" if settings.PROVIDER != "openrouter" else "offline"),
-        "storage": inspect_data_storage(),
-        "features": [
-            "chat", "memory", "memory_v2", "conversations", "rolling_summary", "extract",
-            "multi_provider", "web_search", "agent_tools", "code_analyzer",
-            "document_builder", "talk_skill", "image_analyzer", "image_gen", "video_gen", "video_analysis", "weather", "tts",
-        ],
-    }
+    """Public liveness probe; avoid exposing provider, version, and feature flags."""
+    return {"status": "ok"}

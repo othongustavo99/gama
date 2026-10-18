@@ -49,25 +49,25 @@ class AuthService {
   bool get isDesktop =>
       !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
 
-  String? _accessToken;
-  DateTime? _accessTokenExpiry;
+  String? _idToken;
+  DateTime? _idTokenExpiry;
 
-  /// Access token para o backend (`Authorization: Bearer`).
+  /// ID token Google para o backend (`Authorization: Bearer`), com aud validável.
   /// Null = sem sessão válida; o chamador segue no modo legado ou pede login.
   Future<String?> bearerToken() async {
     if (isDesktop) {
-      final exp = _accessTokenExpiry;
-      if (_accessToken != null &&
+      final exp = _idTokenExpiry;
+      if (_idToken != null &&
           exp != null &&
           DateTime.now().isBefore(exp.subtract(const Duration(minutes: 2)))) {
-        return _accessToken;
+        return _idToken;
       }
       return null;
     }
     try {
       final account = _google.currentUser ?? await _google.signInSilently();
       final auth = await account?.authentication;
-      return auth?.accessToken;
+      return auth?.idToken;
     } catch (e) {
       debugPrint('bearerToken: $e');
       return null;
@@ -210,15 +210,19 @@ class AuthService {
     }
 
     final tokenJson = jsonDecode(tokenRes.body) as Map<String, dynamic>;
-    final accessToken = tokenJson['access_token'] as String?;
-    if (accessToken == null) throw StateError('Sem access_token');
+    final idToken = tokenJson['id_token'] as String?;
+    if (idToken == null || idToken.isEmpty) {
+      throw StateError(
+        'O Google não retornou ID token. Confira o escopo openid e o client ID OAuth.',
+      );
+    }
     final expiresIn = (tokenJson['expires_in'] as num?)?.toInt() ?? 3600;
-    _accessToken = accessToken;
-    _accessTokenExpiry = DateTime.now().add(Duration(seconds: expiresIn));
+    _idToken = idToken;
+    _idTokenExpiry = DateTime.now().add(Duration(seconds: expiresIn));
 
     final userRes = await http.get(
       Uri.parse('https://www.googleapis.com/oauth2/v2/userinfo'),
-      headers: {'Authorization': 'Bearer $accessToken'},
+      headers: {'Authorization': 'Bearer ${tokenJson['access_token']}'},
     );
     if (userRes.statusCode != 200) {
       throw StateError('Perfil Google: ${userRes.body}');
@@ -244,8 +248,8 @@ class AuthService {
       } catch (_) {}
     }
     // Não mantenha um token válido em memória depois do logout.
-    _accessToken = null;
-    _accessTokenExpiry = null;
+    _idToken = null;
+    _idTokenExpiry = null;
     await IdentityService.instance.signOutLocal();
   }
 

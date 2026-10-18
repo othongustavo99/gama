@@ -2,8 +2,9 @@
 
 Identidade canônica para todas as rotas com dados de usuário.
 
-Com token Google válido, o backend deriva o user_id de e-mail verificado usando
-exatamente a normalização do app Flutter (`google_email_<email-normalizado>`).
+Com ID token Google válido (assinatura, emissor, validade e audiência conferidos),
+o backend deriva o user_id de e-mail verificado usando exatamente a normalização
+do app Flutter (`google_email_<email-normalizado>`).
 Isso preserva as memórias gravadas anteriormente por X-User-Id e unifica o
 escopo usado por chat, memória, projetos e artefatos. Token inválido nunca cai
 para o cabeçalho. O modo legado por X-User-Id só deve ser usado localmente.
@@ -12,6 +13,7 @@ para o cabeçalho. O modo legado por X-User-Id só deve ser usado localmente.
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import logging
 import os
 import re
@@ -33,7 +35,16 @@ _warned_legacy = False
 
 
 def require_auth() -> bool:
-    return os.getenv("GAMA_REQUIRE_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
+    # Fail closed unless a developer deliberately opts into legacy X-User-Id mode.
+    return os.getenv("GAMA_REQUIRE_AUTH", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def google_oauth_client_ids() -> set[str]:
+    return {
+        value.strip()
+        for value in os.getenv("GOOGLE_OAUTH_CLIENT_IDS", "").split(",")
+        if value.strip()
+    }
 
 
 def canonical_google_user_id(*, google_id: str, email: str | None) -> str:
@@ -51,18 +62,38 @@ def canonical_google_user_id(*, google_id: str, email: str | None) -> str:
     return f"google_{gid}"
 
 
-async def verify_google_access_token(token: str) -> str:
-    """Valida o token no Google e retorna uma identidade canônica estável."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {token}"})
-    if r.status_code != 200:
-        raise PermissionError("token Google inválido ou expirado")
-    payload = r.json() or {}
-    gid = str(payload.get("id") or "").strip()
+async def verify_google_id_token(token: str) -> str:
+    """Valida ID token, incluindo issuer, validade e audiência do app."""
+    allowed_client_ids = google_oauth_client_ids()
+    if not allowed_client_ids:
+        raise PermissionError("autenticação indisponível: configure GOOGLE_OAUTH_CLIENT_IDS")
+
+    def verify_locally() -> dict:
+        from google.auth.exceptions import GoogleAuthError, TransportError
+        from google.auth.transport.requests import Request as GoogleRequest
+        from google.oauth2 import id_token
+
+        try:
+            # Verifies signature using Google's rotating public keys, issuer, and expiry.
+            return id_token.verify_oauth2_token(token, GoogleRequest(), audience=None)
+        except TransportError as exc:
+            raise httpx.ConnectError("não foi possível validar token com Google") from exc
+        except ValueError as exc:
+            raise PermissionError("token Google inválido ou expirado") from exc
+        except GoogleAuthError as exc:
+            raise PermissionError("token Google inválido") from exc
+
+    payload = await asyncio.to_thread(verify_locally)
+    if str(payload.get("aud") or "").strip() not in allowed_client_ids:
+        raise PermissionError("token Google emitido para outro aplicativo")
+    authorized_party = str(payload.get("azp") or "").strip()
+    if authorized_party and authorized_party not in allowed_client_ids:
+        raise PermissionError("parte autorizada do token Google inválida")
+    gid = str(payload.get("sub") or "").strip()
     email = str(payload.get("email") or "").strip()
     # Se o provedor indicar explicitamente que o e-mail não é verificado,
     # não podemos usar esse endereço como namespace de dados.
-    if payload.get("verified_email") is False:
+    if str(payload.get("email_verified", payload.get("verified_email", "true"))).lower() == "false":
         raise PermissionError("e-mail da conta Google não verificado")
     if not gid:
         raise PermissionError("perfil Google sem id")
@@ -86,7 +117,7 @@ async def verify_google_legacy_user_id(token: str) -> str:
 
 
 # Permite trocar o verificador em testes (sem rede).
-_verifier: Callable[[str], Awaitable[str]] = verify_google_access_token
+_verifier: Callable[[str], Awaitable[str]] = verify_google_id_token
 
 
 async def _verified_user(token: str) -> str:

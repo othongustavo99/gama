@@ -1,4 +1,4 @@
-"""Segurança da API: chave do app, rate limit e limite de corpo.
+"""Segurança da API: chave do app, limites por usuário/IP e limite de corpo.
 
 Contexto: o backend era 100% aberto e a URL de produção está no repositório
 público. Qualquer pessoa podia gastar o crédito do OpenRouter via /chat e ler ou
@@ -6,12 +6,11 @@ apagar a memória de outro usuário mandando `X-User-Id`.
 
 Esta camada:
 - exige `X-API-Key` (ou `Authorization: Bearer`) quando GAMA_API_KEY está definida;
-- limita requisições por IP (janela deslizante);
+- limita usuários autenticados individualmente e mantém IP como fallback;
 - recusa corpos gigantes antes de ler.
 
-Importante: uma chave embutida no app dificulta abuso casual, mas pode ser
-extraída do APK. O próximo passo (ver README) é validar o ID token do Google no
-servidor e derivar o user_id dele, em vez de confiar no cabeçalho X-User-Id.
+Importante: a chave embutida no app pode ser extraída do APK. A autenticação
+real usa um ID token Google validado no servidor e limites por identidade.
 """
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ from typing import Callable, Deque, Dict, Optional
 from fastapi import HTTPException, Request
 
 from .config import settings
+from .core.identity import _verified_user, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,21 @@ async def require_api_key(request: Request) -> None:
 def _make_limit_dep(limiter: SlidingWindowLimiter):
     async def dep(request: Request) -> None:
         key = client_ip(request)
+        authorization = request.headers.get("authorization", "")
+        if authorization.lower().startswith("bearer "):
+            token = authorization[7:].strip()
+            if token:
+                try:
+                    # Validated identity avoids charging unrelated users behind carrier NAT.
+                    key = "user:" + await _verified_user(token)
+                except Exception:
+                    # The route's current_user_id dependency returns the real auth error.
+                    pass
+        elif not require_auth():
+            # In legacy local mode, preserve separate limits for supplied accounts.
+            legacy_id = (request.headers.get("x-user-id") or "").strip()
+            if legacy_id:
+                key = "legacy:" + legacy_id[:128]
         if not limiter.allow(key):
             raise HTTPException(429, "Muitas requisições. Aguarde um instante.",
                                 headers={"Retry-After": str(limiter.retry_after(key))})

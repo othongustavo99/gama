@@ -32,6 +32,7 @@ from ..core.file_bundle import chat_with_continuation, generate_files_per_file
 from ..core.conversation_session import load_session, session_key
 from ..core.code_analyzer.source_detector import parse_github_url
 from ..core.identity import current_user_id
+from ..core.media_quota import DailyQuotaExceeded, consume_daily_media_quota
 from ..core.video_gen import (
     VideoIntent,
     build_video_prompt,
@@ -845,6 +846,16 @@ async def chat(
                 video_intent = video_req.intent
                 video_prompt = build_video_prompt(last_user, intent=video_intent)
                 video_options = parse_video_options(last_user)
+                try:
+                    consume_daily_media_quota(user_id, "video")
+                except DailyQuotaExceeded as exc:
+                    yield json.dumps({"message": {"role": "assistant", "content": str(exc)}, "done": False}, ensure_ascii=False) + "\n"
+                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
+                    return
+                except RuntimeError as exc:
+                    yield json.dumps({"message": {"role": "assistant", "content": str(exc)}, "done": False}, ensure_ascii=False) + "\n"
+                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
+                    return
                 reference_images = []
                 if video_intent == VideoIntent.ANIMATE:
                     for image in (request.images or []):
@@ -979,6 +990,12 @@ async def chat(
                     return
 
                 prompt = build_image_prompt(last_user, intent=intent)
+                try:
+                    consume_daily_media_quota(user_id, "image")
+                except (DailyQuotaExceeded, RuntimeError) as exc:
+                    yield json.dumps({"message": {"role": "assistant", "content": str(exc)}, "done": False}, ensure_ascii=False) + "\n"
+                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
+                    return
                 result = await generate_image(
                     prompt,
                     reference_images=(

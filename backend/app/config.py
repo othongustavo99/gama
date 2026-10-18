@@ -138,6 +138,8 @@ class Settings:
     CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
     RATE_LIMIT_CHAT_PER_MIN = int(os.getenv("RATE_LIMIT_CHAT_PER_MIN", "20"))
     RATE_LIMIT_DEFAULT_PER_MIN = int(os.getenv("RATE_LIMIT_DEFAULT_PER_MIN", "120"))
+    IMAGE_DAILY_LIMIT = max(0, int(os.getenv("GAMA_IMAGE_DAILY_LIMIT", "10")))
+    VIDEO_DAILY_LIMIT = max(0, int(os.getenv("GAMA_VIDEO_DAILY_LIMIT", "2")))
     # Quantos proxies confiáveis existem na frente (Railway/Render = 1).
     TRUSTED_PROXY_HOPS = max(0, int(os.getenv("TRUSTED_PROXY_HOPS", "1")))
     # Upload individual e corpo HTTP são limites relacionados, mas distintos.
