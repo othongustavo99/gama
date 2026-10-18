@@ -471,23 +471,27 @@ class _ChatScreenState extends State<ChatScreen> {
     if (sources.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'FONTES',
-            style: TextStyle(
-              color: GamaColors.textMuted,
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1,
+      child: Container(
+        decoration: BoxDecoration(
+          color: GamaColors.surfaceCard,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: GamaColors.borderSoft),
+        ),
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            leading: Icon(Icons.travel_explore, color: GamaColors.accent),
+            title: Text(
+              'Fontes (${sources.length})',
+              style: TextStyle(
+                color: GamaColors.textSecondary,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: sources.take(6).map((source) {
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+            childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+            children: sources.take(8).map((source) {
               final rawUrl = (source['url'] ?? source['link'] ?? '')
                   .toString()
                   .trim();
@@ -496,26 +500,36 @@ class _ChatScreenState extends State<ChatScreen> {
                   ? uri.host.replaceFirst(RegExp(r'^www\.'), '')
                   : (source['source'] ?? source['title'] ?? 'Fonte').toString();
               final title = (source['title'] ?? domain).toString();
-              return ActionChip(
-                avatar: const Icon(Icons.link_rounded, size: 14),
-                label: Text(
+              final canOpen =
+                  rawUrl.startsWith('http://') || rawUrl.startsWith('https://');
+              return ListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                leading: _SourceFavicon(uri: uri),
+                title: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: GamaColors.textPrimary, fontSize: 13),
+                ),
+                subtitle: Text(
                   domain,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: GamaColors.textMuted, fontSize: 11),
                 ),
-                tooltip: title,
-                visualDensity: VisualDensity.compact,
-                backgroundColor: GamaColors.surfaceCard,
-                side: BorderSide(color: GamaColors.borderSoft),
-                onPressed:
-                    rawUrl.startsWith('http://') ||
-                        rawUrl.startsWith('https://')
-                    ? () => _openLink(rawUrl)
+                trailing: canOpen
+                    ? Icon(
+                        Icons.open_in_new,
+                        size: 16,
+                        color: GamaColors.textMuted,
+                      )
                     : null,
+                onTap: canOpen ? () => _openLink(rawUrl) : null,
               );
             }).toList(),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -3267,6 +3281,37 @@ class _ChatScreenState extends State<ChatScreen> {
             },
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SourceFavicon extends StatelessWidget {
+  final Uri? uri;
+
+  const _SourceFavicon({required this.uri});
+
+  @override
+  Widget build(BuildContext context) {
+    final host = uri?.host ?? '';
+    final hasHttpScheme = uri?.scheme == 'http' || uri?.scheme == 'https';
+    if (!hasHttpScheme || host.isEmpty || host == 'localhost') {
+      return Icon(
+        Icons.language_rounded,
+        color: GamaColors.textMuted,
+        size: 18,
+      );
+    }
+    final favicon = Uri(scheme: 'https', host: host, path: '/favicon.ico');
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Image.network(
+        favicon.toString(),
+        width: 20,
+        height: 20,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) =>
+            Icon(Icons.language_rounded, color: GamaColors.textMuted, size: 18),
       ),
     );
   }

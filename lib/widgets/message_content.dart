@@ -4,7 +4,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:flutter_highlight/themes/github.dart';
+import 'package:flutter_highlight/themes/monokai.dart';
+import 'package:highlight/highlight.dart' show highlight, Node;
 import 'package:markdown/markdown.dart' as md;
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/gama_colors.dart';
@@ -179,6 +183,149 @@ String _fmtBytes(int? b) {
   return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
+Future<String> _saveImageFile({
+  required String? sourcePath,
+  required String base64Data,
+  required String mime,
+}) {
+  if (sourcePath != null && sourcePath.isNotEmpty) {
+    return DownloadService.instance.copyFile(sourcePath);
+  }
+  return DownloadService.instance.saveBase64Image(base64Data, mime: mime);
+}
+
+Future<void> _shareImageFile(
+  BuildContext context, {
+  required String? sourcePath,
+  required String base64Data,
+  required String mime,
+}) async {
+  try {
+    final path =
+        sourcePath ??
+        await _saveImageFile(
+          sourcePath: null,
+          base64Data: base64Data,
+          mime: mime,
+        );
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(path)], title: 'Imagem da Gama'),
+    );
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Não consegui compartilhar a imagem: $error')),
+    );
+  }
+}
+
+class _FullscreenImageDialog extends StatelessWidget {
+  final Widget image;
+  final String? sourcePath;
+  final String base64Data;
+  final String mime;
+
+  const _FullscreenImageDialog({
+    required this.image,
+    required this.sourcePath,
+    required this.base64Data,
+    required this.mime,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return Dialog(
+      insetPadding: const EdgeInsets.all(8),
+      backgroundColor: const Color(0xFF080808),
+      child: SizedBox(
+        width: size.width,
+        height: size.height,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 5,
+                child: Center(child: image),
+              ),
+            ),
+            SafeArea(
+              child: Align(
+                alignment: Alignment.topRight,
+                child: IconButton.filledTonal(
+                  tooltip: 'Fechar',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ),
+            ),
+            SafeArea(
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Material(
+                    color: Colors.black.withValues(alpha: 0.68),
+                    borderRadius: BorderRadius.circular(16),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextButton.icon(
+                            onPressed: () async {
+                              try {
+                                await _saveImageFile(
+                                  sourcePath: sourcePath,
+                                  base64Data: base64Data,
+                                  mime: mime,
+                                );
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Imagem salva')),
+                                );
+                              } catch (error) {
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Não consegui salvar a imagem: $error',
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.download_outlined),
+                            label: const Text('Salvar'),
+                          ),
+                          TextButton.icon(
+                            onPressed: () => _shareImageFile(
+                              context,
+                              sourcePath: sourcePath,
+                              base64Data: base64Data,
+                              mime: mime,
+                            ),
+                            icon: const Icon(Icons.share_outlined),
+                            label: const Text('Compartilhar'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class MessageContentView extends StatelessWidget {
   final String content;
   final bool isUser;
@@ -233,56 +380,92 @@ class MessageContentView extends StatelessWidget {
               final memoryBytes = img.base64.isEmpty
                   ? null
                   : base64Decode(img.base64);
+              final imageWidget = fileExists
+                  ? Image.file(
+                      File(filePath!),
+                      fit: BoxFit.contain,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, __, ___) => Text(
+                        '[imagem indisponível]',
+                        style: TextStyle(color: GamaColors.textMuted),
+                      ),
+                    )
+                  : Image.memory(
+                      memoryBytes!,
+                      fit: BoxFit.contain,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, __, ___) => Text(
+                        '[imagem indisponível]',
+                        style: TextStyle(color: GamaColors.textMuted),
+                      ),
+                    );
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(14),
-                      child: fileExists
-                          ? Image.file(
-                              File(filePath!),
-                              fit: BoxFit.cover,
-                              gaplessPlayback: true,
-                              errorBuilder: (_, __, ___) => Text(
-                                '[imagem indisponível]',
-                                style: TextStyle(color: GamaColors.textMuted),
-                              ),
-                            )
-                          : Image.memory(
-                              memoryBytes!,
-                              fit: BoxFit.cover,
-                              gaplessPlayback: true,
-                              errorBuilder: (_, __, ___) => Text(
-                                '[imagem indisponível]',
-                                style: TextStyle(color: GamaColors.textMuted),
-                              ),
-                            ),
+                    GestureDetector(
+                      onTap: () => showDialog<void>(
+                        context: context,
+                        barrierColor: Colors.black87,
+                        builder: (_) => _FullscreenImageDialog(
+                          image: fileExists
+                              ? Image.file(File(filePath!), fit: BoxFit.contain)
+                              : Image.memory(memoryBytes!, fit: BoxFit.contain),
+                          sourcePath: fileExists ? filePath : null,
+                          base64Data: img.base64,
+                          mime: img.mime,
+                        ),
+                      ),
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 480),
+                            child: imageWidget,
+                          ),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Align(
                       alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        style: TextButton.styleFrom(
-                          foregroundColor: GamaColors.accent,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        onPressed: () async {
-                          try {
-                            final path = fileExists
-                                ? filePath!
-                                : await DownloadService.instance
-                                      .saveBase64Image(
-                                        img.base64,
-                                        mime: img.mime,
-                                      );
-                            await DownloadService.instance.openPath(path);
-                          } catch (_) {}
-                        },
-                        icon: const Icon(Icons.download_rounded, size: 18),
-                        label: const Text('Abrir / baixar imagem'),
+                      child: Wrap(
+                        spacing: 4,
+                        children: [
+                          TextButton.icon(
+                            style: TextButton.styleFrom(
+                              foregroundColor: GamaColors.accent,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            onPressed: () async {
+                              try {
+                                final path = await _saveImageFile(
+                                  sourcePath: fileExists ? filePath : null,
+                                  base64Data: img.base64,
+                                  mime: img.mime,
+                                );
+                                await DownloadService.instance.openPath(path);
+                              } catch (_) {}
+                            },
+                            icon: const Icon(Icons.download_rounded, size: 18),
+                            label: const Text('Salvar imagem'),
+                          ),
+                          TextButton.icon(
+                            onPressed: () => _shareImageFile(
+                              context,
+                              sourcePath: fileExists ? filePath : null,
+                              base64Data: img.base64,
+                              mime: img.mime,
+                            ),
+                            icon: const Icon(Icons.share_outlined, size: 17),
+                            label: const Text('Compartilhar'),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -420,7 +603,12 @@ class _MarkdownMessage extends StatelessWidget {
                     );
                   }
                 },
-                builders: {'table': _HScrollTableBuilder(isUser: isUser)},
+                builders: {
+                  'table': _HScrollTableBuilder(
+                    isUser: isUser,
+                    onTapLink: onTapLink,
+                  ),
+                },
                 styleSheet: _markdownStyleSheet(isUser, textStyle),
               ),
             ),
@@ -590,7 +778,7 @@ List<_CodePart> _splitCodeBlocks(String text) {
   return parts;
 }
 
-class _CopyableCodeBlock extends StatelessWidget {
+class _CopyableCodeBlock extends StatefulWidget {
   final String code;
   final String language;
   final bool isUser;
@@ -603,30 +791,144 @@ class _CopyableCodeBlock extends StatelessWidget {
     required this.textStyle,
   });
 
-  Future<void> _copy(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: code));
-    await HapticFeedback.lightImpact();
-    if (!context.mounted) return;
+  @override
+  State<_CopyableCodeBlock> createState() => _CopyableCodeBlockState();
+}
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Código copiado'),
-        duration: Duration(milliseconds: 1200),
-      ),
+class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
+  bool _copied = false;
+  bool _saved = false;
+  bool _wrapLines = true;
+  bool _expanded = false;
+
+  bool get _isLong =>
+      widget.code.length > 2800 || '\n'.allMatches(widget.code).length > 36;
+
+  String get _extension {
+    switch (_normalizeCodeLanguage(widget.language)) {
+      case 'dart':
+        return 'dart';
+      case 'python':
+        return 'py';
+      case 'javascript':
+        return 'js';
+      case 'typescript':
+        return 'ts';
+      case 'json':
+        return 'json';
+      case 'yaml':
+        return 'yaml';
+      case 'html':
+        return 'html';
+      case 'css':
+        return 'css';
+      case 'sql':
+        return 'sql';
+      case 'bash':
+        return 'sh';
+      case 'kotlin':
+        return 'kt';
+      case 'java':
+        return 'java';
+      case 'c':
+        return 'c';
+      case 'cpp':
+        return 'cpp';
+      case 'rust':
+        return 'rs';
+      case 'go':
+        return 'go';
+      case 'swift':
+        return 'swift';
+      default:
+        return 'txt';
+    }
+  }
+
+  Future<void> _copy(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: widget.code));
+    await HapticFeedback.lightImpact();
+    if (!mounted) return;
+    setState(() => _copied = true);
+    await Future<void>.delayed(const Duration(milliseconds: 1400));
+    if (mounted) setState(() => _copied = false);
+  }
+
+  Future<void> _save() async {
+    try {
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      await DownloadService.instance.saveText(
+        widget.code,
+        filename: 'gama_codigo_$stamp.$_extension',
+      );
+      if (!mounted) return;
+      setState(() => _saved = true);
+      await Future<void>.delayed(const Duration(milliseconds: 1400));
+      if (mounted) setState(() => _saved = false);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não consegui salvar o código: $error')),
+      );
+    }
+  }
+
+  TextSpan _spanForNode(Node node, Map<String, TextStyle> theme) {
+    return TextSpan(
+      text: node.value,
+      style: node.className == null ? null : theme[node.className!],
+      children: node.children
+          ?.map((child) => _spanForNode(child, theme))
+          .toList(),
     );
+  }
+
+  TextSpan _highlightedText(Map<String, TextStyle> theme) {
+    final base = TextStyle(
+      fontFamily: 'monospace',
+      fontSize: 13,
+      height: 1.55,
+      letterSpacing: 0,
+      color: theme['root']?.color ?? widget.textStyle.color,
+    );
+    try {
+      final result = highlight.parse(
+        widget.code,
+        language: _normalizeCodeLanguage(widget.language),
+      );
+      return TextSpan(
+        style: base,
+        children: (result.nodes ?? [Node(value: widget.code)])
+            .map((node) => _spanForNode(node, theme))
+            .toList(),
+      );
+    } catch (_) {
+      return TextSpan(text: widget.code, style: base);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final background = isUser
-        ? Colors.black.withValues(alpha: 0.22)
-        : const Color(0xFF0E0E10);
-    final border = isUser
+    final isDark =
+        widget.isUser || Theme.of(context).brightness == Brightness.dark;
+    final theme = isDark ? monokaiTheme : githubTheme;
+    final background = isDark
+        ? const Color(0xFF272822)
+        : const Color(0xFFF8F8F8);
+    final border = widget.isUser
         ? Colors.white.withValues(alpha: 0.12)
         : GamaColors.border;
-    // O bloco de código mantém fundo escuro em qualquer tema: usa texto claro.
-    final foreground = isUser ? Colors.white : const Color(0xFFF4F4F5);
-    final muted = isUser ? Colors.white70 : const Color(0xFFA1A1AA);
+    final muted = isDark ? const Color(0xFFB8B8B2) : const Color(0xFF666666);
+    final highlighted = _highlightedText(theme);
+    final content = SelectionArea(
+      child: RichText(
+        text: highlighted,
+        maxLines: _isLong && !_expanded ? 24 : null,
+        overflow: _isLong && !_expanded ? TextOverflow.fade : TextOverflow.clip,
+        softWrap: _wrapLines,
+        textWidthBasis: TextWidthBasis.parent,
+      ),
+    );
 
     return Container(
       width: double.infinity,
@@ -643,7 +945,9 @@ class _CopyableCodeBlock extends StatelessWidget {
             height: 38,
             padding: const EdgeInsets.only(left: 12, right: 6),
             decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: isUser ? 0.10 : 0.18),
+              color: Colors.black.withValues(
+                alpha: widget.isUser ? 0.10 : 0.18,
+              ),
               border: Border(bottom: BorderSide(color: border)),
             ),
             child: Row(
@@ -652,7 +956,7 @@ class _CopyableCodeBlock extends StatelessWidget {
                 const SizedBox(width: 7),
                 Expanded(
                   child: Text(
-                    language.isEmpty ? 'Código' : language,
+                    widget.language.isEmpty ? 'Código' : widget.language,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -662,60 +966,102 @@ class _CopyableCodeBlock extends StatelessWidget {
                     ),
                   ),
                 ),
-                TextButton.icon(
+                IconButton(
+                  tooltip: _wrapLines
+                      ? 'Desativar quebra de linha'
+                      : 'Ativar quebra de linha',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => setState(() => _wrapLines = !_wrapLines),
+                  icon: Icon(
+                    _wrapLines ? Icons.wrap_text_rounded : Icons.notes_rounded,
+                    size: 17,
+                  ),
+                  color: muted,
+                ),
+                IconButton(
+                  tooltip: 'Baixar como arquivo',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _save,
+                  icon: Icon(
+                    _saved ? Icons.check_rounded : Icons.download_outlined,
+                    size: 18,
+                  ),
+                  color: _saved ? Colors.green : muted,
+                ),
+                IconButton(
+                  tooltip: _copied ? 'Código copiado' : 'Copiar código',
+                  visualDensity: VisualDensity.compact,
                   onPressed: () => _copy(context),
-                  style: TextButton.styleFrom(
-                    foregroundColor: foreground,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(0, 32),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  icon: Icon(
+                    _copied ? Icons.check_rounded : Icons.copy_rounded,
+                    size: 17,
                   ),
-                  icon: const Icon(Icons.copy_rounded, size: 15),
-                  label: const Text(
-                    'Copiar',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                  ),
+                  color: _copied ? Colors.green : muted,
                 ),
               ],
             ),
           ),
-          // Scroll vertical + horizontal; SelectionArea permite
-          // selecionar várias linhas (SelectableText sozinho no
-          // scroll horizontal só pegava 1 linha em alguns casos).
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 420),
             child: Scrollbar(
               thumbVisibility: true,
-              child: SelectionArea(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: SelectableText(
-                      code,
-                      style: textStyle.copyWith(
-                        color: foreground,
-                        fontSize: 13,
-                        height: 1.55,
-                        fontFamily: 'monospace',
-                        letterSpacing: 0,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                child: _wrapLines
+                    ? content
+                    : SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: content,
                       ),
-                    ),
-                  ),
-                ),
               ),
             ),
           ),
+          if (_isLong && !_expanded)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => setState(() => _expanded = true),
+                icon: const Icon(Icons.expand_more_rounded, size: 18),
+                label: const Text('Mostrar código completo'),
+              ),
+            )
+          else if (_isLong)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => setState(() => _expanded = false),
+                icon: const Icon(Icons.expand_less_rounded, size: 18),
+                label: const Text('Recolher código'),
+              ),
+            ),
         ],
       ),
     );
   }
 }
 
+String _normalizeCodeLanguage(String language) {
+  final normalized = language.toLowerCase().trim().split(RegExp(r'\s+')).first;
+  return switch (normalized) {
+    'js' || 'jsx' || 'mjs' || 'cjs' => 'javascript',
+    'ts' || 'tsx' => 'typescript',
+    'py' || 'python3' => 'python',
+    'yml' => 'yaml',
+    'sh' || 'shell' || 'zsh' => 'bash',
+    'kt' || 'kts' => 'kotlin',
+    'c#' || 'cs' => 'csharp',
+    'c++' || 'cc' || 'hpp' => 'cpp',
+    'md' || 'markdown' => 'markdown',
+    '' => 'plaintext',
+    _ => normalized,
+  };
+}
+
 class _HScrollTableBuilder extends MarkdownElementBuilder {
   final bool isUser;
+  final void Function(String? href)? onTapLink;
 
-  _HScrollTableBuilder({required this.isUser});
+  _HScrollTableBuilder({required this.isUser, required this.onTapLink});
 
   @override
   Widget? visitElementAfterWithContext(
@@ -738,15 +1084,44 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
         for (final cell in tr.children ?? <md.Node>[]) {
           if (cell is! md.Element) continue;
           cells.add(
-            Padding(
+            Container(
+              color: isHead
+                  ? (isUser
+                        ? Colors.white.withValues(alpha: 0.16)
+                        : GamaColors.surfaceElevated)
+                  : null,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              child: Text(
-                cell.textContent,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 13,
-                  height: 1.4,
-                  fontWeight: isHead ? FontWeight.w700 : FontWeight.w400,
+              child: MarkdownBody(
+                data: _inlineMarkdown(cell),
+                selectable: true,
+                onTapLink: (text, href, title) {
+                  if (onTapLink != null) {
+                    onTapLink!(href);
+                  } else if (href != null) {
+                    launchUrl(
+                      Uri.parse(href),
+                      mode: LaunchMode.externalApplication,
+                    );
+                  }
+                },
+                styleSheet: MarkdownStyleSheet(
+                  p: TextStyle(
+                    color: color,
+                    fontSize: 13,
+                    height: 1.4,
+                    fontWeight: isHead ? FontWeight.w700 : FontWeight.w400,
+                  ),
+                  a: TextStyle(
+                    color: isUser ? Colors.white : GamaColors.accent,
+                    decoration: TextDecoration.underline,
+                  ),
+                  code: TextStyle(
+                    color: color,
+                    fontFamily: 'monospace',
+                    backgroundColor: isUser
+                        ? Colors.black.withValues(alpha: 0.18)
+                        : GamaColors.surfaceCard,
+                  ),
                 ),
               ),
             ),
@@ -774,6 +1149,36 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
   }
 }
 
+String _inlineMarkdown(md.Node node) {
+  if (node is md.Text) return node.text;
+  if (node is! md.Element) return '';
+  final inner = (node.children ?? const <md.Node>[])
+      .map(_inlineMarkdown)
+      .join();
+  switch (node.tag) {
+    case 'strong':
+    case 'b':
+      return '**$inner**';
+    case 'em':
+    case 'i':
+      return '*$inner*';
+    case 'del':
+      return '~~$inner~~';
+    case 'code':
+      return '`${inner.replaceAll('`', r'\`')}`';
+    case 'a':
+      final href = node.attributes['href'];
+      return href == null ? inner : '[$inner]($href)';
+    case 'img':
+      final src = node.attributes['src'];
+      return src == null ? inner : '![$inner]($src)';
+    case 'br':
+      return '  \n';
+    default:
+      return inner;
+  }
+}
+
 /// Card compacto tipo “chip de arquivo” (estilo moderno).
 class _AttachmentChip extends StatelessWidget {
   final AttachmentPreview preview;
@@ -785,53 +1190,106 @@ class _AttachmentChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final label = preview.kindLabel.toUpperCase();
     final size = _fmtBytes(preview.bytes);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: isUser
-            ? Colors.white.withValues(alpha: 0.10)
-            : GamaColors.surfaceCard,
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isUser
-              ? Colors.white.withValues(alpha: 0.12)
-              : GamaColors.border,
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            _iconForKind(preview.kindLabel),
-            color: isUser ? Colors.white : GamaColors.accent,
-            size: 20,
+        onTap: () => showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            backgroundColor: GamaColors.surfaceElevated,
+            title: Text(preview.name),
+            content: SizedBox(
+              width: 560,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      size.isEmpty ? label : '$label • $size',
+                      style: TextStyle(color: GamaColors.textMuted),
+                    ),
+                    const SizedBox(height: 12),
+                    SelectableText(
+                      preview.body.isEmpty
+                          ? 'Prévia do anexo indisponível. O arquivo continua anexado à mensagem.'
+                          : preview.body,
+                      style: TextStyle(
+                        color: GamaColors.textPrimary,
+                        fontFamily:
+                            preview.kindLabel.toLowerCase().contains('código')
+                            ? 'monospace'
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Fechar'),
+              ),
+            ],
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  preview.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: isUser ? Colors.white : GamaColors.textPrimary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  size.isEmpty ? label : '$label • $size',
-                  style: TextStyle(
-                    color: isUser ? Colors.white70 : GamaColors.textMuted,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
+        ),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: isUser
+                ? Colors.white.withValues(alpha: 0.10)
+                : GamaColors.surfaceCard,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isUser
+                  ? Colors.white.withValues(alpha: 0.12)
+                  : GamaColors.border,
             ),
           ),
-        ],
+          child: Row(
+            children: [
+              Icon(
+                _iconForKind(preview.kindLabel),
+                color: isUser ? Colors.white : GamaColors.accent,
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      preview.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: isUser ? Colors.white : GamaColors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      size.isEmpty ? label : '$label • $size',
+                      style: TextStyle(
+                        color: isUser ? Colors.white70 : GamaColors.textMuted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.open_in_full_rounded,
+                color: isUser ? Colors.white70 : GamaColors.textMuted,
+                size: 16,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
