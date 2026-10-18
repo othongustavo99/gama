@@ -7,12 +7,14 @@ class ChatStatusIndicator extends StatelessWidget {
   final String label;
   final bool isError;
   final VoidCallback? onRetry;
+  final VoidCallback? onContinue;
 
   const ChatStatusIndicator({
     super.key,
     required this.label,
     this.isError = false,
     this.onRetry,
+    this.onContinue,
   });
 
   @override
@@ -58,6 +60,20 @@ class ChatStatusIndicator extends StatelessWidget {
                 ),
                 minimumSize: const Size(48, 48),
               ),
+            ),
+          ],
+          if (onContinue != null) ...[
+            const SizedBox(width: 4),
+            TextButton(
+              onPressed: onContinue,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                minimumSize: const Size(48, 48),
+              ),
+              child: const Text('Continuar'),
             ),
           ],
         ],

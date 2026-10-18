@@ -10,6 +10,7 @@ import '../utils/message_sanitize.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
 import 'plugin_settings_service.dart';
+import 'context_manager.dart';
 
 class ChatStreamEvent {
   final String? token;
@@ -22,6 +23,7 @@ class ChatStreamEvent {
   final String? imageBase64;
   final String? imageMime;
   final Map<String, dynamic>? artifact;
+  final bool done;
 
   const ChatStreamEvent._({
     this.token,
@@ -32,9 +34,11 @@ class ChatStreamEvent {
     this.imageBase64,
     this.imageMime,
     this.artifact,
+    this.done = false,
   });
 
   factory ChatStreamEvent.token(String t) => ChatStreamEvent._(token: t);
+  factory ChatStreamEvent.completed() => const ChatStreamEvent._(done: true);
 
   factory ChatStreamEvent.memorySaved(String fact) =>
       ChatStreamEvent._(memorySaved: fact);
@@ -69,6 +73,10 @@ class ChatApiException implements Exception {
 
 ChatApiException _friendlyDioException(DioException error) {
   final status = error.response?.statusCode;
+  final responseData = error.response?.data;
+  final serverDetail = responseData is Map
+      ? (responseData['detail'] ?? responseData['error'])?.toString().trim()
+      : responseData?.toString().trim();
   if (status == 401 || status == 403) {
     if (AppConstants.apiKey.isEmpty) {
       return const ChatApiException(
@@ -88,6 +96,12 @@ ChatApiException _friendlyDioException(DioException error) {
       'O servidor está ocupado ou atingiu o limite de requisições. Aguarde um pouco e tente novamente.',
     );
   }
+  if (serverDetail != null && serverDetail.isNotEmpty) {
+    return ChatApiException(
+      serverDetail,
+      retryable: status == null || status >= 500,
+    );
+  }
   if (status != null && status >= 500) {
     return const ChatApiException(
       'O servidor está temporariamente indisponível. Tente novamente em instantes.',
@@ -103,13 +117,49 @@ ChatApiException _friendlyDioException(DioException error) {
   }
   if (status == 413) {
     return const ChatApiException(
-      'O conteúdo enviado é grande demais. Remova alguns anexos e tente novamente.',
+      'A conversa ou os anexos excederam o limite do servidor. Tente novamente com um histórico menor ou menos anexos.',
       retryable: false,
     );
   }
   return const ChatApiException(
     'Não foi possível concluir a solicitação. Tente novamente.',
   );
+}
+
+Future<ChatApiException> _friendlyDioExceptionAsync(DioException error) async {
+  final data = error.response?.data;
+  if (data is ResponseBody) {
+    try {
+      final body = await utf8.decoder.bind(data.stream).join();
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(body);
+      } catch (_) {
+        decoded = body;
+      }
+      final response = error.response;
+      if (response != null) {
+        return _friendlyDioException(
+          DioException(
+            requestOptions: error.requestOptions,
+            response: Response<dynamic>(
+              requestOptions: error.requestOptions,
+              data: decoded,
+              statusCode: response.statusCode,
+              statusMessage: response.statusMessage,
+              headers: response.headers,
+              isRedirect: response.isRedirect,
+              redirects: response.redirects,
+              extra: response.extra,
+            ),
+            type: error.type,
+            message: error.message,
+          ),
+        );
+      }
+    } catch (_) {}
+  }
+  return _friendlyDioException(error);
 }
 
 class OllamaService {
@@ -230,8 +280,11 @@ class OllamaService {
 
     try {
       // Sanitiza histórico: tira base64 de imagens e dumps grandes de ZIP
+      final recentMessages = ContextManager().buildContext(messages);
       final requestMessages = MessageSanitize.historyForApi(
-        messages.map((m) => {'role': m.role, 'content': m.content}).toList(),
+        recentMessages
+            .map((m) => {'role': m.role, 'content': m.content})
+            .toList(),
       );
 
       // Em modo fala / conversar: reforça no pedido para a resposta ser
@@ -301,16 +354,22 @@ class OllamaService {
         for (final line in parts) {
           final trimmed = line.trim();
           if (trimmed.isEmpty) continue;
-          yield* _parseLine(trimmed);
+          await for (final event in _parseLine(trimmed)) {
+            yield event;
+            if (event.done) return;
+          }
         }
       }
 
       final last = buffer.trim();
       if (last.isNotEmpty) {
-        yield* _parseLine(last);
+        await for (final event in _parseLine(last)) {
+          yield event;
+          if (event.done) return;
+        }
       }
     } on DioException catch (e) {
-      throw _friendlyDioException(e);
+      throw await _friendlyDioExceptionAsync(e);
     } on ChatApiException {
       rethrow;
     } catch (_) {
@@ -332,39 +391,51 @@ class OllamaService {
     }
 
     if (json['error'] != null) {
-      final error = json['error'].toString().toLowerCase();
-      final detail = json['detail']?.toString().toLowerCase() ?? '';
-      if (error.contains('401') ||
-          error.contains('403') ||
-          detail.contains('api key')) {
+      final error = json['error'].toString().trim();
+      final lowerError = error.toLowerCase();
+      final detail = json['detail']?.toString().trim() ?? '';
+      final lowerDetail = detail.toLowerCase();
+      if (lowerError.contains('401') ||
+          lowerError.contains('403') ||
+          lowerDetail.contains('api key')) {
         throw _friendlyDioException(
           DioException(
             requestOptions: RequestOptions(path: '/chat'),
             response: Response<dynamic>(
               requestOptions: RequestOptions(path: '/chat'),
-              statusCode: error.contains('403') ? 403 : 401,
+              statusCode: lowerError.contains('403') ? 403 : 401,
               data: json,
             ),
             type: DioExceptionType.badResponse,
           ),
         );
       }
-      if (error.contains('429') || error.contains('rate limit')) {
+      if (lowerError.contains('429') || lowerError.contains('rate limit')) {
         throw const ChatApiException(
           'O servidor está ocupado ou atingiu o limite de requisições. Aguarde um pouco e tente novamente.',
         );
       }
-      if (error.contains('500') ||
-          error.contains('502') ||
-          error.contains('503') ||
-          error.contains('504')) {
-        throw const ChatApiException(
-          'O servidor está temporariamente indisponível. Tente novamente em instantes.',
+      if (error.isNotEmpty) {
+        throw ChatApiException(
+          error,
+          retryable: !lowerError.contains('limite'),
         );
       }
-      throw const ChatApiException(
-        'A Gama não conseguiu concluir a resposta. Tente novamente.',
+      throw ChatApiException(
+        detail.isNotEmpty
+            ? detail
+            : 'A Gama não conseguiu concluir a resposta. Tente novamente.',
       );
+    }
+
+    if (json['done'] == true) {
+      final finalMessage = json['message'];
+      if (finalMessage is Map) {
+        final finalContent = finalMessage['content']?.toString() ?? '';
+        if (finalContent.isNotEmpty) yield ChatStreamEvent.token(finalContent);
+      }
+      yield ChatStreamEvent.completed();
+      return;
     }
 
     final meta = json['gama_meta'];

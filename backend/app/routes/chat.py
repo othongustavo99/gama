@@ -1,7 +1,9 @@
+import asyncio
 import json
 import logging
 import re
 from urllib.parse import quote
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -21,6 +23,7 @@ from ..web_search import should_search, search_web, web_tools_enabled_for_turn
 from ..core.memory import get_store, extract_facts_with_llm, try_forget
 from ..core.agent import ToolsUnsupported, run_agent
 from ..core.context import schedule_summary_refresh
+from ..core.conversations import get_conversation_store
 from ..core.url_fetch import extract_urls
 from ..llm import LLMError
 from ..core.image_analyzer import analyze_images
@@ -42,6 +45,91 @@ from ..core.code_analyzer.index_store import load_meta
 logger = logging.getLogger(__name__)
 router = APIRouter()
 gama = GamaCore()
+_background_memory_tasks: set[asyncio.Task] = set()
+
+
+async def _extract_memory_after_turn(
+    *, user_id: str, user_text: str, assistant_text: str, model: str
+) -> None:
+    try:
+        if not user_text.strip():
+            return
+        store = get_store(user_id)
+        existing = [f.get("text", "") for f in store.list_facts()]
+        new_facts = await extract_facts_with_llm(
+            user_text=user_text,
+            assistant_text=assistant_text,
+            model=model,
+            llm_client=llm,
+            existing_facts=existing,
+        )
+        store.add_facts(new_facts, source="auto")
+    except Exception as mem_err:
+        logger.warning("auto memory: %s", mem_err)
+
+
+def _schedule_memory_after_turn(user_id: str, user_text: str, assistant_text: str, model: str) -> None:
+    task = asyncio.create_task(
+        _extract_memory_after_turn(
+            user_id=user_id,
+            user_text=user_text,
+            assistant_text=assistant_text,
+            model=model,
+        )
+    )
+    _background_memory_tasks.add(task)
+    task.add_done_callback(_background_memory_tasks.discard)
+
+
+def _restore_older_conversation_context(
+    user_id: str, conversation_id: Optional[str], request_messages: list[dict]
+) -> list[dict]:
+    """Recombina a janela recente do cliente com o histórico remoto já salvo."""
+    if not conversation_id:
+        return request_messages
+    try:
+        stored = get_conversation_store(user_id).get(conversation_id) or {}
+        previous = [
+            {"role": str(m.get("role") or "user"), "content": str(m.get("content") or "")}
+            for m in (stored.get("messages") or [])
+            if isinstance(m, dict) and str(m.get("content") or "").strip()
+        ]
+        leading_system = []
+        recent = list(request_messages)
+        while recent and recent[0].get("role") == "system":
+            leading_system.append(recent.pop(0))
+        if not previous or not recent:
+            return request_messages
+
+        # O texto de uma mensagem com anexos pode ter sido persistido em formato
+        # de exibição, enquanto o pedido usa o corpo preparado para o modelo.
+        # Nesse caso, a mensagem atual do servidor é substituída pela do pedido.
+        if (
+            recent[-1].get("role") == "user"
+            and previous[-1].get("role") == "user"
+            and previous[-1].get("content") != recent[-1].get("content")
+        ):
+            previous = previous[:-1]
+            if not previous:
+                return request_messages
+
+        overlap = 0
+        for size in range(min(len(previous), len(recent)), 0, -1):
+            tail = previous[-size:]
+            head = recent[:size]
+            if all(
+                old.get("role") == new.get("role")
+                and old.get("content") == new.get("content")
+                for old, new in zip(tail, head)
+            ):
+                overlap = size
+                break
+        if overlap == 0:
+            return request_messages
+        return [*leading_system, *previous[:-overlap], *recent]
+    except Exception as exc:
+        logger.warning("conversation context restore failed: %s", type(exc).__name__)
+        return request_messages
 
 _PROJECT_ID_RE = re.compile(r"\[project_id:([A-Za-z0-9_-]{6,128})\]", re.IGNORECASE)
 _DEEP_PROJECT_INTENT = re.compile(
@@ -619,6 +707,11 @@ async def chat(
     messages = [
         {"role": m.role, "content": m.content} for m in request.messages
     ]
+    messages = _restore_older_conversation_context(
+        user_id,
+        getattr(request, "conversation_id", None),
+        messages,
+    )
     model = llm.resolve_model(request.model)
 
     last_user = ""
@@ -1248,7 +1341,6 @@ async def chat(
                             yield json.dumps({"gama_meta": {"memory_saved": ev["text"]}}, ensure_ascii=False) + "\n"
                         elif kind == "memory_forgotten":
                             yield json.dumps({"gama_meta": {"memory_forgotten": ev["items"]}}, ensure_ascii=False) + "\n"
-                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
                     agent_done = True
                 except ToolsUnsupported:
                     logger.warning("modelo %s sem tool calling; usando fluxo clássico", active_model)
@@ -1265,6 +1357,7 @@ async def chat(
                     model=active_model,
                     messages=gama_messages,
                 ):
+                    outgoing_chunk = chunk
                     try:
                         line = chunk.strip()
                         if line:
@@ -1272,12 +1365,20 @@ async def chat(
                             c = ((obj.get("message") or {}).get("content")) or ""
                             if c:
                                 assistant_acc.append(c)
+                            if obj.get("done") is True:
+                                # O evento terminal é emitido uma única vez,
+                                # depois da preparação de artefatos e do agendamento
+                                # das tarefas em background.
+                                if not c:
+                                    continue
+                                obj["done"] = False
+                                outgoing_chunk = json.dumps(obj, ensure_ascii=False) + "\n"
                     except Exception:
                         pass
                     # Para pedidos de download, não mostramos uma recusa ou uma
                     # resposta provisória antes de saber se o arquivo foi criado.
                     if not download_requested:
-                        yield chunk
+                        yield outgoing_chunk
 
 
             # ── Arquivos para download a partir do bloco [[GAMA_FILES]] ──
@@ -1491,40 +1592,14 @@ async def chat(
                         ensure_ascii=False,
                     ) + "\n"
 
-            if download_requested:
-                yield json.dumps(
-                    {"message": {"role": "assistant", "content": ""}, "done": True},
-                    ensure_ascii=False,
-                ) + "\n"
-
-            # Memória automática pós-turno
+            # A extração de fatos não deve atrasar o encerramento visível do chat.
             if memory_enabled:
-                try:
-                    u = user_id
-                    user_txt = last_user if isinstance(last_user, str) else ""
-                    if user_txt.strip():
-                        store = get_store(u)
-                        existing = [f.get("text", "") for f in store.list_facts()]
-                        new_facts = await extract_facts_with_llm(
-                            user_text=user_txt,
-                            assistant_text="".join(assistant_acc),
-                            model=model,
-                            llm_client=llm,
-                            existing_facts=existing,
-                        )
-                        saved = store.add_facts(new_facts, source="auto")
-                        if saved:
-                            yield json.dumps(
-                                {
-                                    "gama_meta": {
-                                        "memory_saved": saved[0]["text"],
-                                        "memory_auto_count": len(saved),
-                                    }
-                                },
-                                ensure_ascii=False,
-                            ) + "\n"
-                except Exception as mem_err:
-                    logger.warning("auto memory: %s", mem_err)
+                _schedule_memory_after_turn(
+                    user_id=user_id,
+                    user_text=last_user if isinstance(last_user, str) else "",
+                    assistant_text="".join(assistant_acc),
+                    model=model,
+                )
 
             # Resumo rolante da conversa (não bloqueia; só roda se o histórico for longo)
             try:
@@ -1537,6 +1612,11 @@ async def chat(
                 )
             except Exception as sum_err:
                 logger.warning("summary schedule: %s", sum_err)
+
+            yield json.dumps(
+                {"message": {"role": "assistant", "content": ""}, "done": True},
+                ensure_ascii=False,
+            ) + "\n"
 
         except Exception as e:
             logger.exception("chat stream: %s", e)

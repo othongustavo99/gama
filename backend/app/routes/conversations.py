@@ -43,6 +43,16 @@ class ConversationIn(BaseModel):
     messages: List[MessageIn] = Field(default_factory=list)
 
 
+class ConversationMetadataIn(BaseModel):
+    title: Optional[str] = None
+    isPinned: Optional[bool] = None
+    updatedAt: Optional[str] = None
+
+
+class DeleteMessagesIn(BaseModel):
+    ids: List[str] = Field(default_factory=list, max_length=500)
+
+
 @router.get("")
 async def list_conversations(
     full: bool = True,
@@ -133,6 +143,55 @@ async def upsert_conversation(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "conversation": item}
+
+
+@router.patch("/{conversation_id}")
+async def update_conversation_metadata(
+    conversation_id: str,
+    body: ConversationMetadataIn,
+    user_id: str = Depends(current_user_id),
+):
+    store = get_conversation_store(user_id)
+    existing = store.get(conversation_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Conversa não encontrada")
+    payload = body.model_dump(exclude_none=True)
+    existing.update(payload)
+    existing["id"] = conversation_id
+    store.upsert(existing)
+    return {"ok": True}
+
+
+@router.put("/{conversation_id}/messages/{message_id}")
+async def upsert_conversation_message(
+    conversation_id: str,
+    message_id: str,
+    body: MessageIn,
+    user_id: str = Depends(current_user_id),
+):
+    if body.id != message_id:
+        raise HTTPException(status_code=400, detail="id do path difere do body")
+    try:
+        item = get_conversation_store(user_id).upsert_message(
+            conversation_id,
+            {"updatedAt": body.timestamp},
+            body.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "conversation": item}
+
+
+@router.post("/{conversation_id}/messages/delete")
+async def delete_conversation_messages(
+    conversation_id: str,
+    body: DeleteMessagesIn,
+    user_id: str = Depends(current_user_id),
+):
+    item = get_conversation_store(user_id).delete_messages(conversation_id, body.ids)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Conversa não encontrada")
+    return {"ok": True}
 
 
 @router.delete("/{conversation_id}")

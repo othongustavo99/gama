@@ -3,7 +3,6 @@ import 'package:flutter/foundation.dart';
 
 import '../core/constants.dart';
 import 'auth_interceptor.dart';
-import '../models/conversation.dart';
 import '../models/message.dart';
 import 'conversation_service.dart';
 import 'identity_service.dart';
@@ -108,6 +107,77 @@ class ConversationSyncService {
     }
   }
 
+  /// Envia só a mensagem que mudou; evita reenviar o histórico em cada turno.
+  Future<void> pushMessage(Message message) async {
+    try {
+      final conv = ConversationService.instance.conversationById(
+        message.conversationId,
+      );
+      if (conv == null) return;
+      final res = await _client().put(
+        '/conversations/${message.conversationId}/messages/${message.id}',
+        data: _messagePayload(message),
+      );
+      if ((res.statusCode ?? 0) >= 400) {
+        debugPrint(
+          'push message ${message.id} failed: ${res.statusCode} ${res.data}',
+        );
+      }
+    } catch (e) {
+      debugPrint('push message ${message.id}: $e');
+    }
+  }
+
+  Future<void> pushConversationMetadata(String id) async {
+    final conv = ConversationService.instance.conversationById(id);
+    if (conv == null) return;
+    try {
+      final res = await _client().patch(
+        '/conversations/$id',
+        data: {
+          'title': conv.title,
+          'isPinned': conv.isPinned,
+          'updatedAt': conv.updatedAt.toUtc().toIso8601String(),
+        },
+      );
+      if ((res.statusCode ?? 0) >= 400) {
+        debugPrint(
+          'push conversation metadata $id failed: ${res.statusCode} ${res.data}',
+        );
+      }
+    } catch (e) {
+      debugPrint('push conversation metadata $id: $e');
+    }
+  }
+
+  Future<void> deleteMessages(String conversationId, List<String> ids) async {
+    if (ids.isEmpty) return;
+    try {
+      final res = await _client().post(
+        '/conversations/$conversationId/messages/delete',
+        data: {'ids': ids},
+      );
+      if ((res.statusCode ?? 0) >= 400) {
+        debugPrint(
+          'delete remote messages $conversationId failed: ${res.statusCode} ${res.data}',
+        );
+      }
+    } catch (e) {
+      debugPrint('delete remote messages $conversationId: $e');
+    }
+  }
+
+  Map<String, dynamic> _messagePayload(Message m) => {
+    'id': m.id,
+    'role': m.role,
+    'content': m.content,
+    'conversationId': m.conversationId,
+    'timestamp': m.timestamp.toUtc().toIso8601String(),
+    'attachmentMetadataJson': m.attachmentMetadataJson,
+    'variants': m.variants,
+    'selectedVariantIndex': m.selectedVariantIndex,
+  };
+
   Future<void> deleteRemote(String id) async {
     try {
       await _client().delete('/conversations/$id');
@@ -144,8 +214,18 @@ class ConversationSyncService {
 
       final remoteUpdated = _parseDate(r['updatedAt'] ?? r['updated_at']);
       final existing = local.conversationById(id);
+      final deletedIds = (r['deletedMessageIds'] as List<dynamic>? ?? const [])
+          .map((value) => value.toString())
+          .toSet();
 
       if (existing != null) {
+        final locallyDeleted = local
+            .getMessages(id)
+            .where((message) => deletedIds.contains(message.id))
+            .toList();
+        if (locallyDeleted.isNotEmpty) {
+          await local.deleteMessages(locallyDeleted, sync: false);
+        }
         // Local mais novo → não sobrescreve; será enviado no push
         if (existing.updatedAt.isAfter(remoteUpdated)) continue;
       }
@@ -163,7 +243,8 @@ class ConversationSyncService {
         updatedAt: remoteUpdated,
         messages: [
           for (final raw in messagesRaw)
-            if (raw is Map)
+            if (raw is Map &&
+                !deletedIds.contains((raw['id'] ?? '').toString()))
               Message(
                 id: (raw['id'] ?? '').toString(),
                 role: (raw['role'] ?? 'assistant').toString(),

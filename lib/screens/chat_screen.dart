@@ -80,6 +80,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, List<Map<String, dynamic>>> _sourcesByMessageId = {};
   final Map<String, int> _feedbackByMessageId = {};
   StreamSubscription<ChatStreamEvent>? _streamSubscription;
+  Future<void>? _assistantPersistence;
 
   /// Arquivos anexados (ainda não enviados)
   final List<ProcessedAttachment> _attachments = [];
@@ -310,7 +311,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _streamRevealTimer?.cancel();
     _streamRevealTimer = null;
     _streamRevealQueue.clear();
-    _streamingText.value = finalText;
+    if (mounted) _streamingText.value = finalText;
   }
 
   void _scrollToMessageTop(String messageId) {
@@ -1167,7 +1168,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // Editar um turno antigo ainda cria um novo ramo linear: removem-se os turnos
     // seguintes porque esta conversa ainda não modela ramificações completas.
     final removed = List<Message>.from(_messages.skip(index));
-    await _service.deleteMessages(removed, sync: false);
+    await _service.deleteMessages(removed);
     if (!mounted) return;
     setState(() {
       for (final item in removed) {
@@ -2036,6 +2037,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _followStream = true;
     _streamSearchQuery = '';
     _streamRawText = StringBuffer();
+    _assistantPersistence = null;
     _streamRevealQueue.clear();
     _streamingText.value = '';
 
@@ -2134,7 +2136,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
       _streamSubscription = stream.listen(
         (event) {
-          if (!mounted) return;
+          if (!mounted) {
+            final token = event.token;
+            if (token != null) {
+              if (_voiceResponsePending) {
+                _voiceResponseBuffer += token;
+              } else {
+                _streamRawText.write(token);
+              }
+            }
+            return;
+          }
 
           if (event.phase != null) {
             setState(() => _streamPhase = event.phase!);
@@ -2200,6 +2212,7 @@ class _ChatScreenState extends State<ChatScreen> {
           if (isFirstToken && mounted) setState(() {});
         },
         onDone: () async {
+          _streamSubscription = null;
           _streamRevealTimer?.cancel();
           _streamRevealTimer = null;
           final isVoiceReply = _voiceResponsePending;
@@ -2266,31 +2279,26 @@ class _ChatScreenState extends State<ChatScreen> {
             final responseText = isVoiceReply
                 ? _voiceResponseBuffer
                 : _messages.last.content;
+            final assistantToSave = _messages.last;
+            if (isVoiceReply) assistantToSave.content = responseText;
             try {
-              if (isVoiceReply) {
-                await _maybeSpeak(responseText, revealWhileSpeaking: true);
-              } else {
-                await _maybeSpeak(responseText);
-              }
-
-              // Persiste a resposta completa depois da reprodução. Para o
-              // fluxo normal, isso continua ocorrendo sem alteração visual.
-              if (isVoiceReply && mounted) {
-                setState(() {
-                  if (_messages.isNotEmpty &&
-                      _messages.last.isAssistant &&
-                      _messages.last.content.trim() != responseText.trim()) {
-                    _messages.last.content = responseText;
-                  }
-                });
-              }
-              if (isRegeneration) {
+              final pendingWrite = _assistantPersistence;
+              if (pendingWrite != null) await pendingWrite;
+              if (isRegeneration || assistantToSave.isInBox) {
                 await _service.updateMessageContent(
-                  _messages.last,
-                  _messages.last.content,
+                  assistantToSave,
+                  assistantToSave.content,
                 );
               } else {
-                await _service.addMessage(_messages.last);
+                await _service.addMessage(assistantToSave);
+              }
+              // A resposta já está no Hive antes de iniciar qualquer TTS.
+              if (mounted) {
+                if (isVoiceReply) {
+                  await _maybeSpeak(responseText, revealWhileSpeaking: true);
+                } else {
+                  await _maybeSpeak(responseText);
+                }
               }
               unawaited(
                 _ensureConversationTitle(
@@ -2314,13 +2322,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 });
               }
-              if (isRegeneration) {
-                await _service.updateMessageContent(
-                  _messages.last,
-                  _messages.last.content,
-                );
+              if (!assistantToSave.isInBox) {
+                await _service.addMessage(assistantToSave);
               } else {
-                await _service.addMessage(_messages.last);
+                await _service.updateMessageContent(
+                  assistantToSave,
+                  assistantToSave.content,
+                );
               }
               unawaited(
                 _ensureConversationTitle(
@@ -2334,7 +2342,7 @@ class _ChatScreenState extends State<ChatScreen> {
               _chatErrorMessage = null;
               _regeneratingAssistantMessage = null;
               _regeneratingUserMessage = null;
-              if (mounted) {
+              if (mounted && e is! ChatApiException) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Voz: $e'),
@@ -2345,7 +2353,9 @@ class _ChatScreenState extends State<ChatScreen> {
             } finally {
               _voiceResponsePending = false;
               _voiceResponseBuffer = '';
-              if (_voiceConversationMode) unawaited(_resumeVoiceConversation());
+              if (mounted && _voiceConversationMode) {
+                unawaited(_resumeVoiceConversation());
+              }
             }
           }
         },
@@ -2353,24 +2363,44 @@ class _ChatScreenState extends State<ChatScreen> {
           _streamRevealTimer?.cancel();
           _streamRevealTimer = null;
           _streamRevealQueue.clear();
-          if (!mounted) return;
           final friendly = e is ChatApiException
               ? e.message
               : 'A resposta foi interrompida. Verifique a conexão e tente novamente.';
           final failed = _messages.isNotEmpty && _messages.last.isAssistant
               ? _messages.last
               : null;
-          failed?.discardCurrentVariant();
-          setState(() {
-            _failedAssistantMessageId = failed?.id;
-            _chatErrorMessage = friendly;
-            _isLoading = false;
-            _streamPhase = '';
-            _voiceResponsePending = false;
-            _voiceResponseBuffer = '';
-            _speakNextReply = false;
-            _isSpeaking = false;
-          });
+          final partial =
+              _voiceResponsePending && _voiceResponseBuffer.isNotEmpty
+              ? _voiceResponseBuffer
+              : _streamRawText.toString();
+          if (failed != null && partial.trim().isNotEmpty) {
+            failed.content = partial;
+            try {
+              final pendingWrite = _assistantPersistence;
+              if (pendingWrite != null) await pendingWrite;
+              if (failed.isInBox) {
+                await _service.updateMessageContent(failed, partial);
+              } else {
+                await _service.addMessage(failed);
+              }
+            } catch (persistError) {
+              debugPrint(
+                'Não foi possível persistir resposta parcial: $persistError',
+              );
+            }
+          }
+          if (mounted) {
+            setState(() {
+              _failedAssistantMessageId = failed?.id;
+              _chatErrorMessage = friendly;
+              _isLoading = false;
+              _streamPhase = '';
+              _voiceResponsePending = false;
+              _voiceResponseBuffer = '';
+              _speakNextReply = false;
+              _isSpeaking = false;
+            });
+          }
           _regeneratingAssistantMessage = null;
           _regeneratingUserMessage = null;
         },
@@ -2489,7 +2519,25 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       _speech.stop();
     } catch (_) {}
-    _streamSubscription?.cancel();
+    final activeAssistant = _messages.isNotEmpty && _messages.last.isAssistant
+        ? _messages.last
+        : null;
+    if (_isLoading && activeAssistant != null) {
+      final partial = _voiceResponsePending && _voiceResponseBuffer.isNotEmpty
+          ? _voiceResponseBuffer
+          : _streamRawText.toString();
+      if (partial.trim().isNotEmpty) {
+        activeAssistant.content = partial;
+        _assistantPersistence = activeAssistant.isInBox
+            ? _service.updateMessageContent(
+                activeAssistant,
+                partial,
+                sync: false,
+              )
+            : _service.addMessage(activeAssistant, sync: false);
+        unawaited(_assistantPersistence!);
+      }
+    }
     _streamRevealTimer?.cancel();
     _streamRevealQueue.clear();
     _voiceAutoSendTimer?.cancel();
@@ -2918,6 +2966,16 @@ class _ChatScreenState extends State<ChatScreen> {
                                                       onRetry: _isLoading
                                                           ? null
                                                           : _retryLastFailedRequest,
+                                                      onContinue:
+                                                          !_isLoading &&
+                                                              msg.content
+                                                                  .trim()
+                                                                  .isNotEmpty &&
+                                                              _looksTruncated(
+                                                                msg.content,
+                                                              )
+                                                          ? _continueResponse
+                                                          : null,
                                                     ),
                                                   ] else if (msg
                                                           .content

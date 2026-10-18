@@ -219,7 +219,7 @@ class ConversationService extends ChangeNotifier {
     await conv.save();
     notifyListeners();
     // ignore: unawaited_futures
-    ConversationSyncService.instance.pushConversation(id);
+    ConversationSyncService.instance.pushConversationMetadata(id);
   }
 
   Future<void> togglePin(String id) async {
@@ -230,7 +230,7 @@ class ConversationService extends ChangeNotifier {
     await conv.save();
     notifyListeners();
     // ignore: unawaited_futures
-    ConversationSyncService.instance.pushConversation(id);
+    ConversationSyncService.instance.pushConversationMetadata(id);
   }
 
   Future<void> deleteConversation(String id) async {
@@ -283,13 +283,15 @@ class ConversationService extends ChangeNotifier {
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   }
 
-  Future<void> addMessage(Message message) async {
+  Future<void> addMessage(Message message, {bool sync = true}) async {
     message.ensureCurrentVariant();
     await _messagesBox.add(message);
     await touchConversation(message.conversationId);
     notifyListeners();
-    // ignore: unawaited_futures
-    ConversationSyncService.instance.pushConversation(message.conversationId);
+    if (sync) {
+      // ignore: unawaited_futures
+      ConversationSyncService.instance.pushMessage(message);
+    }
   }
 
   /// Remove um conjunto de mensagens e sincroniza a conversa uma única vez.
@@ -300,8 +302,12 @@ class ConversationService extends ChangeNotifier {
   }) async {
     if (messages.isEmpty) return;
     final conversationIds = <String>{};
+    final deletedIdsByConversation = <String, List<String>>{};
     for (final message in messages) {
       conversationIds.add(message.conversationId);
+      deletedIdsByConversation
+          .putIfAbsent(message.conversationId, () => <String>[])
+          .add(message.id);
       try {
         if (message.isInBox) {
           await message.delete();
@@ -313,8 +319,10 @@ class ConversationService extends ChangeNotifier {
     notifyListeners();
     if (sync) {
       for (final conversationId in conversationIds) {
-        // ignore: unawaited_futures
-        ConversationSyncService.instance.pushConversation(conversationId);
+        await ConversationSyncService.instance.deleteMessages(
+          conversationId,
+          deletedIdsByConversation[conversationId] ?? const <String>[],
+        );
       }
     }
   }
@@ -330,7 +338,7 @@ class ConversationService extends ChangeNotifier {
     notifyListeners();
     if (sync) {
       // ignore: unawaited_futures
-      ConversationSyncService.instance.pushConversation(message.conversationId);
+      ConversationSyncService.instance.pushMessage(message);
     }
   }
 }
