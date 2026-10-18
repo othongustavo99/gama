@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -372,7 +372,14 @@ class _MarkdownMessage extends StatelessWidget {
         decoration: TextDecoration.underline,
         decorationColor: isUser ? Colors.white70 : GamaColors.accent,
       ),
-      code: textStyle.copyWith(fontSize: 13, fontFamily: 'monospace'),
+      code: textStyle.copyWith(
+        fontSize: 13,
+        fontFamily: 'monospace',
+        color: isUser ? Colors.white : const Color(0xFFF4F4F5),
+        backgroundColor: isUser
+            ? Colors.black.withValues(alpha: 0.24)
+            : const Color(0xFF28282D),
+      ),
       codeblockDecoration: BoxDecoration(
         color: isUser
             ? Colors.black.withValues(alpha: 0.22)
@@ -554,8 +561,9 @@ class _CopyableCodeBlock extends StatelessWidget {
     final border = isUser
         ? Colors.white.withValues(alpha: 0.12)
         : GamaColors.border;
-    final foreground = isUser ? Colors.white : GamaColors.textPrimary;
-    final muted = isUser ? Colors.white70 : GamaColors.textMuted;
+    // O bloco de código mantém fundo escuro em qualquer tema: usa texto claro.
+    final foreground = isUser ? Colors.white : const Color(0xFFF4F4F5);
+    final muted = isUser ? Colors.white70 : const Color(0xFFA1A1AA);
 
     return Container(
       width: double.infinity,

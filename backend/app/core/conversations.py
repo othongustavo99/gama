@@ -140,17 +140,31 @@ class ConversationStore:
                     continue
                 if not content.strip():
                     continue
-                messages.append(
-                    {
-                        "id": mid,
-                        "role": role,
-                        "content": content,
-                        "conversationId": cid,
-                        "timestamp": m.get("timestamp")
-                        or m.get("createdAt")
-                        or _utc_now(),
-                    }
-                )
+                normalized_message = {
+                    "id": mid,
+                    "role": role,
+                    "content": content,
+                    "conversationId": cid,
+                    "timestamp": m.get("timestamp")
+                    or m.get("createdAt")
+                    or _utc_now(),
+                }
+                metadata = m.get("attachmentMetadataJson")
+                if isinstance(metadata, str) and len(metadata) <= 100_000:
+                    normalized_message["attachmentMetadataJson"] = metadata
+                raw_variants = m.get("variants")
+                if isinstance(raw_variants, list):
+                    # Um teto reduz crescimento ilimitado do histórico sincronizado.
+                    normalized_variants = [str(v)[:250_000] for v in raw_variants[-12:]]
+                    normalized_message["variants"] = normalized_variants
+                    try:
+                        selected = int(m.get("selectedVariantIndex", 0))
+                    except (TypeError, ValueError):
+                        selected = 0
+                    normalized_message["selectedVariantIndex"] = max(
+                        0, min(selected, max(0, len(normalized_variants) - 1))
+                    )
+                messages.append(normalized_message)
 
         item = {
             "id": cid,

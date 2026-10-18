@@ -22,13 +22,16 @@ class MessageAdapter extends TypeAdapter<Message> {
       content: fields[2] as String,
       conversationId: fields[4] as String,
       timestamp: fields[3] as DateTime?,
+      attachmentMetadataJson: fields[5] as String? ?? '',
+      variants: fields[6] == null ? null : List<String>.from(fields[6] as List),
+      selectedVariantIndex: fields[7] as int? ?? 0,
     );
   }
 
   @override
   void write(BinaryWriter writer, Message obj) {
     writer
-      ..writeByte(5)
+      ..writeByte(8)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -38,7 +41,13 @@ class MessageAdapter extends TypeAdapter<Message> {
       ..writeByte(3)
       ..write(obj.timestamp)
       ..writeByte(4)
-      ..write(obj.conversationId);
+      ..write(obj.conversationId)
+      ..writeByte(5)
+      ..write(obj.attachmentMetadataJson)
+      ..writeByte(6)
+      ..write(obj.variants)
+      ..writeByte(7)
+      ..write(obj.selectedVariantIndex);
   }
 
   @override

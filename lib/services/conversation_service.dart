@@ -235,6 +235,7 @@ class ConversationService extends ChangeNotifier {
   }
 
   Future<void> addMessage(Message message) async {
+    message.ensureCurrentVariant();
     await _messagesBox.add(message);
     await touchConversation(message.conversationId);
     notifyListeners();
@@ -266,12 +267,19 @@ class ConversationService extends ChangeNotifier {
     }
   }
 
-  Future<void> updateMessageContent(Message message, String newContent) async {
+  Future<void> updateMessageContent(
+    Message message,
+    String newContent, {
+    bool sync = true,
+  }) async {
     message.content = newContent;
+    message.ensureCurrentVariant();
     await message.save();
     notifyListeners();
-    // ignore: unawaited_futures
-    ConversationSyncService.instance.pushConversation(message.conversationId);
+    if (sync) {
+      // ignore: unawaited_futures
+      ConversationSyncService.instance.pushConversation(message.conversationId);
+    }
   }
 }
 

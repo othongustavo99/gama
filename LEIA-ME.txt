@@ -1,17 +1,80 @@
-CORREÇÃO HTTP 401 NO DOWNLOAD DE VÍDEOS — GAMA
+GAMA — CORREÇÕES RESTANTES DO CHAT
+==================================
 
-Esta versão corrige o caso em que o provedor termina a geração, mas o download falha com HTTP 401. O endpoint de conteúdo da OpenRouter exige o cabeçalho Authorization: Bearer quando o URL aponta para openrouter.ai. O script agora envia essa autenticação apenas para o host da OpenRouter; não encaminha a chave para hosts de armazenamento externos.
+Este pacote complementa o ZIP do chat_composer.dart que já foi aplicado.
+Não inclui nem sobrescreve chat_composer.dart.
 
-O pacote também preserva a integração do gerador no chat e o MIME video/mp4 já incluídos na correção anterior. Altera no máximo:
-- backend/app/routes/chat.py
-- backend/app/core/video_gen.py
-- backend/app/routes/artifacts.py
+COMO APLICAR
+------------
+1. Faça uma cópia do projeto ou confirme que o Git está limpo.
+2. Copie aplicar_restante_gama.py para a RAIZ do projeto (a pasta que contém
+   pubspec.yaml e backend/).
+3. Abra o terminal nessa pasta e execute:
 
-APLICAÇÃO
-1. Extraia o ZIP na raiz do repositório gama, onde existe a pasta backend.
-2. Abra o terminal nessa pasta e execute: python aplicar_correcao_video.py
-3. Confira: git diff --check
-4. Confira as alterações: git diff -- backend/app/routes/chat.py backend/app/core/video_gen.py backend/app/routes/artifacts.py
-5. Faça commit/push e aguarde o redeploy do Railway.
+   python aplicar_restante_gama.py
 
-O script cria backups antes de gravar e valida a sintaxe Python. Não altera Flutter, memória, voz, STT, drawer nem outras habilidades. A geração real ainda depende de OPENROUTER_API_KEY válida, VIDEO_GEN_ENABLED=true, modelo disponível e saldo do provedor. Não foi possível testar com as credenciais reais do Railway.
+O script valida os trechos esperados antes de gravar qualquer arquivo. Se algum
+ponto do código não corresponder ao esperado, ele para com um erro e não grava
+as alterações. Antes de gravar, cria backup_gama_chat_fixes_DATA_HORA/ com as
+versões originais de todos os arquivos que serão modificados.
+
+DEPOIS DE APLICAR
+-----------------
+Execute no projeto Flutter:
+
+   flutter pub get
+   flutter analyze
+   flutter test
+
+Arquivos Flutter alterados pelo script:
+- pubspec.yaml
+- lib/widgets/message_content.dart
+- lib/screens/chat_screen.dart
+- lib/models/message.dart
+- lib/models/message.g.dart
+- lib/services/conversation_service.dart
+- lib/services/conversation_sync_service.dart
+
+Arquivos do backend alterados pelo script:
+- backend/app/routes/conversations.py
+- backend/app/core/conversations.py
+
+O QUE ESTE PACOTE COBRE
+-----------------------
+- A sugestão de anexar arquivo abre o menu de anexos.
+- Código em blocos e código inline têm contraste legível no tema claro.
+- Erros de rede/resposta vazia ficam como estado de interface, não como resposta
+  persistida no histórico, e usam o indicador com ação de tentar novamente.
+- O status de geração fica dentro do balão e desaparece após o primeiro token.
+- Respostas regeneradas ficam como variantes (por exemplo, 2/3) na mesma mensagem.
+- Referências compactas de anexos (caminho local e IDs estáveis de projeto/vídeo)
+  são persistidas, permitindo regenerar quando a referência ainda está acessível.
+- Variantes e metadados opcionais são sincronizados para o Railway sem exigir que
+  o histórico legado já tenha esses campos.
+- O import e a dependência de flutter_markdown são migrados para
+  flutter_markdown_plus: ^1.0.11.
+
+IMPORTANTE SOBRE RAILWAY E HISTÓRICO ANTIGO
+------------------------------------------
+Depois de aplicar, revise o diff e faça commit/push dos arquivos backend para que
+Railway faça o deploy (se o projeto estiver configurado para deploy automático).
+A persistência de variantes e referências entre dispositivos depende dessa
+versão do backend.
+
+Mensagens antigas que já foram salvas sem metadados de anexo não podem recuperar
+magicamente caminhos ou IDs que não foram registrados. Nesses casos o app deve
+pedir que o arquivo seja anexado novamente. Novos envios guardarão essas referências.
+
+Este pacote é um aplicador de alterações sobre o código existente, não um APK.
+A análise Flutter e os testes precisam ser executados no seu ambiente do projeto;
+eles não foram executados neste ambiente.
+
+ESCOPO DO HISTÓRICO DE EDIÇÃO
+-----------------------------
+A navegação 2/3 é implementada para variantes da resposta regenerada e a edição
+preserva versões quando se trata do último turno da conversa. Ao editar uma
+mensagem de um turno antigo, a tela atual ainda remove os turnos posteriores,
+porque o modelo da conversa não tem ramificações independentes. Esse cenário
+exigiria implementar branches completos (não apenas variantes de uma mensagem);
+preferi não simular essa arquitetura com mudanças que poderiam misturar o
+contexto de conversas diferentes.

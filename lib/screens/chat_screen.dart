@@ -23,6 +23,7 @@ import '../services/ollama_service.dart';
 import 'library_screen.dart';
 import 'settings_screen.dart';
 import '../widgets/message_content.dart';
+import '../widgets/chat_status_indicator.dart';
 import '../widgets/chat_composer.dart';
 import '../services/settings_service.dart';
 import '../services/download_service.dart';
@@ -91,6 +92,10 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _ttsEarlyStarted = false;
   bool _isSpeaking = false;
   String? _failedAssistantMessageId;
+  String? _chatErrorMessage;
+  bool _firstTokenReceived = false;
+  Message? _regeneratingAssistantMessage;
+  Message? _regeneratingUserMessage;
   String? _retryRawText;
   List<ProcessedAttachment> _retryAttachments = <ProcessedAttachment>[];
 
@@ -650,6 +655,11 @@ class _ChatScreenState extends State<ChatScreen> {
     if (oldWidget.conversationId != widget.conversationId) {
       _streamSubscription?.cancel();
       _isLoading = false;
+      _chatErrorMessage = null;
+      _failedAssistantMessageId = null;
+      _firstTokenReceived = false;
+      _regeneratingAssistantMessage = null;
+      _regeneratingUserMessage = null;
       _attachments.clear();
       _micArmed = false;
       _speechConfirmed = '';
@@ -701,11 +711,127 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Map<String, dynamic>? _readAttachmentMetadata(Message message) {
+    final encoded = message.attachmentMetadataJson.trim();
+    if (encoded.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return null;
+  }
+
+  String _rawUserPrompt(Message message) {
+    final metadata = _readAttachmentMetadata(message);
+    final rawText = metadata?['rawText'];
+    if (rawText is String) return rawText;
+    final marker = message.content.indexOf('Anexos para análise:');
+    return marker < 0 ? message.content : message.content.substring(0, marker).trim();
+  }
+
+  String _encodeAttachmentMetadata(
+    String rawText,
+    List<ProcessedAttachment> attachments,
+  ) {
+    final saved = attachments.map((a) {
+      final hasStableReference = RegExp(
+        r'\[(?:project_id|video_artifact_id):',
+        caseSensitive: false,
+      ).hasMatch(a.contentForModel);
+      return <String, dynamic>{
+        'name': a.name,
+        'ext': a.ext,
+        'kind': a.kind.name,
+        'contentForModel': hasStableReference ? a.contentForModel : '',
+        'label': a.label,
+        'bytes': a.bytes,
+        'sourcePath': a.sourcePath,
+        'mimeType': a.mimeType,
+      };
+    }).toList();
+    return jsonEncode({'rawText': rawText, 'attachments': saved});
+  }
+
+  Future<List<ProcessedAttachment>> _restoreAttachmentsForMessage(
+    Message message,
+  ) async {
+    final metadata = _readAttachmentMetadata(message);
+    final rawAttachments = metadata?['attachments'];
+    if (rawAttachments is! List || rawAttachments.isEmpty) return <ProcessedAttachment>[];
+
+    final restored = <ProcessedAttachment>[];
+    for (final item in rawAttachments) {
+      if (item is! Map) continue;
+      final data = Map<String, dynamic>.from(item);
+      final name = (data['name'] ?? 'anexo').toString();
+      final ext = (data['ext'] ?? '').toString();
+      final path = (data['sourcePath'] ?? '').toString();
+      final label = (data['label'] ?? name).toString();
+      final bytes = int.tryParse((data['bytes'] ?? 0).toString()) ?? 0;
+      final mime = data['mimeType']?.toString();
+      final savedContent = (data['contentForModel'] ?? '').toString();
+      final kindName = (data['kind'] ?? 'other').toString();
+      final kind = AttachmentKind.values.firstWhere(
+        (value) => value.name == kindName,
+        orElse: () => AttachmentKind.other,
+      );
+      final hasStableReference = RegExp(
+        r'\[(?:project_id|video_artifact_id):',
+        caseSensitive: false,
+      ).hasMatch(savedContent);
+
+      // ZIP/PDF/vídeo já indexado: reutiliza o identificador remoto, sem fazer upload duplicado.
+      if (hasStableReference) {
+        restored.add(ProcessedAttachment(
+          name: name,
+          ext: ext,
+          kind: kind,
+          contentForModel: savedContent,
+          label: label,
+          bytes: bytes,
+          sourcePath: path.isEmpty ? null : path,
+          mimeType: mime,
+        ));
+        continue;
+      }
+
+      if (path.isNotEmpty && await File(path).exists()) {
+        restored.add(await _attachmentService.processFile(path));
+        continue;
+      }
+      throw StateError('O anexo "$name" não está disponível neste dispositivo. Anexe-o novamente para regenerar.');
+    }
+    return restored;
+  }
+
+  String get _chatStatusLabel {
+    switch (_streamPhase) {
+      case 'searching': return 'Buscando na web…';
+      case 'generating_image': return 'Criando imagem…';
+      case 'image_analyzing': return 'Analisando imagem…';
+      case 'project_analyzing': return 'Analisando projeto…';
+      case 'video_queued': return 'Preparando vídeo…';
+      case 'video_generating': return 'Gerando vídeo…';
+      case 'video_downloading': return 'Salvando vídeo…';
+      case 'video_analyzing': return 'Analisando quadros do vídeo…';
+      case 'video_editing': return 'Criando versão editada…';
+      case 'video_improving': return 'Aprimorando vídeo…';
+      case 'thinking': return 'Pensando…';
+      default: return 'Gama está respondendo…';
+    }
+  }
+
+  Future<void> _selectResponseVariant(Message message, int index) async {
+    if (_isLoading || index < 0 || index >= message.variants.length) return;
+    setState(() => message.selectVariant(index));
+    await _service.updateMessageContent(message, message.content);
+  }
+
   bool _canReusePrompt(Message message) {
     if (!message.isUser) return false;
+    if (_readAttachmentMetadata(message) != null) return true;
     final content = message.content;
-    // O histórico visível de anexos não contém o payload original da imagem nem
-    // o texto integral indexado do projeto. Não oferecer reenvio que os perderia.
+    // Histórico antigo sem metadados confiáveis não deve ser reenviado incompleto.
     return !content.contains('Anexos para análise:') &&
         !content.contains('[arquivo:') &&
         !content.contains('[project_id:') &&
@@ -717,12 +843,12 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_isLoading || !_canReusePrompt(message) || index < 0 || index >= _messages.length) {
       return;
     }
-    final editController = TextEditingController(text: message.content);
+    final editController = TextEditingController(text: _rawUserPrompt(message));
     final edited = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: GamaColors.surfaceElevated,
-        title:  Text('Editar mensagem', style: TextStyle(color: GamaColors.textPrimary)),
+        title: Text('Editar mensagem', style: TextStyle(color: GamaColors.textPrimary)),
         content: SizedBox(
           width: 560,
           child: TextField(
@@ -730,7 +856,7 @@ class _ChatScreenState extends State<ChatScreen> {
             autofocus: true,
             minLines: 3,
             maxLines: 12,
-            style:  TextStyle(color: GamaColors.textPrimary),
+            style: TextStyle(color: GamaColors.textPrimary),
             decoration: const InputDecoration(
               hintText: 'Edite o pedido para a Gama',
               border: OutlineInputBorder(),
@@ -753,6 +879,42 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted || edited == null || edited.trim().isEmpty) return;
     if (index >= _messages.length || _messages[index].id != message.id) return;
 
+    List<ProcessedAttachment> restored;
+    try {
+      restored = await _restoreAttachmentsForMessage(message);
+    } catch (e) {
+      _snack('Não consegui recuperar os anexos: $e');
+      return;
+    }
+    if (!mounted) return;
+
+    final isLastTurn = index == _messages.length - 2 && _messages.last.isAssistant;
+    final displayText = AttachmentService.buildDisplayMessage(edited.trim(), restored);
+    if (isLastTurn) {
+      final assistant = _messages.last;
+      // Persiste as versões atuais antes de abrir a nova variante.
+      await _service.updateMessageContent(assistant, assistant.content);
+      message.beginNewVariant(initialContent: displayText.isEmpty ? edited.trim() : displayText);
+      message.attachmentMetadataJson = restored.isEmpty
+          ? ''
+          : _encodeAttachmentMetadata(edited.trim(), restored);
+      assistant.beginNewVariant();
+      setState(() {
+        _controller.text = edited.trim();
+        _attachments..clear()..addAll(restored);
+        _attachmentProcessingFailed = false;
+        _chatErrorMessage = null;
+        _failedAssistantMessageId = null;
+        _regeneratingAssistantMessage = assistant;
+        _regeneratingUserMessage = message;
+      });
+      await _service.updateMessageContent(message, message.content, sync: false);
+      await _sendMessage();
+      return;
+    }
+
+    // Editar um turno antigo ainda cria um novo ramo linear: removem-se os turnos
+    // seguintes porque esta conversa ainda não modela ramificações completas.
     final removed = List<Message>.from(_messages.skip(index));
     await _service.deleteMessages(removed, sync: false);
     if (!mounted) return;
@@ -762,6 +924,9 @@ class _ChatScreenState extends State<ChatScreen> {
         _sourcesByMessageId.remove(item.id);
       }
       _messages.removeRange(index, _messages.length);
+      _attachments..clear()..addAll(restored);
+      _attachmentProcessingFailed = false;
+      _chatErrorMessage = null;
       _controller.text = edited.trim();
     });
     await _sendMessage();
@@ -776,19 +941,31 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final prompt = _messages[assistantIndex - 1];
     if (!_canReusePrompt(prompt)) {
-      _snack('Não é possível regenerar esta resposta porque a mensagem anterior contém anexos.');
+      _snack('Esta mensagem antiga não tem referências recuperáveis dos anexos. Anexe os arquivos novamente para regenerar.');
       return;
     }
-    final removed = List<Message>.from(_messages.skip(assistantIndex - 1));
-    await _service.deleteMessages(removed, sync: false);
+
+    List<ProcessedAttachment> restored;
+    try {
+      restored = await _restoreAttachmentsForMessage(prompt);
+    } catch (e) {
+      _snack('Não consegui recuperar os anexos: $e');
+      return;
+    }
     if (!mounted) return;
+
+    final assistant = _messages[assistantIndex];
+    // Salva a versão selecionada antes de criar outra variante.
+    await _service.updateMessageContent(assistant, assistant.content);
+    assistant.beginNewVariant();
     setState(() {
-      for (final item in removed) {
-        _artifactsByMessageId.remove(item.id);
-        _sourcesByMessageId.remove(item.id);
-      }
-      _messages.removeRange(assistantIndex - 1, _messages.length);
-      _controller.text = prompt.content;
+      _controller.text = _rawUserPrompt(prompt);
+      _attachments..clear()..addAll(restored);
+      _attachmentProcessingFailed = false;
+      _failedAssistantMessageId = null;
+      _chatErrorMessage = null;
+      _regeneratingAssistantMessage = assistant;
+      _regeneratingUserMessage = prompt;
     });
     await _sendMessage();
   }
@@ -1352,6 +1529,36 @@ class _ChatScreenState extends State<ChatScreen> {
     final failedId = _failedAssistantMessageId!;
     final failedIndex = _messages.indexWhere((m) => m.id == failedId);
     if (failedIndex < 0) return;
+    final failedMessage = _messages[failedIndex];
+
+    if (failedMessage.variants.isNotEmpty &&
+        failedIndex > 0 &&
+        _messages[failedIndex - 1].isUser) {
+      final prompt = _messages[failedIndex - 1];
+      final rawText = _retryRawText ?? _rawUserPrompt(prompt);
+      List<ProcessedAttachment> attachments;
+      try {
+        attachments = _retryAttachments.isNotEmpty
+            ? List<ProcessedAttachment>.from(_retryAttachments)
+            : await _restoreAttachmentsForMessage(prompt);
+      } catch (e) {
+        _snack('Não consegui recuperar os anexos: $e');
+        return;
+      }
+      if (!mounted) return;
+      await _service.updateMessageContent(failedMessage, failedMessage.content);
+      failedMessage.beginNewVariant();
+      setState(() {
+        _failedAssistantMessageId = null;
+        _chatErrorMessage = null;
+        _controller.text = rawText;
+        _attachments..clear()..addAll(attachments);
+        _regeneratingAssistantMessage = failedMessage;
+        _regeneratingUserMessage = prompt;
+      });
+      await _sendMessage();
+      return;
+    }
 
     final rawText = _retryRawText ?? '';
     final attachments = List<ProcessedAttachment>.from(_retryAttachments);
@@ -1362,10 +1569,9 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _messages.removeRange(start, failedIndex + 1);
       _failedAssistantMessageId = null;
+      _chatErrorMessage = null;
       _controller.text = rawText;
-      _attachments
-        ..clear()
-        ..addAll(attachments);
+      _attachments..clear()..addAll(attachments);
     });
     await _service.deleteMessages(removed);
     await _sendMessage();
@@ -1443,29 +1649,48 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final voiceRequested = _speakNextReply && (pluginFlags['tts'] ?? true);
 
+    final isRegeneration =
+        _regeneratingAssistantMessage != null && _regeneratingUserMessage != null;
     final pending = List<ProcessedAttachment>.from(_attachments);
     _retryRawText = rawText;
     _retryAttachments = List<ProcessedAttachment>.from(pending);
+    if (_failedAssistantMessageId != null && !isRegeneration) {
+      final failedId = _failedAssistantMessageId;
+      _messages.removeWhere((m) => m.id == failedId && m.isAssistant);
+    }
     _failedAssistantMessageId = null;
+    _chatErrorMessage = null;
+    _firstTokenReceived = false;
     final apiText = AttachmentService.buildMessageBody(rawText, pending);
     final displayText = AttachmentService.buildDisplayMessage(rawText, pending);
     final imagePayload = AttachmentService.buildImagesPayload(pending);
     _attachments.clear();
 
-    final userMessage = Message(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      role: 'user',
-      content: displayText.isEmpty ? apiText : displayText,
-      conversationId: widget.conversationId,
-    );
+    final userMessage = isRegeneration
+        ? _regeneratingUserMessage!
+        : Message(
+            id: DateTime.now().millisecondsSinceEpoch.toString(),
+            role: 'user',
+            content: displayText.isEmpty ? apiText : displayText,
+            conversationId: widget.conversationId,
+            attachmentMetadataJson: pending.isEmpty
+                ? ''
+                : _encodeAttachmentMetadata(rawText, pending),
+          );
 
-    setState(() {
-      _messages.add(userMessage);
-      _isLoading = true;
-      _streamPhase = 'thinking';
-    });
-
-    await _service.addMessage(userMessage);
+    if (!isRegeneration) {
+      setState(() {
+        _messages.add(userMessage);
+        _isLoading = true;
+        _streamPhase = 'thinking';
+      });
+      await _service.addMessage(userMessage);
+    } else {
+      setState(() {
+        _isLoading = true;
+        _streamPhase = 'thinking';
+      });
+    }
     if (!mounted) return;
     _controller.clear();
     _speechConfirmed = '';
@@ -1473,15 +1698,17 @@ class _ChatScreenState extends State<ChatScreen> {
     _speechLastFinalText = '';
     _scrollToBottom(force: true);
 
-    final assistantMessage = Message(
-      id: '${DateTime.now().millisecondsSinceEpoch}_ai',
-      role: 'assistant',
-      content: '',
-      conversationId: widget.conversationId,
-    );
+    final assistantMessage = isRegeneration
+        ? _regeneratingAssistantMessage!
+        : Message(
+            id: '${DateTime.now().millisecondsSinceEpoch}_ai',
+            role: 'assistant',
+            content: '',
+            conversationId: widget.conversationId,
+          );
 
     setState(() {
-      _messages.add(assistantMessage);
+      if (!isRegeneration) _messages.add(assistantMessage);
       _voiceResponsePending = voiceRequested;
       _voiceResponseBuffer = '';
     });
@@ -1553,6 +1780,7 @@ class _ChatScreenState extends State<ChatScreen> {
           final token = event.token;
           if (token == null) return;
 
+          _firstTokenReceived = true;
           _streamPhase = 'typing';
           if (_voiceResponsePending) {
             // Mantém a resposta fora da UI enquanto a Gama ainda está
@@ -1560,11 +1788,9 @@ class _ChatScreenState extends State<ChatScreen> {
             _voiceResponseBuffer += token;
           } else if (_messages.isNotEmpty && _messages.last.isAssistant) {
             _messages.last.content += token;
-            // Re-renderiza no máximo a cada ~50 ms, em vez de redesenhar
-            // MarkdownBody para cada token do streaming.
-            _scheduleStreamUiRefresh();
           }
-
+          // O status some ao chegar o primeiro token; coalesce o redraw.
+          _scheduleStreamUiRefresh();
           if (!_voiceResponsePending) _scrollToBottom();
         },
         onDone: () async {
@@ -1587,16 +1813,29 @@ class _ChatScreenState extends State<ChatScreen> {
               '',
             ).trim();
           }
-          if (_messages.isNotEmpty && _messages.last.isAssistant) {
-            if (isVoiceReply) {
-              if (_voiceResponseBuffer.trim().isEmpty) {
-                _voiceResponseBuffer =
-                    'Não recebi resposta do servidor. Tente novamente.';
-              }
-            } else if (_messages.last.content.trim().isEmpty) {
-              _messages.last.content =
-                  'Não recebi resposta do servidor. Tente novamente.';
+          final latestAssistant = _messages.isNotEmpty && _messages.last.isAssistant
+              ? _messages.last
+              : null;
+          final hasResponse = isVoiceReply
+              ? _voiceResponseBuffer.trim().isNotEmpty
+              : (latestAssistant?.content.trim().isNotEmpty ?? false);
+          if (!hasResponse) {
+            latestAssistant?.discardCurrentVariant();
+            if (mounted) {
+              setState(() {
+                _isLoading = false;
+                _streamPhase = '';
+                _failedAssistantMessageId = latestAssistant?.id;
+                _chatErrorMessage = 'Não recebi resposta do servidor. Tente novamente.';
+                _voiceResponsePending = false;
+                _voiceResponseBuffer = '';
+                _speakNextReply = false;
+                _isSpeaking = false;
+              });
             }
+            _regeneratingAssistantMessage = null;
+            _regeneratingUserMessage = null;
+            return;
           }
 
           if (mounted) {
@@ -1629,11 +1868,18 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 });
               }
-              await _service.addMessage(_messages.last);
+              if (isRegeneration) {
+                await _service.updateMessageContent(_messages.last, _messages.last.content);
+              } else {
+                await _service.addMessage(_messages.last);
+              }
               unawaited(_ensureConversationTitle(userMessage: rawText.isEmpty ? 'Arquivo anexado' : rawText, assistantMessage: responseText));
               _failedAssistantMessageId = null;
               _retryRawText = null;
               _retryAttachments = <ProcessedAttachment>[];
+              _chatErrorMessage = null;
+              _regeneratingAssistantMessage = null;
+              _regeneratingUserMessage = null;
             } catch (e) {
               // Se o áudio falhar, ainda mostramos a resposta completa para
               // não perder a mensagem que o servidor já gerou.
@@ -1644,11 +1890,18 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 });
               }
-              await _service.addMessage(_messages.last);
+              if (isRegeneration) {
+                await _service.updateMessageContent(_messages.last, _messages.last.content);
+              } else {
+                await _service.addMessage(_messages.last);
+              }
               unawaited(_ensureConversationTitle(userMessage: rawText.isEmpty ? 'Arquivo anexado' : rawText, assistantMessage: responseText));
               _failedAssistantMessageId = null;
               _retryRawText = null;
               _retryAttachments = <ProcessedAttachment>[];
+              _chatErrorMessage = null;
+              _regeneratingAssistantMessage = null;
+              _regeneratingUserMessage = null;
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -1674,13 +1927,10 @@ class _ChatScreenState extends State<ChatScreen> {
           final failed = _messages.isNotEmpty && _messages.last.isAssistant
               ? _messages.last
               : null;
+          failed?.discardCurrentVariant();
           setState(() {
-            if (failed != null) {
-              failed.content = failed.content.trim().isEmpty
-                  ? friendly
-                  : '${failed.content.trim()}\n\n$friendly';
-              _failedAssistantMessageId = failed.id;
-            }
+            _failedAssistantMessageId = failed?.id;
+            _chatErrorMessage = friendly;
             _isLoading = false;
             _streamPhase = '';
             _voiceResponsePending = false;
@@ -1688,7 +1938,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _speakNextReply = false;
             _isSpeaking = false;
           });
-          if (failed != null) await _service.addMessage(failed);
+          _regeneratingAssistantMessage = null;
+          _regeneratingUserMessage = null;
         },
         cancelOnError: true,
       );
@@ -1697,17 +1948,22 @@ class _ChatScreenState extends State<ChatScreen> {
       final friendly = e is ChatApiException
           ? e.message
           : 'Não foi possível enviar a mensagem. Verifique a conexão e tente novamente.';
+      final failed = _messages.isNotEmpty && _messages.last.isAssistant
+          ? _messages.last
+          : null;
+      failed?.discardCurrentVariant();
       setState(() {
-        if (_messages.isNotEmpty && _messages.last.isAssistant) {
-          _messages.last.content = friendly;
-          _failedAssistantMessageId = _messages.last.id;
-        }
+        _failedAssistantMessageId = failed?.id;
+        _chatErrorMessage = friendly;
         _isLoading = false;
         _streamPhase = '';
+        _voiceResponsePending = false;
+        _voiceResponseBuffer = '';
+        _speakNextReply = false;
+        _isSpeaking = false;
       });
-      if (_messages.isNotEmpty && _messages.last.isAssistant) {
-        await _service.addMessage(_messages.last);
-      }
+      _regeneratingAssistantMessage = null;
+      _regeneratingUserMessage = null;
     }
   }
 
@@ -1723,18 +1979,29 @@ class _ChatScreenState extends State<ChatScreen> {
         lastMessage.content = _voiceResponseBuffer;
       }
       if (lastMessage.content.isNotEmpty) {
-        await _service.addMessage(lastMessage);
+        if (_regeneratingAssistantMessage != null) {
+          await _service.updateMessageContent(lastMessage, lastMessage.content);
+        } else {
+          await _service.addMessage(lastMessage);
+        }
       }
     }
     _voiceResponsePending = false;
     _voiceResponseBuffer = '';
     _speakNextReply = false;
     _isSpeaking = false;
+    _chatErrorMessage = null;
+    _regeneratingAssistantMessage = null;
+    _regeneratingUserMessage = null;
     setState(() {
       if (lastMessage != null &&
           lastMessage.isAssistant &&
           lastMessage.content.isEmpty) {
-        _messages.remove(lastMessage);
+        if (lastMessage.variants.isNotEmpty) {
+          lastMessage.discardCurrentVariant();
+        } else {
+          _messages.remove(lastMessage);
+        }
       }
       _isLoading = false;
       _streamPhase = '';
@@ -1986,6 +2253,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: _messages.isEmpty
                     ? _EmptyState(
                         onSuggestion: (text) {
+                          if (text == 'Anexe ZIP/PDF/código e peça uma análise') {
+                            _showAttachMenu();
+                            return;
+                          }
                           _controller.text = text;
                           _sendMessage();
                         },
@@ -2190,25 +2461,31 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ),
                                       const SizedBox(height: 10),
                                     ],
-                                    if (msg.content.isEmpty && !isUser && _isLoading)
-                                      const _TypingDots()
+                                    if (!isUser &&
+                                        msg.id == _failedAssistantMessageId &&
+                                        _chatErrorMessage != null) ...[
+                                      if (msg.content.trim().isNotEmpty)
+                                        MessageContentView(
+                                          content: msg.content,
+                                          isUser: false,
+                                          onTapLink: _openLink,
+                                        ),
+                                      const SizedBox(height: 8),
+                                      ChatStatusIndicator(
+                                        label: _chatErrorMessage!,
+                                        isError: true,
+                                        onRetry: _isLoading ? null : _retryLastFailedRequest,
+                                      ),
+                                    ] else if (msg.content.isEmpty && !isUser && _isLoading && !_firstTokenReceived)
+                                      ChatStatusIndicator(label: _chatStatusLabel)
+                                    else if (msg.content.isEmpty && !isUser && _isLoading)
+                                      const SizedBox.shrink()
                                     else
                                       MessageContentView(
                                         content: msg.content,
                                         isUser: isUser,
                                         onTapLink: _openLink,
                                       ),
-                                    if (!isUser && msg.id == _failedAssistantMessageId) ...[
-                                      const SizedBox(height: 8),
-                                      Align(
-                                        alignment: Alignment.centerLeft,
-                                        child: OutlinedButton.icon(
-                                          onPressed: _isLoading ? null : _retryLastFailedRequest,
-                                          icon: const Icon(Icons.refresh_rounded, size: 18),
-                                          label: const Text('Tentar novamente'),
-                                        ),
-                                      ),
-                                    ],
                                     if (!isUser &&
                                         (_artifactsByMessageId[msg.id]?.isNotEmpty ?? false)) ...[
                                       const SizedBox(height: 12),
@@ -2225,6 +2502,39 @@ class _ChatScreenState extends State<ChatScreen> {
                                     ],
                                     if (!isUser && (_sourcesByMessageId[msg.id]?.isNotEmpty ?? false))
                                       _sourceChips(msg.id),
+                                    if (!isUser && !_isLoading && msg.variants.length > 1)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 8),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton(
+                                              tooltip: 'Versão anterior',
+                                              visualDensity: VisualDensity.compact,
+                                              constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+                                              padding: EdgeInsets.zero,
+                                              onPressed: msg.selectedVariantIndex > 0
+                                                  ? () => _selectResponseVariant(msg, msg.selectedVariantIndex - 1)
+                                                  : null,
+                                              icon: const Icon(Icons.chevron_left_rounded, size: 20),
+                                            ),
+                                            Text(
+                                              '${msg.selectedVariantIndex + 1}/${msg.variants.length}',
+                                              style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                                            ),
+                                            IconButton(
+                                              tooltip: 'Próxima versão',
+                                              visualDensity: VisualDensity.compact,
+                                              constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+                                              padding: EdgeInsets.zero,
+                                              onPressed: msg.selectedVariantIndex < msg.variants.length - 1
+                                                  ? () => _selectResponseVariant(msg, msg.selectedVariantIndex + 1)
+                                                  : null,
+                                              icon: const Icon(Icons.chevron_right_rounded, size: 20),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),
@@ -2386,47 +2696,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         ),
-
-        if (_isLoading || _isSpeaking)
-          Padding(
-            padding: const EdgeInsets.only(left: 20, bottom: 6),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _isSpeaking
-                    ? 'Gama ainda está respondendo...'
-                    : _streamPhase == 'searching'
-                    ? 'Buscando na web…'
-                    : _streamPhase == 'generating_image'
-                    ? 'Criando imagem…'
-                    : _streamPhase == 'image_analyzing'
-                    ? 'Analisando imagem…'
-                    : _streamPhase == 'project_analyzing'
-                    ? 'Analisando projeto…'
-                    : _streamPhase == 'video_queued'
-                    ? 'Preparando vídeo…'
-                    : _streamPhase == 'video_generating'
-                    ? 'Gerando vídeo…'
-                    : _streamPhase == 'video_downloading'
-                    ? 'Salvando vídeo…'
-                    : _streamPhase == 'video_analyzing'
-                    ? 'Analisando quadros do vídeo…'
-                    : _streamPhase == 'video_editing'
-                    ? 'Criando versão editada…'
-                    : _streamPhase == 'video_improving'
-                    ? 'Aprimorando vídeo…'
-                    : _streamPhase == 'thinking'
-                    ? 'Pensando…'
-                    : 'Gama está respondendo…',
-                style: TextStyle(
-                  color: GamaColors.textMuted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0.2,
-                ),
-              ),
-            ),
-          ),
 
         // Anexos pendentes
         if (_processingAttachment)

@@ -29,6 +29,9 @@ class MessageIn(BaseModel):
     content: str
     timestamp: Optional[str] = None
     conversationId: Optional[str] = None
+    attachmentMetadataJson: Optional[str] = None
+    variants: Optional[List[str]] = None
+    selectedVariantIndex: Optional[int] = None
 
 
 class ConversationIn(BaseModel):

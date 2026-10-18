@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/gama_colors.dart';
 import '../services/settings_service.dart';
@@ -33,8 +35,26 @@ class ChatComposer extends StatelessWidget {
     required this.onModeChanged,
   });
 
+  bool get _usesDesktopEnterShortcut =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.linux);
+
+  void _submitIfPossible() {
+    if (!isLoading && controller.text.trim().isNotEmpty) {
+      onSend();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final shortcuts = <ShortcutActivator, Intent>{
+      if (_usesDesktopEnterShortcut)
+        const SingleActivator(LogicalKeyboardKey.enter):
+            const _SendMessageIntent(),
+    };
+
     return Container(
       decoration: BoxDecoration(
         color: GamaColors.surface,
@@ -84,51 +104,64 @@ class ChatComposer extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Campo de texto — SEM caixa de fundo por trás do placeholder
-                TextField(
-                  controller: controller,
-                  style: TextStyle(
-                    color: GamaColors.textPrimary,
-                    fontSize: 15.5,
-                    height: 1.35,
-                    letterSpacing: 0.1,
-                  ),
-                  maxLines: 5,
-                  minLines: 1,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: InputDecoration(
-                    hintText: isListening
-                        ? 'Ouvindo… o texto aparece aqui'
-                        : 'Escreva sua mensagem...',
-                    hintStyle: TextStyle(
-                      color: GamaColors.textMuted,
-                      fontSize: 14.5,
+                // Campo de texto — SEM caixa de fundo por trás do placeholder.
+                // No desktop, Enter envia e Shift+Enter continua inserindo
+                // uma quebra de linha (o atalho não é registrado com Shift).
+                Shortcuts(
+                  shortcuts: shortcuts,
+                  child: Actions(
+                    actions: <Type, Action<Intent>>{
+                      _SendMessageIntent: CallbackAction<_SendMessageIntent>(
+                        onInvoke: (_) {
+                          _submitIfPossible();
+                          return null;
+                        },
+                      ),
+                    },
+                    child: TextField(
+                      controller: controller,
+                      style: TextStyle(
+                        color: GamaColors.textPrimary,
+                        fontSize: 15.5,
+                        height: 1.35,
+                        letterSpacing: 0.1,
+                      ),
+                      maxLines: 5,
+                      minLines: 1,
+                      textCapitalization: TextCapitalization.sentences,
+                      decoration: InputDecoration(
+                        hintText: isListening
+                            ? 'Ouvindo… o texto aparece aqui'
+                            : 'Escreva sua mensagem...',
+                        hintStyle: TextStyle(
+                          color: GamaColors.textMuted,
+                          fontSize: 14.5,
+                        ),
+                        // Remove qualquer fundo/caixa do tema global.
+                        filled: false,
+                        fillColor: Colors.transparent,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
+                        errorBorder: InputBorder.none,
+                        focusedErrorBorder: InputBorder.none,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 6,
+                        ),
+                      ),
+                      onSubmitted: (_) => _submitIfPossible(),
                     ),
-                    // Remove qualquer fundo/caixa do tema global
-                    filled: false,
-                    fillColor: Colors.transparent,
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    disabledBorder: InputBorder.none,
-                    errorBorder: InputBorder.none,
-                    focusedErrorBorder: InputBorder.none,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 2,
-                      vertical: 6,
-                    ),
                   ),
-                  onSubmitted: (_) {
-                    if (!isLoading) onSend();
-                  },
                 ),
                 const SizedBox(height: 6),
-                // Linha de ferramentas (igual à captura)
+                // Linha de ferramentas (igual à captura).
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    // Chip de modo (Programar / Conversar)
+                    // Chip de modo (Programar / Conversar).
                     _ModeChip(
                       label: mode == GamaMode.programar
                           ? 'Programar'
@@ -196,13 +229,15 @@ class ChatComposer extends StatelessWidget {
                       child: InkWell(
                         borderRadius: BorderRadius.circular(14),
                         onTap: isLoading ? onStop : onSend,
-                        child: const SizedBox(
+                        child: SizedBox(
                           width: 40,
                           height: 40,
                           child: Icon(
-                            Icons.arrow_upward_rounded,
+                            isLoading
+                                ? Icons.stop_rounded
+                                : Icons.arrow_upward_rounded,
                             color: Colors.white,
-                            size: 20,
+                            size: isLoading ? 22 : 20,
                           ),
                         ),
                       ),
@@ -216,6 +251,10 @@ class ChatComposer extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SendMessageIntent extends Intent {
+  const _SendMessageIntent();
 }
 
 class _ModeChip extends StatelessWidget {
