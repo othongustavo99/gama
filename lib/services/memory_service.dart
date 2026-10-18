@@ -38,7 +38,7 @@ class MemoryService {
 
   Dio _dio() {
     if (!_client.interceptors.any((i) => i is GammaAuthInterceptor)) {
-      _client.interceptors.add(GammaAuthInterceptor());
+      _client.interceptors.add(GammaAuthInterceptor(client: _client));
     }
     _client.options.baseUrl = SettingsService.instance.baseUrl;
     _client.options.headers['X-User-Id'] = IdentityService.instance.userId;

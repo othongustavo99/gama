@@ -78,32 +78,30 @@ class ChatApiException implements Exception {
 ChatApiException _friendlyDioException(DioException error) {
   final status = error.response?.statusCode;
   final responseData = error.response?.data;
-  final serverDetail = responseData is Map
-      ? (responseData['detail'] ?? responseData['error'])?.toString().trim()
-      : responseData?.toString().trim();
-  if (status == 401 || status == 403) {
-    if (AppConstants.apiKey.isEmpty) {
-      return const ChatApiException(
-        'A API recusou o acesso (401/403). Este build está sem GAMA_API_KEY. '
-        'Gere o APK com --dart-define=GAMA_API_KEY=SUA_CHAVE e confirme que a chave corresponde à configurada no Railway. '
-        'Não coloque uma chave privada em um APK distribuído publicamente.',
-        retryable: false,
-      );
-    }
+  final rawDetail = responseData is Map ? responseData['detail'] : null;
+  final serverDetail = rawDetail is String
+      ? rawDetail.trim().replaceAll(RegExp(r'[\r\n\t]+'), ' ')
+      : null;
+  final boundedDetail = serverDetail == null
+      ? null
+      : (serverDetail.length > 500
+            ? '${serverDetail.substring(0, 500)}…'
+            : serverDetail);
+  if (status == 401) {
     return const ChatApiException(
-      'A API recusou o acesso (401/403). Confira a chave configurada no build e a autenticação da sessão.',
+      'A sessão Google expirou ou não pôde ser renovada. Entre novamente e tente de novo.',
+      retryable: false,
+    );
+  }
+  if (status == 403) {
+    return const ChatApiException(
+      'A conta autenticada não tem permissão para esta operação.',
       retryable: false,
     );
   }
   if (status == 429) {
     return const ChatApiException(
       'O servidor está ocupado ou atingiu o limite de requisições. Aguarde um pouco e tente novamente.',
-    );
-  }
-  if (serverDetail != null && serverDetail.isNotEmpty) {
-    return ChatApiException(
-      serverDetail,
-      retryable: status == null || status >= 500,
     );
   }
   if (status != null && status >= 500) {
@@ -124,6 +122,15 @@ ChatApiException _friendlyDioException(DioException error) {
       'A conversa ou os anexos excederam o limite do servidor. Tente novamente com um histórico menor ou menos anexos.',
       retryable: false,
     );
+  }
+  if (status == 422) {
+    return const ChatApiException(
+      'A solicitação enviada está inválida. Confira os campos e anexos e tente novamente.',
+      retryable: false,
+    );
+  }
+  if (boundedDetail != null && boundedDetail.isNotEmpty) {
+    return ChatApiException(boundedDetail, retryable: false);
   }
   return const ChatApiException(
     'Não foi possível concluir a solicitação. Tente novamente.',
@@ -180,7 +187,7 @@ class OllamaService {
     // Mantém uma única instância do Dio para reaproveitar conexões HTTP.
     // A URL continua podendo ser alterada pelas configurações do app.
     if (!_dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
-      _dio.interceptors.add(GammaAuthInterceptor());
+      _dio.interceptors.add(GammaAuthInterceptor(client: _dio));
     }
     _dio.options.baseUrl = SettingsService.instance.baseUrl;
     _dio.options.headers.addAll(AppConstants.authHeaders);

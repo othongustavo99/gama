@@ -30,7 +30,7 @@ class ConversationSyncService {
 
   Dio _client() {
     if (!_dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
-      _dio.interceptors.add(GammaAuthInterceptor());
+      _dio.interceptors.add(GammaAuthInterceptor(client: _dio));
     }
     _dio.options.baseUrl = SettingsService.instance.baseUrl;
     _dio.options.headers['X-User-Id'] = IdentityService.instance.userId;

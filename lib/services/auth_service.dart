@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
@@ -23,6 +24,8 @@ import 'identity_service.dart';
 class AuthService {
   AuthService._();
   static final AuthService instance = AuthService._();
+  static const _desktopRefreshTokenKey = 'google_desktop_refresh_token';
+  static const _secureStorage = FlutterSecureStorage();
 
   static const String serverClientId = String.fromEnvironment(
     'GOOGLE_SERVER_CLIENT_ID',
@@ -62,7 +65,7 @@ class AuthService {
           DateTime.now().isBefore(exp.subtract(const Duration(minutes: 2)))) {
         return _idToken;
       }
-      return null;
+      return _refreshDesktopIdToken();
     }
     try {
       final account = _google.currentUser ?? await _google.signInSilently();
@@ -70,6 +73,78 @@ class AuthService {
       return auth?.idToken;
     } catch (e) {
       debugPrint('bearerToken: $e');
+      return null;
+    }
+  }
+
+  /// Renova uma sessão expirada após um 401. No desktop usa o refresh token
+  /// protegido pelo armazenamento seguro do sistema; no mobile pede ao plugin
+  /// Google uma sessão silenciosa atualizada.
+  Future<String?> refreshBearerToken() async {
+    if (isDesktop) return _refreshDesktopIdToken(force: true);
+    try {
+      final account = await _google.signInSilently(suppressErrors: false);
+      final auth = await account?.authentication;
+      final token = auth?.idToken;
+      if (token == null || token.isEmpty) return null;
+      if (account != null) {
+        await IdentityService.instance.bindGoogleUser(
+          googleId: account.id,
+          name: account.displayName,
+          email: account.email,
+          photoUrl: account.photoUrl,
+        );
+      }
+      return token;
+    } catch (e) {
+      debugPrint('refreshBearerToken mobile: $e');
+      return null;
+    }
+  }
+
+  Future<String?> _refreshDesktopIdToken({bool force = false}) async {
+    if (!force &&
+        _idToken != null &&
+        _idTokenExpiry != null &&
+        DateTime.now().isBefore(
+          _idTokenExpiry!.subtract(const Duration(minutes: 2)),
+        )) {
+      return _idToken;
+    }
+    try {
+      final refreshToken = await _secureStorage.read(
+        key: _desktopRefreshTokenKey,
+      );
+      if (refreshToken == null || refreshToken.isEmpty) return null;
+      final body = <String, String>{
+        'client_id': desktopClientId,
+        'grant_type': 'refresh_token',
+        'refresh_token': refreshToken,
+      };
+      final secret = desktopClientSecret.trim();
+      if (secret.isNotEmpty) body['client_secret'] = secret;
+      final response = await http.post(
+        Uri.parse('https://oauth2.googleapis.com/token'),
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: body,
+      );
+      if (response.statusCode != 200) {
+        if (response.statusCode == 400 || response.statusCode == 401) {
+          await _secureStorage.delete(key: _desktopRefreshTokenKey);
+          _idToken = null;
+          _idTokenExpiry = null;
+        }
+        return null;
+      }
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final token = json['id_token']?.toString();
+      if (token == null || token.isEmpty) return null;
+      final expiresIn = (json['expires_in'] as num?)?.toInt() ?? 3600;
+      _idToken = token;
+      _idTokenExpiry = DateTime.now().add(Duration(seconds: expiresIn));
+      return token;
+    } catch (e) {
+      debugPrint('refreshBearerToken desktop: $e');
       return null;
     }
   }
@@ -117,6 +192,14 @@ class AuthService {
         .encode(sha256.convert(utf8.encode(codeVerifier)).bytes)
         .replaceAll('=', '');
 
+    String? existingRefreshToken;
+    try {
+      existingRefreshToken = await _secureStorage.read(
+        key: _desktopRefreshTokenKey,
+      );
+    } catch (e) {
+      debugPrint('secure storage read: $e');
+    }
     final authUri = Uri.https('accounts.google.com', '/o/oauth2/v2/auth', {
       'client_id': clientId,
       'redirect_uri': redirectUri,
@@ -125,8 +208,10 @@ class AuthService {
       'state': state,
       'code_challenge': codeChallenge,
       'code_challenge_method': 'S256',
-      'access_type': 'online',
-      'prompt': 'select_account',
+      'access_type': 'offline',
+      'prompt': existingRefreshToken == null || existingRefreshToken.isEmpty
+          ? 'select_account consent'
+          : 'select_account',
     });
 
     final completer = Completer<String?>();
@@ -210,6 +295,17 @@ class AuthService {
     }
 
     final tokenJson = jsonDecode(tokenRes.body) as Map<String, dynamic>;
+    final refreshToken = tokenJson['refresh_token']?.toString();
+    if (refreshToken != null && refreshToken.isNotEmpty) {
+      try {
+        await _secureStorage.write(
+          key: _desktopRefreshTokenKey,
+          value: refreshToken,
+        );
+      } catch (e) {
+        debugPrint('secure storage write: $e');
+      }
+    }
     final idToken = tokenJson['id_token'] as String?;
     if (idToken == null || idToken.isEmpty) {
       throw StateError(
@@ -250,6 +346,13 @@ class AuthService {
     // Não mantenha um token válido em memória depois do logout.
     _idToken = null;
     _idTokenExpiry = null;
+    if (isDesktop) {
+      try {
+        await _secureStorage.delete(key: _desktopRefreshTokenKey);
+      } catch (e) {
+        debugPrint('secure storage delete: $e');
+      }
+    }
     await IdentityService.instance.signOutLocal();
   }
 

@@ -60,7 +60,9 @@ final _gamaImageAnyRe = RegExp(
 
 class _TexMathInlineSyntax extends md.InlineSyntax {
   _TexMathInlineSyntax()
-    : super(r'(?<!\\)\$\$([\s\S]+?)\$\$|(?<!\\)\$([^\n$]+?)\$|\\\[([\s\S]+?)\\\]|\\\((.+?)\\\)');
+    : super(
+        r'(?<!\\)\$\$([\s\S]+?)\$\$|(?<!\\)\$(?=\S)([^\n$]*?\S)\$(?!\d)|\\\[([\s\S]+?)\\\]|\\\((.+?)\\\)',
+      );
 
   @override
   bool onMatch(md.InlineParser parser, Match match) {
@@ -1187,7 +1189,11 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
                         : context.gama.surfaceCard,
                   ),
                 ),
-                builders: {'math': _TexMathBuilder(TextStyle(color: color, fontSize: 13))},
+                builders: {
+                  'math': _TexMathBuilder(
+                    TextStyle(color: color, fontSize: 13),
+                  ),
+                },
               ),
             ),
           );

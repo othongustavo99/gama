@@ -533,7 +533,7 @@ class AttachmentService {
       ),
     );
     if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
-      dio.interceptors.add(GammaAuthInterceptor());
+      dio.interceptors.add(GammaAuthInterceptor(client: dio));
     }
     final form = FormData.fromMap({
       'file': await MultipartFile.fromFile(path, filename: name),
@@ -559,7 +559,7 @@ class AttachmentService {
       ),
     );
     if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
-      dio.interceptors.add(GammaAuthInterceptor());
+      dio.interceptors.add(GammaAuthInterceptor(client: dio));
     }
     final form = FormData.fromMap({
       'file': await MultipartFile.fromFile(path, filename: name),
@@ -589,7 +589,7 @@ class AttachmentService {
       ),
     );
     if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
-      dio.interceptors.add(GammaAuthInterceptor());
+      dio.interceptors.add(GammaAuthInterceptor(client: dio));
     }
     final form = FormData.fromMap({
       'file': await MultipartFile.fromFile(path, filename: name),
@@ -618,7 +618,7 @@ class AttachmentService {
         ),
       );
       if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
-        dio.interceptors.add(GammaAuthInterceptor());
+        dio.interceptors.add(GammaAuthInterceptor(client: dio));
       }
       final form = FormData.fromMap({
         'file': await MultipartFile.fromFile(path, filename: name),

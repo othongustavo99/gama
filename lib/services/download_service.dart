@@ -109,7 +109,7 @@ class DownloadService {
       ),
     );
     if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
-      dio.interceptors.add(GammaAuthInterceptor());
+      dio.interceptors.add(GammaAuthInterceptor(client: dio));
     }
     final dir = await _targetDir();
     final file = File(p.join(dir.path, safeName));

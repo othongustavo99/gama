@@ -15,14 +15,20 @@ class TtsService {
   static final TtsService instance = TtsService._();
 
   final AudioPlayer _player = AudioPlayer();
-  late final Dio _dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 60),
-      responseType: ResponseType.bytes,
-      validateStatus: (_) => true,
-    ),
-  )..interceptors.add(GammaAuthInterceptor());
+  late final Dio _dio = _createDio();
+
+  Dio _createDio() {
+    final client = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 60),
+        responseType: ResponseType.bytes,
+        validateStatus: (_) => true,
+      ),
+    );
+    client.interceptors.add(GammaAuthInterceptor(client: client));
+    return client;
+  }
 
   bool _busy = false;
   bool _cancelQueue = false;
