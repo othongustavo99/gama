@@ -301,6 +301,46 @@ class MessageContentView extends StatelessWidget {
   }
 }
 
+/// Mantém árvores Markdown finalizadas prontas entre reconstruções da tela.
+class MemoizedMessageContentView extends StatefulWidget {
+  final String content;
+  final bool isUser;
+  final void Function(String? href)? onTapLink;
+
+  const MemoizedMessageContentView({
+    super.key,
+    required this.content,
+    required this.isUser,
+    this.onTapLink,
+  });
+
+  @override
+  State<MemoizedMessageContentView> createState() =>
+      _MemoizedMessageContentViewState();
+}
+
+class _MemoizedMessageContentViewState
+    extends State<MemoizedMessageContentView> {
+  late Widget _cachedContent = _createContent();
+
+  Widget _createContent() => MessageContentView(
+        content: widget.content,
+        isUser: widget.isUser,
+        onTapLink: widget.onTapLink,
+      );
+
+  @override
+  void didUpdateWidget(covariant MemoizedMessageContentView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.content != widget.content || oldWidget.isUser != widget.isUser) {
+      _cachedContent = _createContent();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _cachedContent;
+}
+
 /// Renderiza Markdown normalmente, mas separa blocos cercados por ``` em
 /// caixas próprias. Isso permite colocar o botão de copiar sem interferir
 /// no restante do Markdown já usado pela Gama.
@@ -543,6 +583,7 @@ class _CopyableCodeBlock extends StatelessWidget {
 
   Future<void> _copy(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: code));
+    await HapticFeedback.lightImpact();
     if (!context.mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -54,7 +55,13 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime? _lastAutoScrollAt;
   bool _scrollCallbackScheduled = false;
   bool _showScrollToBottom = false;
-  Timer? _streamUiTimer;
+  final ValueNotifier<String> _streamingText = ValueNotifier<String>('');
+  final Queue<int> _streamRevealQueue = Queue<int>();
+  final Map<String, GlobalKey> _messageKeys = <String, GlobalKey>{};
+  Timer? _streamRevealTimer;
+  StringBuffer _streamRawText = StringBuffer();
+  String _streamSearchQuery = '';
+  bool _followStream = true;
   Timer? _voiceAutoSendTimer;
   bool _voiceConversationMode = false;
   bool _titleGenerationInProgress = false;
@@ -183,13 +190,50 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _nearBottomCache = true;
 
-  void _scheduleStreamUiRefresh() {
-    if (_streamUiTimer?.isActive ?? false) return;
-    _streamUiTimer = Timer(const Duration(milliseconds: 50), () {
-      _streamUiTimer = null;
+  bool _handleListScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification && notification.dragDetails != null) {
+      _followStream = false;
+    }
+    return false;
+  }
+
+  void _queueStreamText(String text) {
+    _streamRawText.write(text);
+    _streamRevealQueue.addAll(text.runes);
+    _streamRevealTimer ??= Timer.periodic(const Duration(milliseconds: 30), (_) {
       if (!mounted) return;
-      setState(() {});
-      _scrollToBottom();
+      if (_streamRevealQueue.isEmpty) {
+        _streamRevealTimer?.cancel();
+        _streamRevealTimer = null;
+        return;
+      }
+      final next = StringBuffer();
+      for (var i = 0; i < 6 && _streamRevealQueue.isNotEmpty; i++) {
+        next.writeCharCode(_streamRevealQueue.removeFirst());
+      }
+      _streamingText.value = '${_streamingText.value}${next.toString()}';
+      if (_followStream) _scrollToBottom(followStream: true);
+    });
+  }
+
+  void _finishStreamReveal(String finalText) {
+    _streamRevealTimer?.cancel();
+    _streamRevealTimer = null;
+    _streamRevealQueue.clear();
+    _streamingText.value = finalText;
+  }
+
+  void _scrollToMessageTop(String messageId) {
+    final key = _messageKeys.putIfAbsent(messageId, () => GlobalKey());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = key.currentContext;
+      if (!mounted || target == null) return;
+      Scrollable.ensureVisible(
+        target,
+        alignment: 0.02,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
     });
   }
 
@@ -654,6 +698,12 @@ class _ChatScreenState extends State<ChatScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.conversationId != widget.conversationId) {
       _streamSubscription?.cancel();
+      _streamRevealTimer?.cancel();
+      _streamRevealTimer = null;
+      _streamRevealQueue.clear();
+      _streamRawText = StringBuffer();
+      _streamingText.value = '';
+      _streamSearchQuery = '';
       _isLoading = false;
       _chatErrorMessage = null;
       _failedAssistantMessageId = null;
@@ -680,11 +730,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages = _service.getMessages(widget.conversationId);
       _artifactsByMessageId.clear();
       _sourcesByMessageId.clear();
+      _messageKeys.clear();
     });
     _scrollToBottom(force: true);
   }
 
-  void _scrollToBottom({bool force = false}) {
+  void _scrollToBottom({bool force = false, bool followStream = false}) {
     // O stream pode emitir dezenas de tokens por segundo. Coalescemos os
     // callbacks e limitamos animações automáticas para evitar trepidação.
     if (_scrollCallbackScheduled) return;
@@ -701,7 +752,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollCallbackScheduled = false;
       if (!_scrollController.hasClients) return;
       final position = _scrollController.position;
-      if (force || _nearBottomCache || position.pixels >= position.maxScrollExtent - 120) {
+      if (force || followStream || _nearBottomCache || position.pixels >= position.maxScrollExtent - 120) {
         _scrollController.animateTo(
           position.maxScrollExtent,
           duration: Duration(milliseconds: force ? 180 : 90),
@@ -806,10 +857,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String get _chatStatusLabel {
     switch (_streamPhase) {
-      case 'searching': return 'Buscando na web…';
+      case 'searching':
+        return _streamSearchQuery.isEmpty
+            ? 'Buscando na web…'
+            : 'Buscando: $_streamSearchQuery…';
+      case 'project_analyzing': return 'Lendo arquivos do projeto…';
       case 'generating_image': return 'Criando imagem…';
       case 'image_analyzing': return 'Analisando imagem…';
-      case 'project_analyzing': return 'Analisando projeto…';
       case 'video_queued': return 'Preparando vídeo…';
       case 'video_generating': return 'Gerando vídeo…';
       case 'video_downloading': return 'Salvando vídeo…';
@@ -1021,6 +1075,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _copyMessage(Message message) async {
     await Clipboard.setData(ClipboardData(text: _cleanMessageText(message)));
+    unawaited(HapticFeedback.lightImpact());
     _snack('Mensagem copiada');
   }
 
@@ -1649,6 +1704,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final voiceRequested = _speakNextReply && (pluginFlags['tts'] ?? true);
 
+    unawaited(HapticFeedback.lightImpact());
+    _followStream = true;
+    _streamSearchQuery = '';
+    _streamRawText = StringBuffer();
+    _streamRevealQueue.clear();
+    _streamingText.value = '';
+
     final isRegeneration =
         _regeneratingAssistantMessage != null && _regeneratingUserMessage != null;
     final pending = List<ProcessedAttachment>.from(_attachments);
@@ -1696,7 +1758,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _speechConfirmed = '';
     _speechPartial = '';
     _speechLastFinalText = '';
-    _scrollToBottom(force: true);
+    if (!isRegeneration) _scrollToMessageTop(userMessage.id);
 
     final assistantMessage = isRegeneration
         ? _regeneratingAssistantMessage!
@@ -1747,6 +1809,14 @@ class _ChatScreenState extends State<ChatScreen> {
           if (event.phase != null) {
             setState(() => _streamPhase = event.phase!);
           }
+          if (event.webSearchQuery != null && event.webSearchQuery!.trim().isNotEmpty) {
+            _streamSearchQuery = event.webSearchQuery!.trim();
+            _streamPhase = 'searching';
+            if (mounted) setState(() {});
+          }
+          if (event.memorySaved != null && event.memorySaved!.trim().isNotEmpty) {
+            _snack('Memória atualizada');
+          }
           if (event.sources != null && _messages.isNotEmpty && _messages.last.isAssistant) {
             _sourcesByMessageId[_messages.last.id] = List<Map<String, dynamic>>.from(event.sources!);
             setState(() {});
@@ -1780,6 +1850,7 @@ class _ChatScreenState extends State<ChatScreen> {
           final token = event.token;
           if (token == null) return;
 
+          final isFirstToken = !_firstTokenReceived;
           _firstTokenReceived = true;
           _streamPhase = 'typing';
           if (_voiceResponsePending) {
@@ -1787,15 +1858,13 @@ class _ChatScreenState extends State<ChatScreen> {
             // gerando. O conteúdo será revelado quando o áudio começar.
             _voiceResponseBuffer += token;
           } else if (_messages.isNotEmpty && _messages.last.isAssistant) {
-            _messages.last.content += token;
+            _queueStreamText(token);
           }
-          // O status some ao chegar o primeiro token; coalesce o redraw.
-          _scheduleStreamUiRefresh();
-          if (!_voiceResponsePending) _scrollToBottom();
+          if (isFirstToken && mounted) setState(() {});
         },
         onDone: () async {
-          _streamUiTimer?.cancel();
-          _streamUiTimer = null;
+          _streamRevealTimer?.cancel();
+          _streamRevealTimer = null;
           final isVoiceReply = _voiceResponsePending;
           _voiceResponseBuffer = _voiceResponseBuffer.replaceAll(
             RegExp(
@@ -1805,20 +1874,23 @@ class _ChatScreenState extends State<ChatScreen> {
             '',
           ).trim();
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
-            _messages.last.content = _messages.last.content.replaceAll(
+            final completedText = _streamRawText.toString().replaceAll(
               RegExp(
                 r'\[\[GAMA_FILES\]\][\s\S]*?\[\[/GAMA_FILES\]\]',
                 caseSensitive: false,
               ),
               '',
             ).trim();
+            _messages.last.content = isVoiceReply ? '' : completedText;
+            _finishStreamReveal(isVoiceReply ? '' : completedText);
           }
           final latestAssistant = _messages.isNotEmpty && _messages.last.isAssistant
               ? _messages.last
               : null;
           final hasResponse = isVoiceReply
               ? _voiceResponseBuffer.trim().isNotEmpty
-              : (latestAssistant?.content.trim().isNotEmpty ?? false);
+              : (_streamingText.value.trim().isNotEmpty ||
+                  (latestAssistant?.content.trim().isNotEmpty ?? false));
           if (!hasResponse) {
             latestAssistant?.discardCurrentVariant();
             if (mounted) {
@@ -1918,8 +1990,9 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         },
         onError: (e) async {
-          _streamUiTimer?.cancel();
-          _streamUiTimer = null;
+          _streamRevealTimer?.cancel();
+          _streamRevealTimer = null;
+          _streamRevealQueue.clear();
           if (!mounted) return;
           final friendly = e is ChatApiException
               ? e.message
@@ -1968,8 +2041,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _stopGeneration() async {
+    unawaited(HapticFeedback.lightImpact());
     await _streamSubscription?.cancel();
     _streamSubscription = null;
+    _finishStreamReveal(_streamRawText.toString());
     await TtsService.instance.stop();
     _isSpeaking = false;
     if (!mounted) return;
@@ -1977,6 +2052,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (lastMessage != null && lastMessage.isAssistant) {
       if (_voiceResponsePending && _voiceResponseBuffer.isNotEmpty) {
         lastMessage.content = _voiceResponseBuffer;
+      } else if (_streamRawText.length > 0) {
+        lastMessage.content = _streamRawText.toString();
       }
       if (lastMessage.content.isNotEmpty) {
         if (_regeneratingAssistantMessage != null) {
@@ -2056,11 +2133,13 @@ class _ChatScreenState extends State<ChatScreen> {
       _speech.stop();
     } catch (_) {}
     _streamSubscription?.cancel();
-    _streamUiTimer?.cancel();
+    _streamRevealTimer?.cancel();
+    _streamRevealQueue.clear();
     _voiceAutoSendTimer?.cancel();
     _scrollController.removeListener(_handleScrollChange);
     _controller.dispose();
     _scrollController.dispose();
+    _streamingText.dispose();
     super.dispose();
   }
 
@@ -2261,7 +2340,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           _sendMessage();
                         },
                       )
-                    : ListView.builder(
+                    : NotificationListener<ScrollNotification>(
+                        onNotification: _handleListScrollNotification,
+                        child: ListView.builder(
                         controller: _scrollController,
                         padding: const EdgeInsets.fromLTRB(16, 22, 16, 26),
                         itemCount: _messages.length,
@@ -2270,7 +2351,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           final isUser = msg.isUser;
                           final isLastAssistant = !isUser && index == _messages.length - 1;
 
-                          return Align(
+                          return RepaintBoundary(
+                            key: _messageKeys.putIfAbsent(msg.id, () => GlobalKey()),
+                            child: Align(
                             alignment: isUser
                                 ? Alignment.centerRight
                                 : Alignment.centerLeft,
@@ -2408,15 +2491,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                     bottomLeft: Radius.circular(isUser ? 22 : 7),
                                     bottomRight: Radius.circular(isUser ? 7 : 22),
                                   ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: isUser
-                                          ? GamaColors.accent.withOpacity(0.10)
-                                          : Colors.black.withOpacity(0.16),
-                                      blurRadius: isUser ? 18 : 12,
-                                      offset: const Offset(0, 5),
-                                    ),
-                                  ],
                                   border: isUser
                                       ? Border.all(
                                           color: GamaColors.accent.withOpacity(0.20),
@@ -2478,10 +2552,33 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ),
                                     ] else if (msg.content.isEmpty && !isUser && _isLoading && !_firstTokenReceived)
                                       ChatStatusIndicator(label: _chatStatusLabel)
-                                    else if (msg.content.isEmpty && !isUser && _isLoading)
+                                    else if (msg.content.isEmpty &&
+                                        !isUser &&
+                                        _isLoading &&
+                                        _voiceResponsePending)
                                       const SizedBox.shrink()
+                                    else if (!isUser &&
+                                        isLastAssistant &&
+                                        _isLoading &&
+                                        !_voiceResponsePending &&
+                                        _firstTokenReceived)
+                                      ValueListenableBuilder<String>(
+                                        valueListenable: _streamingText,
+                                        builder: (context, content, _) => Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            MessageContentView(
+                                              content: content,
+                                              isUser: false,
+                                              onTapLink: _openLink,
+                                            ),
+                                            const _StreamingCursor(),
+                                          ],
+                                        ),
+                                      )
                                     else
-                                      MessageContentView(
+                                      MemoizedMessageContentView(
                                         content: msg.content,
                                         isUser: isUser,
                                         onTapLink: _openLink,
@@ -2672,9 +2769,11 @@ class _ChatScreenState extends State<ChatScreen> {
                             if (!isUser) const SizedBox(height: 12),
                               ],
                             ),
+                          ),
                           );
                         },
                       ),
+                    ),
               ),
               if (_showScrollToBottom)
                 Positioned(
@@ -2688,7 +2787,10 @@ class _ChatScreenState extends State<ChatScreen> {
                       tooltip: 'Ir para o fim da conversa',
                       backgroundColor: GamaColors.surfaceElevated,
                       foregroundColor: GamaColors.accentBright,
-                      onPressed: () => _scrollToBottom(force: true),
+                      onPressed: () {
+                        _followStream = true;
+                        _scrollToBottom(force: true);
+                      },
                       child: const Icon(Icons.keyboard_arrow_down_rounded, size: 26),
                     ),
                   ),
@@ -3230,6 +3332,36 @@ class _EmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+class _StreamingCursor extends StatefulWidget {
+  const _StreamingCursor();
+
+  @override
+  State<_StreamingCursor> createState() => _StreamingCursorState();
+}
+
+class _StreamingCursorState extends State<_StreamingCursor>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 560),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+        opacity: Tween<double>(begin: 0.2, end: 1).animate(_controller),
+        child: Text(
+          '▍',
+          style: TextStyle(color: GamaColors.accentBright, fontSize: 17),
+        ),
+      );
 }
 
 class _TypingDots extends StatefulWidget {
