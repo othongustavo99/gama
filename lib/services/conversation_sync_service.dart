@@ -93,6 +93,8 @@ class ConversationSyncService {
                 'attachmentMetadataJson': m.attachmentMetadataJson,
                 'variants': m.variants,
                 'selectedVariantIndex': m.selectedVariantIndex,
+                'isTruncated': m.isTruncated,
+                'sourcesJson': m.sourcesJson,
               },
           ],
         },
@@ -176,6 +178,8 @@ class ConversationSyncService {
     'attachmentMetadataJson': m.attachmentMetadataJson,
     'variants': m.variants,
     'selectedVariantIndex': m.selectedVariantIndex,
+    'isTruncated': m.isTruncated,
+    'sourcesJson': m.sourcesJson,
   };
 
   Future<void> deleteRemote(String id) async {
@@ -263,6 +267,8 @@ class ConversationSyncService {
                       (raw['selectedVariantIndex'] ?? 0).toString(),
                     ) ??
                     0,
+                isTruncated: raw['isTruncated'] == true,
+                sourcesJson: (raw['sourcesJson'] ?? '').toString(),
               ),
         ],
       );

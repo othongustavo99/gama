@@ -25,13 +25,15 @@ class MessageAdapter extends TypeAdapter<Message> {
       attachmentMetadataJson: fields[5] as String? ?? '',
       variants: fields[6] == null ? null : List<String>.from(fields[6] as List),
       selectedVariantIndex: fields[7] as int? ?? 0,
+      isTruncated: fields[8] as bool? ?? false,
+      sourcesJson: fields[9] as String? ?? '',
     );
   }
 
   @override
   void write(BinaryWriter writer, Message obj) {
     writer
-      ..writeByte(8)
+      ..writeByte(10)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -47,7 +49,11 @@ class MessageAdapter extends TypeAdapter<Message> {
       ..writeByte(6)
       ..write(obj.variants)
       ..writeByte(7)
-      ..write(obj.selectedVariantIndex);
+      ..write(obj.selectedVariantIndex)
+      ..writeByte(8)
+      ..write(obj.isTruncated)
+      ..writeByte(9)
+      ..write(obj.sourcesJson);
   }
 
   @override

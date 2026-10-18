@@ -39,6 +39,8 @@ ENV/
 
 # Python tooling
 .pytest_cache/
+**/.pytest-packages/
+**/.pytest-tmp/
 .mypy_cache/
 .ruff_cache/
 

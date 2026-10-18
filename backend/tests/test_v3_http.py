@@ -43,7 +43,9 @@ class HttpIntegrationTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self._env = {k: os.environ.get(k) for k in ("DATA_DIR", "GAMA_REQUIRE_AUTH")}
         os.environ["DATA_DIR"] = os.path.join(self.tmp, "data")
-        os.environ.pop("GAMA_REQUIRE_AUTH", None)
+        # Testes legados exercitam X-User-Id explicitamente; a configuração
+        # padrão de produção exige Bearer e é coberta pelo teste dedicado.
+        os.environ["GAMA_REQUIRE_AUTH"] = "0"
 
         self.identity = identity
         self._old_verifier = identity._verifier

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
@@ -20,24 +21,48 @@ SEARCHED = []
 async def fake_search(q, max_results=8):
     SEARCHED.append(q)
     return [{"title": "Flutter 4", "url": "https://flutter.dev/news/", "snippet": "novidades"}]
+
+
+def fake_should_search(_query):
+    return True
+
+
+def fake_format_results(results):
+    return "\n".join(item.get("title", "") for item in results)
+
+
+def fake_web_enabled(_query):
+    return True
+
+
 ws.search_web = fake_search
+ws.should_search = fake_should_search
+ws._format_results = fake_format_results
+ws.web_tools_enabled_for_turn = fake_web_enabled
 sys.modules["app.web_search"] = ws
 
 from app.core import agent  # noqa: E402
 from app.core.memory import get_store  # noqa: E402
 from app.llm import LLMError  # noqa: E402
+from app.routes import chat as chat_route  # noqa: E402
 
 
 class FakeLLM:
     """Roteiro: lista de rodadas; cada rodada = lista de eventos."""
     def __init__(self, rounds, fail_first=None):
         self.rounds, self.fail_first, self.seen = list(rounds), fail_first, []
+        self.tool_names = []
+        self.seen_messages = []
 
     def prepare_messages(self, m):
         return list(m)
 
     async def stream_events(self, model, msgs, tools=None, raw=False):
         self.seen.append((len(msgs), bool(tools)))
+        self.tool_names.append([
+            tool["function"]["name"] for tool in (tools or [])
+        ])
+        self.seen_messages.append(list(msgs))
         if self.fail_first:
             raise self.fail_first
         for ev in self.rounds.pop(0):
@@ -83,7 +108,69 @@ class AgentTest(unittest.TestCase):
         self.assertIn("sources", types_)
         self.assertEqual(SEARCHED, ["flutter novidades"])
         self.assertEqual([e["text"] for e in evs if e["type"] == "token"], ["Resposta com fontes"])
-        self.assertEqual(llm.seen[1][0], 3)  # user + assistant(tool_calls) + tool
+        self.assertEqual(llm.seen[1][0], 4)  # system + user + assistant(tool_calls) + tool
+
+    def test_web_turn_disables_paid_media_even_when_requested_in_same_batch(self):
+        media_calls = []
+
+        async def media_handler(args):
+            media_calls.append(args)
+            yield {"type": "result", "content": "gerado"}
+
+        llm = FakeLLM([
+            [{"type": "tool_calls", "calls": [
+                {"id": "media", "name": "generate_image", "arguments": '{"prompt":"imagem"}'},
+                {"id": "web", "name": "web_search", "arguments": '{"query":"flutter"}'},
+            ]}],
+            [{"type": "token", "text": "Resposta"}],
+        ])
+        events = asyncio.run(collect(agent.run_agent(
+            llm, "m", [{"role": "user", "content": "pesquise e gere imagem"}],
+            user_id="u", user_text="pesquise e gere imagem",
+            tool_handlers={"generate_image": media_handler},
+        )))
+        self.assertEqual(media_calls, [])
+        self.assertNotIn("generate_image", llm.tool_names[1])
+        self.assertTrue(any(
+            "desativada depois" in str(message)
+            for message in llm.seen_messages[1]
+        ))
+
+    def test_web_disables_media_tools_in_followup_model_round(self):
+        llm = FakeLLM([
+            [tc("web_search", {"query": "flutter"})],
+            [{"type": "token", "text": "Resposta"}],
+        ])
+        asyncio.run(collect(agent.run_agent(
+            llm, "m", [{"role": "user", "content": "pesquise"}],
+            user_id="u", user_text="pesquise",
+        )))
+        # FakeLLM guarda os nomes das ferramentas oferecidas em cada chamada.
+        self.assertNotIn("generate_image", llm.tool_names[1])
+        self.assertNotIn("generate_video", llm.tool_names[1])
+
+
+    def test_message_ids_restore_older_history_when_sanitized_content_differs(self):
+        store = types.SimpleNamespace(get=lambda _conversation_id: {
+            "messages": [
+                {"id": "old-1", "role": "user", "content": "primeira mensagem"},
+                {"id": "old-2", "role": "assistant", "content": "resposta original longa"},
+            ]
+        })
+        request = [
+            {"role": "system", "content": "instrução do modo"},
+            {"id": "old-2", "role": "assistant", "content": "resposta sanitizada"},
+            {"id": "new-3", "role": "user", "content": "pergunta nova"},
+        ]
+        with patch.object(chat_route, "get_conversation_store", return_value=store):
+            restored = chat_route._restore_older_conversation_context(
+                "user", "conversation", request
+            )
+        self.assertEqual(restored[0], request[0])
+        self.assertEqual(restored[1]["content"], "primeira mensagem")
+        self.assertEqual(restored[2]["content"], "resposta sanitizada")
+        self.assertNotIn("id", restored[2])
+
 
     def test_fetch_url_allowlist(self):
         out, _ = asyncio.run(agent.execute_tool("fetch_url", {"url": "http://169.254.169.254/"}, agent.ToolContext("u", "x")))

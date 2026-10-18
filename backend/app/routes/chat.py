@@ -91,7 +91,11 @@ def _restore_older_conversation_context(
     try:
         stored = get_conversation_store(user_id).get(conversation_id) or {}
         previous = [
-            {"role": str(m.get("role") or "user"), "content": str(m.get("content") or "")}
+            {
+                "id": str(m.get("id") or ""),
+                "role": str(m.get("role") or "user"),
+                "content": str(m.get("content") or ""),
+            }
             for m in (stored.get("messages") or [])
             if isinstance(m, dict) and str(m.get("content") or "").strip()
         ]
@@ -102,32 +106,34 @@ def _restore_older_conversation_context(
         if not previous or not recent:
             return request_messages
 
-        # O texto de uma mensagem com anexos pode ter sido persistido em formato
-        # de exibição, enquanto o pedido usa o corpo preparado para o modelo.
-        # Nesse caso, a mensagem atual do servidor é substituída pela do pedido.
-        if (
-            recent[-1].get("role") == "user"
-            and previous[-1].get("role") == "user"
-            and previous[-1].get("content") != recent[-1].get("content")
-        ):
-            previous = previous[:-1]
-            if not previous:
-                return request_messages
-
         overlap = 0
         for size in range(min(len(previous), len(recent)), 0, -1):
             tail = previous[-size:]
             head = recent[:size]
             if all(
-                old.get("role") == new.get("role")
-                and old.get("content") == new.get("content")
+                (
+                    bool(old.get("id"))
+                    and bool(new.get("id"))
+                    and old["id"] == new["id"]
+                    and old.get("role") == new.get("role")
+                )
+                or (
+                    not (old.get("id") and new.get("id"))
+                    and old.get("role") == new.get("role")
+                    and old.get("content") == new.get("content")
+                )
                 for old, new in zip(tail, head)
             ):
                 overlap = size
                 break
         if overlap == 0:
             return request_messages
-        return [*leading_system, *previous[:-overlap], *recent]
+        restored = [*leading_system, *previous[:-overlap], *recent]
+        # IDs servem somente para alinhar histórico; não são enviados ao LLM.
+        return [
+            {"role": item["role"], "content": item["content"]}
+            for item in restored
+        ]
     except Exception as exc:
         logger.warning("conversation context restore failed: %s", type(exc).__name__)
         return request_messages
@@ -705,13 +711,18 @@ async def chat(
             raise HTTPException(413, "Imagem grande demais")
 
     messages = [
-        {"role": m.role, "content": m.content} for m in request.messages
+        {"id": m.id, "role": m.role, "content": m.content}
+        for m in request.messages
     ]
     messages = _restore_older_conversation_context(
         user_id,
         getattr(request, "conversation_id", None),
         messages,
     )
+    messages = [
+        {"role": message.get("role", "user"), "content": message.get("content", "")}
+        for message in messages
+    ]
     model = llm.resolve_model(request.model)
 
     last_user = ""

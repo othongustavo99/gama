@@ -246,6 +246,10 @@ class ConversationStore:
                     normalized_message["selectedVariantIndex"] = max(
                         0, min(selected, max(0, len(normalized_variants) - 1))
                     )
+                normalized_message["isTruncated"] = bool(m.get("isTruncated", False))
+                sources_json = m.get("sourcesJson")
+                if isinstance(sources_json, str) and len(sources_json) <= 100_000:
+                    normalized_message["sourcesJson"] = sources_json
                 messages.append(normalized_message)
 
         item = {
@@ -386,6 +390,10 @@ class ConversationStore:
             except (TypeError, ValueError):
                 selected = 0
             normalized["selectedVariantIndex"] = max(0, min(selected, max(0, len(variants) - 1)))
+        normalized["isTruncated"] = bool(m.get("isTruncated", False))
+        sources_json = m.get("sourcesJson")
+        if isinstance(sources_json, str) and len(sources_json) <= 100_000:
+            normalized["sourcesJson"] = sources_json
         return normalized
 
     def delete(self, conversation_id: str) -> bool:

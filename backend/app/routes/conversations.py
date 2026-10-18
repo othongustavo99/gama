@@ -32,6 +32,8 @@ class MessageIn(BaseModel):
     attachmentMetadataJson: Optional[str] = None
     variants: Optional[List[str]] = None
     selectedVariantIndex: Optional[int] = None
+    isTruncated: bool = False
+    sourcesJson: Optional[str] = Field(default=None, max_length=100_000)
 
 
 class ConversationIn(BaseModel):

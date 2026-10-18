@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:hive/hive.dart';
 
 part 'message.g.dart';
@@ -31,6 +33,13 @@ class Message extends HiveObject {
   @HiveField(7)
   int selectedVariantIndex;
 
+  /// Estado de apresentação que precisa sobreviver ao fechamento do app.
+  @HiveField(8)
+  bool isTruncated;
+
+  @HiveField(9)
+  String sourcesJson;
+
   Message({
     required this.id,
     required this.role,
@@ -40,6 +49,8 @@ class Message extends HiveObject {
     this.attachmentMetadataJson = '',
     List<String>? variants,
     this.selectedVariantIndex = 0,
+    this.isTruncated = false,
+    this.sourcesJson = '',
   }) : variants = List<String>.from(
          variants ?? (content.isNotEmpty ? <String>[content] : <String>[]),
        ),
@@ -58,6 +69,23 @@ class Message extends HiveObject {
 
   bool get isUser => role == 'user';
   bool get isAssistant => role == 'assistant';
+
+  List<Map<String, dynamic>> get sources {
+    try {
+      final decoded = jsonDecode(sourcesJson);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  set sources(List<Map<String, dynamic>> value) {
+    sourcesJson = jsonEncode(value);
+  }
 
   int get variantCount => variants.length;
 

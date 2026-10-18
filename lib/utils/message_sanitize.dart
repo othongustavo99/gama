@@ -58,7 +58,11 @@ class MessageSanitize {
       final role = m['role'] ?? 'user';
       final content = forApi(m['content'] ?? '');
       if (content.isEmpty) continue;
-      cleaned.add({'role': role, 'content': content});
+      cleaned.add({
+        'role': role,
+        'content': content,
+        if ((m['id'] ?? '').isNotEmpty) 'id': m['id']!,
+      });
     }
 
     // Mantém do mais recente para o mais antigo até o orçamento

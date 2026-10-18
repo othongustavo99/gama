@@ -326,6 +326,12 @@ async def run_agent(
                 for c in calls
             ],
         })
+        # Se o modelo pedir web e mídia na mesma rodada, a busca é processada
+        # primeiro para que a mídia seja bloqueada também nesse lote.
+        calls = sorted(
+            calls,
+            key=lambda call: 0 if call.get("name") in {"web_search", "fetch_url"} else 1,
+        )
         for c in calls:
             try:
                 args = json.loads(c["arguments"] or "{}")
@@ -334,6 +340,21 @@ async def run_agent(
             except json.JSONDecodeError:
                 args = {}
             ctx.calls += 1
+            # Conteúdo recuperado da web é dado não confiável. Depois de qualquer
+            # busca/leitura, não oferecemos ferramentas pagas de mídia ao modelo.
+            if c["name"] in {"web_search", "fetch_url"}:
+                tools = [
+                    tool for tool in tools
+                    if tool.get("function", {}).get("name")
+                    not in {"generate_image", "generate_video"}
+                ]
+            elif ctx.used_web and c["name"] in {"generate_image", "generate_video"}:
+                result, extras = (
+                    "Ferramenta de mídia desativada depois do uso de conteúdo da web.",
+                    {},
+                )
+                msgs.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+                continue
             if ctx.calls > settings.MAX_TOOL_CALLS:
                 result, extras = "Limite de ferramentas por resposta atingido.", {}
             else:

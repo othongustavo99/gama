@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class ChatMessage(BaseModel):
     role: str
+    id: Optional[str] = None
     # str normal OU lista multimodal OpenAI (text + image_url)
     content: Union[str, List[Any]] = ""
 

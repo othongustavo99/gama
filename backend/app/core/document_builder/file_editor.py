@@ -90,7 +90,7 @@ def apply_edits(
                 if isinstance(content, bytes):
                     target.write_bytes(content)
                 else:
-                    target.write_text(str(content), encoding="utf-8")
+                    target.write_text(str(content), encoding="utf-8", newline="")
                 applied.append(f"write:{path_rel}")
                 continue
 
@@ -100,7 +100,7 @@ def apply_edits(
                     errors.append(f"[{i}] append sem content: {path_rel}")
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with open(target, "a", encoding="utf-8") as f:
+                with open(target, "a", encoding="utf-8", newline="") as f:
                     f.write(str(content))
                 applied.append(f"append:{path_rel}")
                 continue
@@ -124,7 +124,7 @@ def apply_edits(
                     continue
                 count = -1 if edit.get("replace_all") else 1
                 text = text.replace(old, str(new), count)
-                target.write_text(text, encoding="utf-8")
+                target.write_text(text, encoding="utf-8", newline="")
                 applied.append(f"replace:{path_rel}")
                 continue
 
@@ -151,7 +151,7 @@ def apply_edits(
                 if n == 0:
                     errors.append(f"[{i}] regex sem match: {path_rel}")
                     continue
-                target.write_text(text2, encoding="utf-8")
+                target.write_text(text2, encoding="utf-8", newline="")
                 applied.append(f"regex_replace:{path_rel}({n})")
                 continue
 
@@ -179,6 +179,6 @@ def write_files(root: Path, files: dict[str, str]) -> list[str]:
             logger.warning("write_files: %s: %s", rel, exc)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        target.write_text(content, encoding="utf-8", newline="")
         written.append(rel)
     return written

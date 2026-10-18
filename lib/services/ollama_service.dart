@@ -294,7 +294,7 @@ class OllamaService {
       final recentMessages = ContextManager().buildContext(messages);
       final requestMessages = MessageSanitize.historyForApi(
         recentMessages
-            .map((m) => {'role': m.role, 'content': m.content})
+            .map((m) => {'id': m.id, 'role': m.role, 'content': m.content})
             .toList(),
       );
 
