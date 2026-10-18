@@ -135,8 +135,8 @@ class AttachmentService {
     final sizeLimit = kind == AttachmentKind.zip
         ? maxZipBytes
         : kind == AttachmentKind.video
-            ? maxVideoBytes
-            : maxBytesPerFile;
+        ? maxVideoBytes
+        : maxBytesPerFile;
     if (bytes > sizeLimit) {
       final limitMb = sizeLimit ~/ (1024 * 1024);
       if (kind == AttachmentKind.zip) {
@@ -169,7 +169,9 @@ class AttachmentService {
           final summary = await _ingestProjectZip(path, name);
           final id = summary['project_id']?.toString() ?? '';
           if (id.isEmpty) {
-            throw Exception('O servidor não retornou o ID do projeto indexado.');
+            throw Exception(
+              'O servidor não retornou o ID do projeto indexado.',
+            );
           }
           final body =
               '[project_id:$id]\n'
@@ -182,8 +184,8 @@ class AttachmentService {
             contentForModel: body,
             label: name,
             bytes: bytes,
-          sourcePath: path,
-        );
+            sourcePath: path,
+          );
         } catch (e) {
           // Se o servidor respondeu com erro, não esconda uma rejeição real usando
           // o fallback. Para ZIPs grandes também evitamos uma descompactação local
@@ -208,8 +210,8 @@ class AttachmentService {
               contentForModel: _extractZipText(data, name),
               label: '$name (extração local limitada)',
               bytes: bytes,
-            sourcePath: path,
-        );
+              sourcePath: path,
+            );
           } catch (fallbackError) {
             throw Exception('Falha ao processar $name: $fallbackError');
           }
@@ -221,9 +223,11 @@ class AttachmentService {
         try {
           final summary = await _ingestProjectDocument(path, name, ext);
           final id = summary['project_id']?.toString() ?? '';
-          if (id.isEmpty) throw Exception('O servidor não retornou o ID do documento.');
+          if (id.isEmpty)
+            throw Exception('O servidor não retornou o ID do documento.');
           final typeLabel = ext == '.docx' ? 'DOCX' : 'PDF';
-          text = '[project_id:$id]\n'
+          text =
+              '[project_id:$id]\n'
               'Documento anexado: $name ($typeLabel). Use o Code Analyzer com este project_id; '
               'não peça o arquivo de novo.';
         } catch (e) {
@@ -271,7 +275,8 @@ class AttachmentService {
         try {
           final uploaded = await _uploadVideo(path, name);
           final id = uploaded['artifact_id']?.toString() ?? '';
-          if (id.isEmpty) throw Exception('O servidor não retornou o ID do vídeo.');
+          if (id.isEmpty)
+            throw Exception('O servidor não retornou o ID do vídeo.');
           return ProcessedAttachment(
             name: name,
             ext: ext,
@@ -279,8 +284,8 @@ class AttachmentService {
             contentForModel: '[video_artifact_id:$id]\nVídeo anexado: $name.',
             label: '$name (vídeo enviado)',
             bytes: bytes,
-          sourcePath: path,
-        );
+            sourcePath: path,
+          );
         } catch (e) {
           throw Exception('Não consegui enviar o vídeo $name: $e');
         }
@@ -326,8 +331,12 @@ class AttachmentService {
     for (final file in archive) {
       if (!file.isFile) continue;
       final name = file.name.replaceAll('\\', '/');
-      if (name.endsWith('/') || _isSensitiveArchivePath(name) || _isJunkArchivePath(name)) continue;
-      if (name.startsWith('/') || name.split('/').any((part) => part == '..')) continue;
+      if (name.endsWith('/') ||
+          _isSensitiveArchivePath(name) ||
+          _isJunkArchivePath(name))
+        continue;
+      if (name.startsWith('/') || name.split('/').any((part) => part == '..'))
+        continue;
       final ext = p.extension(name).toLowerCase();
       if (!textExts.contains(ext)) {
         buf.writeln('\n(ignorado binário: $name)');
@@ -364,7 +373,8 @@ class AttachmentService {
     final responseData = error.response?.data;
     String detail = '';
     if (responseData is Map) {
-      detail = (responseData['detail'] ?? responseData['message'] ?? '').toString();
+      detail = (responseData['detail'] ?? responseData['message'] ?? '')
+          .toString();
     } else if (responseData is String) {
       detail = responseData.trim();
     }
@@ -385,43 +395,88 @@ class AttachmentService {
 
   bool _isSensitiveArchivePath(String path) {
     final normalized = path.replaceAll('\\', '/').toLowerCase();
-    final parts = normalized.split('/').where((part) => part.isNotEmpty).toList();
+    final parts = normalized
+        .split('/')
+        .where((part) => part.isNotEmpty)
+        .toList();
     final name = parts.isEmpty ? '' : parts.last;
-    const sensitiveDirs = {'.ssh', '.aws', '.azure', '.kube', '.gnupg', 'secrets', 'private'};
+    const sensitiveDirs = {
+      '.ssh',
+      '.aws',
+      '.azure',
+      '.kube',
+      '.gnupg',
+      'secrets',
+      'private',
+    };
     if (parts.take(parts.length - 1).any(sensitiveDirs.contains)) return true;
     if (parts.take(parts.length - 1).contains('.docker') &&
-        {'config.json', '.config.json'}.contains(name)) return true;
+        {'config.json', '.config.json'}.contains(name))
+      return true;
     for (var i = 0; i + 1 < parts.length; i++) {
       if (parts[i] == '.config' && parts[i + 1] == 'gcloud') return true;
     }
     const safeTemplates = {
-      '.env.example', '.env.sample', '.env.template', '.env.dist',
-      'example.env', 'sample.env', 'credentials.example.json',
-      'service-account.example.json', '.npmrc.example', '.pypirc.example',
+      '.env.example',
+      '.env.sample',
+      '.env.template',
+      '.env.dist',
+      'example.env',
+      'sample.env',
+      'credentials.example.json',
+      'service-account.example.json',
+      '.npmrc.example',
+      '.pypirc.example',
     };
     if (safeTemplates.contains(name)) return false;
     if (name.startsWith('.env.') &&
-        (name.endsWith('.example') || name.endsWith('.sample') ||
-            name.endsWith('.template') || name.endsWith('.dist'))) {
+        (name.endsWith('.example') ||
+            name.endsWith('.sample') ||
+            name.endsWith('.template') ||
+            name.endsWith('.dist'))) {
       return false;
     }
     if (name == '.env' || name.startsWith('.env.')) return true;
     const sensitiveNames = {
-      '.npmrc', '.pypirc', '.netrc', '.git-credentials',
-      'credentials', 'credentials.json', 'secrets', 'secrets.json', 'secret.json',
-      'token', 'token.json', 'tokens.json', 'auth.json', 'client_secret.json',
-      'service_account.json', 'service_account_key.json',
+      '.npmrc',
+      '.pypirc',
+      '.netrc',
+      '.git-credentials',
+      'credentials',
+      'credentials.json',
+      'secrets',
+      'secrets.json',
+      'secret.json',
+      'token',
+      'token.json',
+      'tokens.json',
+      'auth.json',
+      'client_secret.json',
+      'service_account.json',
+      'service_account_key.json',
       'application_default_credentials.json',
-      'id_rsa', 'id_ed25519', 'id_ed25519_sk', 'id_ecdsa', 'id_dsa',
+      'id_rsa',
+      'id_ed25519',
+      'id_ed25519_sk',
+      'id_ecdsa',
+      'id_dsa',
     };
     if (sensitiveNames.contains(name)) return true;
     const sensitiveSuffixes = {
-      '.pem', '.key', '.p12', '.pfx', '.jks', '.keystore',
-      '.mobileprovision', '.tfstate', '.tfstate.backup',
+      '.pem',
+      '.key',
+      '.p12',
+      '.pfx',
+      '.jks',
+      '.keystore',
+      '.mobileprovision',
+      '.tfstate',
+      '.tfstate.backup',
     };
     if (sensitiveSuffixes.any(name.endsWith)) return true;
     return (name.startsWith('service-account') ||
-            name.startsWith('firebase-adminsdk') || name.startsWith('client_secret_')) &&
+            name.startsWith('firebase-adminsdk') ||
+            name.startsWith('client_secret_')) &&
         name.endsWith('.json');
   }
 
@@ -429,13 +484,39 @@ class AttachmentService {
     final normalized = path.replaceAll('\\', '/');
     final parts = normalized.split('/');
     const junkDirs = {
-      '.git', '.svn', '.hg', '.dart_tool', '.idea', '.vs', '__macosx',
-      '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'node_modules',
-      'bower_components', 'pods', 'deriveddata', 'build', 'dist', 'out', 'target',
-      '.gradle', '.next', '.nuxt', '.svelte-kit', 'coverage', '.nyc_output',
-      'vendor', 'venv', '.venv', 'env',
+      '.git',
+      '.svn',
+      '.hg',
+      '.dart_tool',
+      '.idea',
+      '.vs',
+      '__macosx',
+      '__pycache__',
+      '.pytest_cache',
+      '.mypy_cache',
+      '.ruff_cache',
+      'node_modules',
+      'bower_components',
+      'pods',
+      'deriveddata',
+      'build',
+      'dist',
+      'out',
+      'target',
+      '.gradle',
+      '.next',
+      '.nuxt',
+      '.svelte-kit',
+      'coverage',
+      '.nyc_output',
+      'vendor',
+      'venv',
+      '.venv',
+      'env',
     };
-    return parts.take(parts.length - 1).any((part) => junkDirs.contains(part.toLowerCase()));
+    return parts
+        .take(parts.length - 1)
+        .any((part) => junkDirs.contains(part.toLowerCase()));
   }
 
   Future<Map<String, dynamic>> _ingestProjectZip(
@@ -513,7 +594,9 @@ class AttachmentService {
     final form = FormData.fromMap({
       'file': await MultipartFile.fromFile(path, filename: name),
     });
-    final route = ext == '.docx' ? '/project/ingest/docx' : '/project/ingest/pdf';
+    final route = ext == '.docx'
+        ? '/project/ingest/docx'
+        : '/project/ingest/pdf';
     final res = await dio.post(
       route,
       data: form,
@@ -624,9 +707,8 @@ class AttachmentService {
       buf.writeln('[arquivo:${a.ext}|${a.bytes}]');
       // O marcador é pequeno e precisa sobreviver no histórico local para que
       // pedidos posteriores ("altere e me mande em ZIP") encontrem o projeto.
-      final projectId = RegExp(
-        r'\[project_id:([A-Za-z0-9_-]{6,128})\]',
-      ).firstMatch(a.contentForModel);
+      final projectId = RegExp(r'\[project_id:([A-Za-z0-9_-]{6,128})\]')
+          .firstMatch(a.contentForModel);
       if (projectId != null) buf.writeln(projectId.group(0));
       final videoId = RegExp(
         r'\[video_artifact_id:([a-f0-9]{16})\]',

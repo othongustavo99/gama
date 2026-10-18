@@ -1,4 +1,3 @@
-
 import 'package:hive/hive.dart';
 
 part 'message.g.dart';
@@ -49,7 +48,8 @@ class Message extends HiveObject {
       this.variants.add(content);
       selectedVariantIndex = 0;
     } else if (this.variants.isNotEmpty) {
-      if (selectedVariantIndex < 0 || selectedVariantIndex >= this.variants.length) {
+      if (selectedVariantIndex < 0 ||
+          selectedVariantIndex >= this.variants.length) {
         selectedVariantIndex = 0;
       }
       if (content.isNotEmpty) this.variants[selectedVariantIndex] = content;
@@ -109,8 +109,5 @@ class Message extends HiveObject {
     content = variants[selectedVariantIndex];
   }
 
-  Map<String, dynamic> toJson() => {
-        'role': role,
-        'content': content,
-      };
+  Map<String, dynamic> toJson() => {'role': role, 'content': content};
 }

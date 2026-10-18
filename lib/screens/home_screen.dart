@@ -89,7 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) {
+      onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         _handleBack();
       },
@@ -133,7 +133,7 @@ class _HomeScreenState extends State<HomeScreen> {
           );
 
           return Scaffold(
-            backgroundColor: GamaColors.background,
+            backgroundColor: context.gama.background,
             drawer: desktopSidebar ? null : appDrawer,
             body: currentId == null
                 ? Center(
@@ -142,7 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       height: 28,
                       child: CircularProgressIndicator(
                         strokeWidth: 2.5,
-                        color: GamaColors.accent,
+                        color: context.gama.accent,
                       ),
                     ),
                   )
@@ -153,7 +153,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       VerticalDivider(
                         width: 1,
                         thickness: 1,
-                        color: GamaColors.divider,
+                        color: context.gama.divider,
                       ),
                       Expanded(
                         child: ChatScreen(

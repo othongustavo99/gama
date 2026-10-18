@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../core/gama_colors.dart';
 import '../services/plugin_settings_service.dart';
 
@@ -8,7 +9,8 @@ class _Plugin {
   final String title;
   final String subtitle;
   final IconData icon;
-  final bool serverSide; // recurso executado no backend, controlado por requisição
+  final bool
+  serverSide; // recurso executado no backend, controlado por requisição
   final bool defaultOn;
 
   const _Plugin({
@@ -131,7 +133,9 @@ class _PluginsScreenState extends State<PluginsScreen> {
       if (mounted) setState(() => _toggles[id] = previous ?? true);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Não foi possível salvar a configuração.')),
+          const SnackBar(
+            content: Text('Não foi possível salvar a configuração.'),
+          ),
         );
       }
     }
@@ -140,28 +144,26 @@ class _PluginsScreenState extends State<PluginsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: GamaColors.background,
+      backgroundColor: context.gama.background,
       appBar: AppBar(
-        backgroundColor: GamaColors.surface,
+        backgroundColor: context.gama.surface,
         title: const Text('Plugins'),
       ),
       body: _loading
-          ?  Center(
-              child: CircularProgressIndicator(color: GamaColors.accent),
-            )
+          ? Center(child: CircularProgressIndicator(color: context.gama.accent))
           : ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: _catalog.length + 1,
               separatorBuilder: (_, __) => const SizedBox(height: 8),
               itemBuilder: (_, i) {
                 if (i == 0) {
-                  return  Padding(
+                  return Padding(
                     padding: EdgeInsets.only(bottom: 4),
                     child: Text(
                       'Essas opções controlam os recursos usados nas próximas mensagens. '
                       'As alterações são salvas neste aparelho e enviadas à API quando necessário.',
                       style: TextStyle(
-                        color: GamaColors.textMuted,
+                        color: context.gama.textMuted,
                         fontSize: 13,
                         height: 1.4,
                       ),
@@ -171,18 +173,22 @@ class _PluginsScreenState extends State<PluginsScreen> {
                 final p = _catalog[i - 1];
                 final on = _toggles[p.id] ?? p.defaultOn;
                 return Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
-                    color: GamaColors.surfaceCard,
+                    color: context.gama.surfaceCard,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: GamaColors.border),
+                    border: Border.all(color: context.gama.border),
                   ),
                   child: Row(
                     children: [
                       Icon(
                         p.icon,
-                        color: on ? GamaColors.accent : GamaColors.textMuted,
+                        color: on
+                            ? context.gama.accent
+                            : context.gama.textMuted,
                       ),
                       const SizedBox(width: 14),
                       Expanded(
@@ -191,16 +197,16 @@ class _PluginsScreenState extends State<PluginsScreen> {
                           children: [
                             Text(
                               p.title,
-                              style:  TextStyle(
-                                color: GamaColors.textPrimary,
+                              style: TextStyle(
+                                color: context.gama.textPrimary,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
                             const SizedBox(height: 2),
                             Text(
                               p.subtitle,
-                              style:  TextStyle(
-                                color: GamaColors.textMuted,
+                              style: TextStyle(
+                                color: context.gama.textMuted,
                                 fontSize: 12,
                               ),
                             ),
@@ -209,7 +215,7 @@ class _PluginsScreenState extends State<PluginsScreen> {
                       ),
                       Switch(
                         value: on,
-                        activeThumbColor: GamaColors.accent,
+                        activeThumbColor: context.gama.accent,
                         onChanged: (v) =>
                             _set(p.id, v, serverSide: p.serverSide),
                       ),

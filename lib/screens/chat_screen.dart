@@ -473,18 +473,18 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.only(top: 10),
       child: Container(
         decoration: BoxDecoration(
-          color: GamaColors.surfaceCard,
+          color: context.gama.surfaceCard,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: GamaColors.borderSoft),
+          border: Border.all(color: context.gama.borderSoft),
         ),
         child: Theme(
           data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
-            leading: Icon(Icons.travel_explore, color: GamaColors.accent),
+            leading: Icon(Icons.travel_explore, color: context.gama.accent),
             title: Text(
               'Fontes (${sources.length})',
               style: TextStyle(
-                color: GamaColors.textSecondary,
+                color: context.gama.textSecondary,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
@@ -510,19 +510,22 @@ class _ChatScreenState extends State<ChatScreen> {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: GamaColors.textPrimary, fontSize: 13),
+                  style: TextStyle(
+                    color: context.gama.textPrimary,
+                    fontSize: 13,
+                  ),
                 ),
                 subtitle: Text(
                   domain,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: GamaColors.textMuted, fontSize: 11),
+                  style: TextStyle(color: context.gama.textMuted, fontSize: 12),
                 ),
                 trailing: canOpen
                     ? Icon(
                         Icons.open_in_new,
                         size: 16,
-                        color: GamaColors.textMuted,
+                        color: context.gama.textMuted,
                       )
                     : null,
                 onTap: canOpen ? () => _openLink(rawUrl) : null,
@@ -540,7 +543,7 @@ class _ChatScreenState extends State<ChatScreen> {
     showDialog<void>(
       context: context,
       builder: (dialogContext) => Dialog(
-        backgroundColor: GamaColors.surfaceElevated,
+        backgroundColor: context.gama.surfaceElevated,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -1079,10 +1082,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final edited = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: GamaColors.surfaceElevated,
+        backgroundColor: context.gama.surfaceElevated,
         title: Text(
           'Editar mensagem',
-          style: TextStyle(color: GamaColors.textPrimary),
+          style: TextStyle(color: context.gama.textPrimary),
         ),
         content: SizedBox(
           width: 560,
@@ -1091,7 +1094,7 @@ class _ChatScreenState extends State<ChatScreen> {
             autofocus: true,
             minLines: 3,
             maxLines: 12,
-            style: TextStyle(color: GamaColors.textPrimary),
+            style: TextStyle(color: context.gama.textPrimary),
             decoration: const InputDecoration(
               hintText: 'Edite o pedido para a Gama',
               border: OutlineInputBorder(),
@@ -1322,7 +1325,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!isLastAssistant) {
       return Align(
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: SizedBox(height: 36, child: moreButton),
+        child: SizedBox(height: 48, child: moreButton),
       );
     }
 
@@ -1336,18 +1339,16 @@ class _ChatScreenState extends State<ChatScreen> {
             tooltip: 'Copiar',
             onPressed: () => _copyMessage(message),
             icon: const Icon(Icons.copy_rounded),
-            color: GamaColors.textMuted,
+            color: context.gama.textMuted,
             iconSize: 17,
-            visualDensity: VisualDensity.compact,
           ),
           if (canRegenerate)
             IconButton(
               tooltip: 'Regenerar resposta',
               onPressed: () => _regenerateResponse(index),
               icon: const Icon(Icons.refresh_rounded),
-              color: GamaColors.textMuted,
+              color: context.gama.textMuted,
               iconSize: 18,
-              visualDensity: VisualDensity.compact,
             ),
           IconButton(
             tooltip: 'Boa resposta',
@@ -1355,11 +1356,10 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: Icon(
               Icons.thumb_up_alt_outlined,
               color: _feedbackByMessageId[message.id] == 1
-                  ? GamaColors.accent
-                  : GamaColors.textMuted,
+                  ? context.gama.accent
+                  : context.gama.textMuted,
             ),
             iconSize: 17,
-            visualDensity: VisualDensity.compact,
           ),
           IconButton(
             tooltip: 'Resposta ruim',
@@ -1367,11 +1367,10 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: Icon(
               Icons.thumb_down_alt_outlined,
               color: _feedbackByMessageId[message.id] == -1
-                  ? GamaColors.accent
-                  : GamaColors.textMuted,
+                  ? context.gama.accent
+                  : context.gama.textMuted,
             ),
             iconSize: 17,
-            visualDensity: VisualDensity.compact,
           ),
           moreButton,
         ],
@@ -1489,7 +1488,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_isLoading || _waitingForAttachment) return;
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: GamaColors.surfaceElevated,
+      backgroundColor: context.gama.surfaceElevated,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -1505,14 +1504,14 @@ class _ChatScreenState extends State<ChatScreen> {
                   height: 4,
                   margin: const EdgeInsets.only(bottom: 12),
                   decoration: BoxDecoration(
-                    color: GamaColors.border,
+                    color: context.gama.border,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
                 Text(
                   'Anexar',
                   style: TextStyle(
-                    color: GamaColors.textPrimary,
+                    color: context.gama.textPrimary,
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1521,15 +1520,18 @@ class _ChatScreenState extends State<ChatScreen> {
                 ListTile(
                   leading: Icon(
                     Icons.photo_camera_outlined,
-                    color: GamaColors.accent,
+                    color: context.gama.accent,
                   ),
                   title: Text(
                     'Câmera',
-                    style: TextStyle(color: GamaColors.textPrimary),
+                    style: TextStyle(color: context.gama.textPrimary),
                   ),
                   subtitle: Text(
                     'Tirar foto',
-                    style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                    style: TextStyle(
+                      color: context.gama.textMuted,
+                      fontSize: 12,
+                    ),
                   ),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -1539,15 +1541,18 @@ class _ChatScreenState extends State<ChatScreen> {
                 ListTile(
                   leading: Icon(
                     Icons.photo_library_outlined,
-                    color: GamaColors.accent,
+                    color: context.gama.accent,
                   ),
                   title: Text(
                     'Galeria',
-                    style: TextStyle(color: GamaColors.textPrimary),
+                    style: TextStyle(color: context.gama.textPrimary),
                   ),
                   subtitle: Text(
                     'Escolher imagem',
-                    style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                    style: TextStyle(
+                      color: context.gama.textMuted,
+                      fontSize: 12,
+                    ),
                   ),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -1557,15 +1562,18 @@ class _ChatScreenState extends State<ChatScreen> {
                 ListTile(
                   leading: Icon(
                     Icons.folder_open_rounded,
-                    color: GamaColors.accent,
+                    color: context.gama.accent,
                   ),
                   title: Text(
                     'Arquivos',
-                    style: TextStyle(color: GamaColors.textPrimary),
+                    style: TextStyle(color: context.gama.textPrimary),
                   ),
                   subtitle: Text(
                     'PDF, ZIP, código, documentos…',
-                    style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                    style: TextStyle(
+                      color: context.gama.textMuted,
+                      fontSize: 12,
+                    ),
                   ),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -1713,15 +1721,15 @@ class _ChatScreenState extends State<ChatScreen> {
           await showDialog<void>(
             context: context,
             builder: (ctx) => AlertDialog(
-              backgroundColor: GamaColors.surfaceCard,
+              backgroundColor: context.gama.surfaceCard,
               title: Text(
                 'Memória',
-                style: TextStyle(color: GamaColors.textPrimary),
+                style: TextStyle(color: context.gama.textPrimary),
               ),
               content: SingleChildScrollView(
                 child: Text(
                   body,
-                  style: TextStyle(color: GamaColors.textSecondary),
+                  style: TextStyle(color: context.gama.textSecondary),
                 ),
               ),
               actions: [
@@ -1729,7 +1737,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   onPressed: () => Navigator.pop(ctx),
                   child: Text(
                     'Fechar',
-                    style: TextStyle(color: GamaColors.accent),
+                    style: TextStyle(color: context.gama.accent),
                   ),
                 ),
               ],
@@ -2441,26 +2449,26 @@ class _ChatScreenState extends State<ChatScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: GamaColors.surfaceCard,
+        backgroundColor: context.gama.surfaceCard,
         title: Text(
           'Limpar esta conversa?',
-          style: TextStyle(color: GamaColors.textPrimary),
+          style: TextStyle(color: context.gama.textPrimary),
         ),
         content: Text(
           'Isso apaga todas as mensagens desta conversa.',
-          style: TextStyle(color: GamaColors.textSecondary),
+          style: TextStyle(color: context.gama.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: Text(
               'Cancelar',
-              style: TextStyle(color: GamaColors.textSecondary),
+              style: TextStyle(color: context.gama.textSecondary),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text('Apagar', style: TextStyle(color: GamaColors.error)),
+            child: Text('Apagar', style: TextStyle(color: context.gama.error)),
           ),
         ],
       ),
@@ -2512,24 +2520,27 @@ class _ChatScreenState extends State<ChatScreen> {
           if (_draggingFiles)
             Container(
               width: double.infinity,
-              color: GamaColors.accentSoft,
+              color: context.gama.accentSoft,
               padding: const EdgeInsets.symmetric(vertical: 7),
               child: Text(
                 'Solte os arquivos para anexá-los',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: GamaColors.accentBright, fontSize: 12),
+                style: TextStyle(
+                  color: context.gama.accentBright,
+                  fontSize: 12,
+                ),
               ),
             ),
           // App bar
           Container(
             decoration: BoxDecoration(
-              color: GamaColors.surface,
+              color: context.gama.surface,
               border: Border(
-                bottom: BorderSide(color: GamaColors.divider, width: 1),
+                bottom: BorderSide(color: context.gama.divider, width: 1),
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.25),
+                  color: Colors.black.withValues(alpha: 0.25),
                   blurRadius: 8,
                   offset: const Offset(0, 2),
                 ),
@@ -2550,8 +2561,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           builder: (drawerContext) => IconButton(
                             tooltip: 'Abrir conversas',
                             style: IconButton.styleFrom(
-                              backgroundColor: GamaColors.surfaceCard,
-                              foregroundColor: GamaColors.textPrimary,
+                              backgroundColor: context.gama.surfaceCard,
+                              foregroundColor: context.gama.textPrimary,
                               minimumSize: const Size(42, 42),
                               padding: EdgeInsets.zero,
                             ),
@@ -2570,19 +2581,19 @@ class _ChatScreenState extends State<ChatScreen> {
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                             colors: [
-                              GamaColors.surfaceHover,
-                              GamaColors.surfaceCard,
+                              context.gama.surfaceHover,
+                              context.gama.surfaceCard,
                             ],
                           ),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: GamaColors.border),
+                          border: Border.all(color: context.gama.border),
                         ),
                         child: Image.asset(
                           'assets/images/image3.png',
                           fit: BoxFit.contain,
                           errorBuilder: (_, __, ___) => Icon(
                             Icons.auto_awesome_rounded,
-                            color: GamaColors.accent,
+                            color: context.gama.accent,
                             size: 22,
                           ),
                         ),
@@ -2599,7 +2610,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: GamaColors.textPrimary,
+                                color: context.gama.textPrimary,
                                 fontSize: 15,
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: -0.25,
@@ -2628,8 +2639,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                       color:
                                           model ==
                                               SettingsService.instance.model
-                                          ? GamaColors.accent
-                                          : GamaColors.textMuted,
+                                          ? context.gama.accent
+                                          : context.gama.textMuted,
                                     ),
                                     const SizedBox(width: 9),
                                     Expanded(
@@ -2659,7 +2670,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                    color: GamaColors.textSecondary,
+                                    color: context.gama.textSecondary,
                                     fontSize: 12,
                                   ),
                                 ),
@@ -2799,283 +2810,300 @@ class _ChatScreenState extends State<ChatScreen> {
                               final isLastAssistant =
                                   !isUser && index == _messages.length - 1;
 
-                              return RepaintBoundary(
-                                key: _messageKeys.putIfAbsent(
-                                  msg.id,
-                                  () => GlobalKey(),
-                                ),
-                                child: Center(
-                                  child: ConstrainedBox(
-                                    constraints: const BoxConstraints(
-                                      maxWidth: 760,
-                                    ),
-                                    child: Align(
-                                      alignment: isUser
-                                          ? Alignment.centerRight
-                                          : Alignment.centerLeft,
-                                      child: Column(
-                                        crossAxisAlignment: isUser
-                                            ? CrossAxisAlignment.end
-                                            : CrossAxisAlignment.start,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Container(
-                                            constraints: BoxConstraints(
-                                              maxWidth: isUser ? 680 : 760,
-                                            ),
-                                            margin: EdgeInsets.only(
-                                              bottom: isUser ? 16 : 4,
-                                            ),
-                                            padding: isUser
-                                                ? const EdgeInsets.symmetric(
-                                                    horizontal: 16,
-                                                    vertical: 12,
-                                                  )
-                                                : EdgeInsets.zero,
-                                            decoration: isUser
-                                                ? BoxDecoration(
-                                                    gradient: LinearGradient(
-                                                      begin: Alignment.topLeft,
-                                                      end:
-                                                          Alignment.bottomRight,
-                                                      colors: [
-                                                        GamaColors
-                                                            .bubbleUserSoft,
-                                                        GamaColors.bubbleUser,
-                                                      ],
+                              return TweenAnimationBuilder<double>(
+                                key: ValueKey('message-enter-${msg.id}'),
+                                tween: Tween(begin: 0, end: 1),
+                                duration: const Duration(milliseconds: 180),
+                                curve: Curves.easeOutCubic,
+                                child: RepaintBoundary(
+                                  key: _messageKeys.putIfAbsent(
+                                    msg.id,
+                                    () => GlobalKey(),
+                                  ),
+                                  child: Center(
+                                    child: ConstrainedBox(
+                                      constraints: const BoxConstraints(
+                                        maxWidth: 760,
+                                      ),
+                                      child: Align(
+                                        alignment: isUser
+                                            ? Alignment.centerRight
+                                            : Alignment.centerLeft,
+                                        child: Column(
+                                          crossAxisAlignment: isUser
+                                              ? CrossAxisAlignment.end
+                                              : CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Container(
+                                              constraints: BoxConstraints(
+                                                maxWidth: isUser ? 680 : 760,
+                                              ),
+                                              margin: EdgeInsets.only(
+                                                bottom: isUser ? 16 : 4,
+                                              ),
+                                              padding: isUser
+                                                  ? const EdgeInsets.symmetric(
+                                                      horizontal: 16,
+                                                      vertical: 12,
+                                                    )
+                                                  : EdgeInsets.zero,
+                                              decoration: isUser
+                                                  ? BoxDecoration(
+                                                      gradient: LinearGradient(
+                                                        begin:
+                                                            Alignment.topLeft,
+                                                        end: Alignment
+                                                            .bottomRight,
+                                                        colors: [
+                                                          context
+                                                              .gama
+                                                              .bubbleUserSoft,
+                                                          context
+                                                              .gama
+                                                              .bubbleUser,
+                                                        ],
+                                                      ),
+                                                      borderRadius:
+                                                          const BorderRadius.only(
+                                                            topLeft:
+                                                                Radius.circular(
+                                                                  22,
+                                                                ),
+                                                            topRight:
+                                                                Radius.circular(
+                                                                  22,
+                                                                ),
+                                                            bottomLeft:
+                                                                Radius.circular(
+                                                                  22,
+                                                                ),
+                                                            bottomRight:
+                                                                Radius.circular(
+                                                                  7,
+                                                                ),
+                                                          ),
+                                                      border: Border.all(
+                                                        color: context
+                                                            .gama
+                                                            .accent
+                                                            .withValues(
+                                                              alpha: 0.20,
+                                                            ),
+                                                      ),
+                                                    )
+                                                  : null,
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  if (!isUser &&
+                                                      msg.id ==
+                                                          _failedAssistantMessageId &&
+                                                      _chatErrorMessage !=
+                                                          null) ...[
+                                                    if (msg.content
+                                                        .trim()
+                                                        .isNotEmpty)
+                                                      MessageContentView(
+                                                        content: msg.content,
+                                                        isUser: false,
+                                                        onTapLink: _openLink,
+                                                      ),
+                                                    const SizedBox(height: 8),
+                                                    ChatStatusIndicator(
+                                                      label: _chatErrorMessage!,
+                                                      isError: true,
+                                                      onRetry: _isLoading
+                                                          ? null
+                                                          : _retryLastFailedRequest,
                                                     ),
-                                                    borderRadius:
-                                                        const BorderRadius.only(
-                                                          topLeft:
-                                                              Radius.circular(
-                                                                22,
+                                                  ] else if (msg
+                                                          .content
+                                                          .isEmpty &&
+                                                      !isUser &&
+                                                      _isLoading &&
+                                                      !_firstTokenReceived)
+                                                    ChatStatusIndicator(
+                                                      label: _chatStatusLabel,
+                                                    )
+                                                  else if (msg
+                                                          .content
+                                                          .isEmpty &&
+                                                      !isUser &&
+                                                      _isLoading &&
+                                                      _voiceResponsePending)
+                                                    const SizedBox.shrink()
+                                                  else if (!isUser &&
+                                                      isLastAssistant &&
+                                                      _isLoading &&
+                                                      !_voiceResponsePending &&
+                                                      _firstTokenReceived)
+                                                    ValueListenableBuilder<
+                                                      String
+                                                    >(
+                                                      valueListenable:
+                                                          _streamingText,
+                                                      builder:
+                                                          (
+                                                            context,
+                                                            content,
+                                                            _,
+                                                          ) => Column(
+                                                            crossAxisAlignment:
+                                                                CrossAxisAlignment
+                                                                    .start,
+                                                            mainAxisSize:
+                                                                MainAxisSize
+                                                                    .min,
+                                                            children: [
+                                                              MessageContentView(
+                                                                content:
+                                                                    content,
+                                                                isUser: false,
+                                                                onTapLink:
+                                                                    _openLink,
                                                               ),
-                                                          topRight:
-                                                              Radius.circular(
-                                                                22,
-                                                              ),
-                                                          bottomLeft:
-                                                              Radius.circular(
-                                                                22,
-                                                              ),
-                                                          bottomRight:
-                                                              Radius.circular(
-                                                                7,
-                                                              ),
-                                                        ),
-                                                    border: Border.all(
-                                                      color: GamaColors.accent
-                                                          .withOpacity(0.20),
-                                                    ),
-                                                  )
-                                                : null,
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                if (!isUser &&
-                                                    msg.id ==
-                                                        _failedAssistantMessageId &&
-                                                    _chatErrorMessage !=
-                                                        null) ...[
-                                                  if (msg.content
-                                                      .trim()
-                                                      .isNotEmpty)
-                                                    MessageContentView(
+                                                              const _StreamingCursor(),
+                                                            ],
+                                                          ),
+                                                    )
+                                                  else
+                                                    MemoizedMessageContentView(
                                                       content: msg.content,
-                                                      isUser: false,
+                                                      isUser: isUser,
                                                       onTapLink: _openLink,
                                                     ),
-                                                  const SizedBox(height: 8),
-                                                  ChatStatusIndicator(
-                                                    label: _chatErrorMessage!,
-                                                    isError: true,
-                                                    onRetry: _isLoading
-                                                        ? null
-                                                        : _retryLastFailedRequest,
-                                                  ),
-                                                ] else if (msg
-                                                        .content
-                                                        .isEmpty &&
-                                                    !isUser &&
-                                                    _isLoading &&
-                                                    !_firstTokenReceived)
-                                                  ChatStatusIndicator(
-                                                    label: _chatStatusLabel,
-                                                  )
-                                                else if (msg.content.isEmpty &&
-                                                    !isUser &&
-                                                    _isLoading &&
-                                                    _voiceResponsePending)
-                                                  const SizedBox.shrink()
-                                                else if (!isUser &&
-                                                    isLastAssistant &&
-                                                    _isLoading &&
-                                                    !_voiceResponsePending &&
-                                                    _firstTokenReceived)
-                                                  ValueListenableBuilder<
-                                                    String
-                                                  >(
-                                                    valueListenable:
-                                                        _streamingText,
-                                                    builder:
-                                                        (
-                                                          context,
-                                                          content,
-                                                          _,
-                                                        ) => Column(
-                                                          crossAxisAlignment:
-                                                              CrossAxisAlignment
-                                                                  .start,
-                                                          mainAxisSize:
-                                                              MainAxisSize.min,
-                                                          children: [
-                                                            MessageContentView(
-                                                              content: content,
-                                                              isUser: false,
-                                                              onTapLink:
-                                                                  _openLink,
-                                                            ),
-                                                            const _StreamingCursor(),
-                                                          ],
-                                                        ),
-                                                  )
-                                                else
-                                                  MemoizedMessageContentView(
-                                                    content: msg.content,
-                                                    isUser: isUser,
-                                                    onTapLink: _openLink,
-                                                  ),
-                                                if (!isUser &&
-                                                    (_artifactsByMessageId[msg
-                                                                .id]
-                                                            ?.isNotEmpty ??
-                                                        false)) ...[
-                                                  const SizedBox(height: 12),
-                                                  _ArtifactStatusList(
-                                                    artifacts:
-                                                        _artifactsByMessageId[msg
-                                                            .id]!,
-                                                    onDownload: (artifact) {
-                                                      final id =
-                                                          artifact['artifact_id']
-                                                              ?.toString() ??
-                                                          '';
-                                                      final filename =
-                                                          artifact['filename']
-                                                              ?.toString() ??
-                                                          'gamma_arquivo.zip';
-                                                      if (id.isNotEmpty) {
-                                                        _downloadGeneratedArtifact(
-                                                          id,
-                                                          filename,
-                                                        );
-                                                      }
-                                                    },
-                                                  ),
-                                                ],
-                                                if (!isUser &&
-                                                    (_sourcesByMessageId[msg.id]
-                                                            ?.isNotEmpty ??
-                                                        false))
-                                                  _sourceChips(msg.id),
-                                                if (!isUser &&
-                                                    !_isLoading &&
-                                                    msg.variants.length > 1)
-                                                  Padding(
-                                                    padding:
-                                                        const EdgeInsets.only(
-                                                          top: 8,
-                                                        ),
-                                                    child: Row(
-                                                      mainAxisSize:
-                                                          MainAxisSize.min,
-                                                      children: [
-                                                        IconButton(
-                                                          tooltip:
-                                                              'Versão anterior',
-                                                          visualDensity:
-                                                              VisualDensity
-                                                                  .compact,
-                                                          constraints:
-                                                              const BoxConstraints.tightFor(
-                                                                width: 32,
-                                                                height: 32,
-                                                              ),
-                                                          padding:
-                                                              EdgeInsets.zero,
-                                                          onPressed:
-                                                              msg.selectedVariantIndex >
-                                                                  0
-                                                              ? () => _selectResponseVariant(
-                                                                  msg,
-                                                                  msg.selectedVariantIndex -
-                                                                      1,
-                                                                )
-                                                              : null,
-                                                          icon: const Icon(
-                                                            Icons
-                                                                .chevron_left_rounded,
-                                                            size: 20,
-                                                          ),
-                                                        ),
-                                                        Text(
-                                                          '${msg.selectedVariantIndex + 1}/${msg.variants.length}',
-                                                          style: TextStyle(
-                                                            color: GamaColors
-                                                                .textMuted,
-                                                            fontSize: 12,
-                                                          ),
-                                                        ),
-                                                        IconButton(
-                                                          tooltip:
-                                                              'Próxima versão',
-                                                          visualDensity:
-                                                              VisualDensity
-                                                                  .compact,
-                                                          constraints:
-                                                              const BoxConstraints.tightFor(
-                                                                width: 32,
-                                                                height: 32,
-                                                              ),
-                                                          padding:
-                                                              EdgeInsets.zero,
-                                                          onPressed:
-                                                              msg.selectedVariantIndex <
-                                                                  msg
-                                                                          .variants
-                                                                          .length -
-                                                                      1
-                                                              ? () => _selectResponseVariant(
-                                                                  msg,
-                                                                  msg.selectedVariantIndex +
-                                                                      1,
-                                                                )
-                                                              : null,
-                                                          icon: const Icon(
-                                                            Icons
-                                                                .chevron_right_rounded,
-                                                            size: 20,
-                                                          ),
-                                                        ),
-                                                      ],
+                                                  if (!isUser &&
+                                                      (_artifactsByMessageId[msg
+                                                                  .id]
+                                                              ?.isNotEmpty ??
+                                                          false)) ...[
+                                                    const SizedBox(height: 12),
+                                                    _ArtifactStatusList(
+                                                      artifacts:
+                                                          _artifactsByMessageId[msg
+                                                              .id]!,
+                                                      onDownload: (artifact) {
+                                                        final id =
+                                                            artifact['artifact_id']
+                                                                ?.toString() ??
+                                                            '';
+                                                        final filename =
+                                                            artifact['filename']
+                                                                ?.toString() ??
+                                                            'gamma_arquivo.zip';
+                                                        if (id.isNotEmpty) {
+                                                          _downloadGeneratedArtifact(
+                                                            id,
+                                                            filename,
+                                                          );
+                                                        }
+                                                      },
                                                     ),
-                                                  ),
-                                              ],
+                                                  ],
+                                                  if (!isUser &&
+                                                      (_sourcesByMessageId[msg
+                                                                  .id]
+                                                              ?.isNotEmpty ??
+                                                          false))
+                                                    _sourceChips(msg.id),
+                                                  if (!isUser &&
+                                                      !_isLoading &&
+                                                      msg.variants.length > 1)
+                                                    Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                            top: 8,
+                                                          ),
+                                                      child: Row(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: [
+                                                          IconButton(
+                                                            tooltip: 'Versão anterior',
+                                                            constraints:
+                                                                const BoxConstraints.tightFor(
+                                                                  width: 48,
+                                                                  height: 48,
+                                                                ),
+                                                            padding:
+                                                                EdgeInsets.zero,
+                                                            onPressed:
+                                                                msg.selectedVariantIndex >
+                                                                    0
+                                                                ? () => _selectResponseVariant(
+                                                                    msg,
+                                                                    msg.selectedVariantIndex -
+                                                                        1,
+                                                                  )
+                                                                : null,
+                                                            icon: const Icon(
+                                                              Icons
+                                                                  .chevron_left_rounded,
+                                                              size: 20,
+                                                            ),
+                                                          ),
+                                                          Text(
+                                                            '${msg.selectedVariantIndex + 1}/${msg.variants.length}',
+                                                            style: TextStyle(
+                                                              color: context
+                                                                  .gama
+                                                                  .textMuted,
+                                                              fontSize: 12,
+                                                            ),
+                                                          ),
+                                                          IconButton(
+                                                            tooltip: 'Próxima versão',
+                                                            constraints:
+                                                                const BoxConstraints.tightFor(
+                                                                  width: 48,
+                                                                  height: 48,
+                                                                ),
+                                                            padding:
+                                                                EdgeInsets.zero,
+                                                            onPressed:
+                                                                msg.selectedVariantIndex <
+                                                                    msg.variants.length -
+                                                                        1
+                                                                ? () => _selectResponseVariant(
+                                                                    msg,
+                                                                    msg.selectedVariantIndex +
+                                                                        1,
+                                                                  )
+                                                                : null,
+                                                            icon: const Icon(
+                                                              Icons
+                                                                  .chevron_right_rounded,
+                                                              size: 20,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
                                             ),
-                                          ),
-                                          if (msg.content.trim().isNotEmpty)
-                                            _messageActions(
-                                              msg,
-                                              index,
-                                              isLastAssistant,
-                                            ),
-                                          if (!isUser)
-                                            const SizedBox(height: 12),
-                                        ],
+                                            if (msg.content.trim().isNotEmpty)
+                                              _messageActions(
+                                                msg,
+                                                index,
+                                                isLastAssistant,
+                                              ),
+                                            if (!isUser)
+                                              const SizedBox(height: 12),
+                                          ],
+                                        ),
                                       ),
                                     ),
+                                  ),
+                                ),
+                                builder: (context, value, child) => Opacity(
+                                  opacity: value,
+                                  child: Transform.translate(
+                                    offset: Offset(0, (1 - value) * 8),
+                                    child: child,
                                   ),
                                 ),
                               );
@@ -3093,8 +3121,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       child: FloatingActionButton.small(
                         heroTag: 'gama_scroll_to_bottom',
                         tooltip: 'Ir para o fim da conversa',
-                        backgroundColor: GamaColors.surfaceElevated,
-                        foregroundColor: GamaColors.accentBright,
+                        backgroundColor: context.gama.surfaceElevated,
+                        foregroundColor: context.gama.accentBright,
                         onPressed: () {
                           _followStream = true;
                           _scrollToBottom(force: true);
@@ -3117,9 +3145,11 @@ class _ChatScreenState extends State<ChatScreen> {
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
-                color: GamaColors.accentSoft,
+                color: context.gama.accentSoft,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: GamaColors.accent.withOpacity(0.35)),
+                border: Border.all(
+                  color: context.gama.accent.withValues(alpha: 0.35),
+                ),
               ),
               child: Row(
                 children: [
@@ -3128,7 +3158,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     height: 18,
                     child: CircularProgressIndicator(
                       strokeWidth: 2.2,
-                      color: GamaColors.accent,
+                      color: context.gama.accent,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -3136,7 +3166,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: Text(
                       _processingLabel ?? 'Processando anexo…',
                       style: TextStyle(
-                        color: GamaColors.textPrimary,
+                        color: context.gama.textPrimary,
                         fontSize: 13,
                       ),
                     ),
@@ -3148,7 +3178,7 @@ class _ChatScreenState extends State<ChatScreen> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
-              color: GamaColors.surface,
+              color: context.gama.surface,
               child: Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -3158,9 +3188,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       width: 220,
                       padding: const EdgeInsets.all(7),
                       decoration: BoxDecoration(
-                        color: GamaColors.surfaceCard,
+                        color: context.gama.surfaceCard,
                         borderRadius: BorderRadius.circular(13),
-                        border: Border.all(color: GamaColors.border),
+                        border: Border.all(color: context.gama.border),
                       ),
                       child: Row(
                         children: [
@@ -3176,7 +3206,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 errorBuilder: (_, __, ___) => Container(
                                   width: 56,
                                   height: 56,
-                                  color: GamaColors.surfaceHover,
+                                  color: context.gama.surfaceHover,
                                   child: const Icon(
                                     Icons.broken_image_outlined,
                                   ),
@@ -3193,8 +3223,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 11,
-                                  color: GamaColors.textPrimary,
+                                  fontSize: 12,
+                                  color: context.gama.textPrimary,
                                 ),
                               ),
                             ),
@@ -3218,13 +3248,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   return Container(
                     padding: const EdgeInsets.only(left: 4, right: 4),
                     decoration: BoxDecoration(
-                      color: GamaColors.surfaceCard,
+                      color: context.gama.surfaceCard,
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: GamaColors.border),
+                      border: Border.all(color: context.gama.border),
                     ),
                     child: Chip(
                       avatar: CircleAvatar(
-                        backgroundColor: GamaColors.accentSoft,
+                        backgroundColor: context.gama.accentSoft,
                         child: Icon(
                           a.kind.name == 'image'
                               ? Icons.image_rounded
@@ -3236,14 +3266,14 @@ class _ChatScreenState extends State<ChatScreen> {
                               ? Icons.picture_as_pdf_rounded
                               : Icons.insert_drive_file_rounded,
                           size: 16,
-                          color: GamaColors.accent,
+                          color: context.gama.accent,
                         ),
                       ),
                       label: Text(
                         a.label,
                         style: TextStyle(
                           fontSize: 12,
-                          color: GamaColors.textPrimary,
+                          color: context.gama.textPrimary,
                         ),
                       ),
                       backgroundColor: Colors.transparent,
@@ -3251,7 +3281,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       deleteIcon: Icon(
                         Icons.close_rounded,
                         size: 16,
-                        color: GamaColors.textMuted,
+                        color: context.gama.textMuted,
                       ),
                       onDeleted: () {
                         setState(() => _attachments.remove(a));
@@ -3298,7 +3328,7 @@ class _SourceFavicon extends StatelessWidget {
     if (!hasHttpScheme || host.isEmpty || host == 'localhost') {
       return Icon(
         Icons.language_rounded,
-        color: GamaColors.textMuted,
+        color: context.gama.textMuted,
         size: 18,
       );
     }
@@ -3310,8 +3340,11 @@ class _SourceFavicon extends StatelessWidget {
         width: 20,
         height: 20,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) =>
-            Icon(Icons.language_rounded, color: GamaColors.textMuted, size: 18),
+        errorBuilder: (_, __, ___) => Icon(
+          Icons.language_rounded,
+          color: context.gama.textMuted,
+          size: 18,
+        ),
       ),
     );
   }
@@ -3381,9 +3414,9 @@ class _ArtifactStatusList extends StatelessWidget {
               margin: const EdgeInsets.only(bottom: 6),
               padding: const EdgeInsets.all(11),
               decoration: BoxDecoration(
-                color: GamaColors.surfaceCard.withOpacity(0.82),
+                color: context.gama.surfaceCard.withValues(alpha: 0.82),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: GamaColors.borderSoft),
+                border: Border.all(color: context.gama.borderSoft),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3396,7 +3429,7 @@ class _ArtifactStatusList extends StatelessWidget {
                             : isVideo
                             ? Icons.movie_outlined
                             : Icons.description_outlined,
-                        color: GamaColors.accentBright,
+                        color: context.gama.accentBright,
                         size: 19,
                       ),
                       const SizedBox(width: 8),
@@ -3406,7 +3439,7 @@ class _ArtifactStatusList extends StatelessWidget {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: GamaColors.textPrimary,
+                            color: context.gama.textPrimary,
                             fontSize: 12.5,
                             fontWeight: FontWeight.w700,
                           ),
@@ -3425,7 +3458,7 @@ class _ArtifactStatusList extends StatelessWidget {
                               : Icons.error_outline,
                           size: 16,
                           color: zipOk
-                              ? GamaColors.accentBright
+                              ? context.gama.accentBright
                               : Colors.orangeAccent,
                         ),
                         const SizedBox(width: 7),
@@ -3435,7 +3468,7 @@ class _ArtifactStatusList extends StatelessWidget {
                                 ? 'Integridade do ZIP: passou (estrutura/CRC)'
                                 : 'Integridade do ZIP: falhou',
                             style: TextStyle(
-                              color: GamaColors.textSecondary,
+                              color: context.gama.textSecondary,
                               fontSize: 12,
                             ),
                           ),
@@ -3455,14 +3488,14 @@ class _ArtifactStatusList extends StatelessWidget {
                           size: 16,
                           color: syntaxStatus == 'issues_found'
                               ? Colors.orangeAccent
-                              : GamaColors.accentBright,
+                              : context.gama.accentBright,
                         ),
                         const SizedBox(width: 7),
                         Expanded(
                           child: Text(
                             _validationLabel(source),
                             style: TextStyle(
-                              color: GamaColors.textSecondary,
+                              color: context.gama.textSecondary,
                               fontSize: 12,
                             ),
                           ),
@@ -3474,8 +3507,8 @@ class _ArtifactStatusList extends StatelessWidget {
                       Text(
                         'Arquivos verificados: $checked · não verificados: $unverified · problemas: $issues',
                         style: TextStyle(
-                          color: GamaColors.textMuted,
-                          fontSize: 11,
+                          color: context.gama.textMuted,
+                          fontSize: 12,
                         ),
                       ),
                       if (source['note'] is String)
@@ -3486,8 +3519,8 @@ class _ArtifactStatusList extends StatelessWidget {
                             maxLines: 3,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: GamaColors.textMuted,
-                              fontSize: 10.5,
+                              color: context.gama.textMuted,
+                              fontSize: 12,
                             ),
                           ),
                         ),
@@ -3496,7 +3529,7 @@ class _ArtifactStatusList extends StatelessWidget {
                     Text(
                       'Vídeo gerado${artifact['duration_seconds'] == null ? '' : ' · ${artifact['duration_seconds']} s'}${artifact['resolution'] == null ? '' : ' · ${artifact['resolution']}'} · $videoAudioLabel',
                       style: TextStyle(
-                        color: GamaColors.textSecondary,
+                        color: context.gama.textSecondary,
                         fontSize: 12,
                       ),
                     ),
@@ -3504,8 +3537,8 @@ class _ArtifactStatusList extends StatelessWidget {
                     Text(
                       'Confira o resultado antes de compartilhar ou substituir o original.',
                       style: TextStyle(
-                        color: GamaColors.textMuted,
-                        fontSize: 11,
+                        color: context.gama.textMuted,
+                        fontSize: 12,
                       ),
                     ),
                     if (providerCost != null) ...[
@@ -3513,8 +3546,8 @@ class _ArtifactStatusList extends StatelessWidget {
                       Text(
                         'Custo informado pela OpenRouter: US\$${providerCost.toStringAsFixed(4)}',
                         style: TextStyle(
-                          color: GamaColors.textMuted,
-                          fontSize: 11,
+                          color: context.gama.textMuted,
+                          fontSize: 12,
                         ),
                       ),
                     ],
@@ -3524,7 +3557,7 @@ class _ArtifactStatusList extends StatelessWidget {
                           ? 'Arquivo gerado e validado estruturalmente.'
                           : 'O arquivo precisa de verificação adicional.',
                       style: TextStyle(
-                        color: GamaColors.textSecondary,
+                        color: context.gama.textSecondary,
                         fontSize: 12,
                       ),
                     ),
@@ -3591,13 +3624,16 @@ class _EmptyState extends StatelessWidget {
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [GamaColors.surfaceHover, GamaColors.surfaceCard],
+                    colors: [
+                      context.gama.surfaceHover,
+                      context.gama.surfaceCard,
+                    ],
                   ),
                   borderRadius: BorderRadius.circular(30),
-                  border: Border.all(color: GamaColors.border),
+                  border: Border.all(color: context.gama.border),
                   boxShadow: [
                     BoxShadow(
-                      color: GamaColors.accent.withOpacity(0.12),
+                      color: context.gama.accent.withValues(alpha: 0.12),
                       blurRadius: 36,
                       spreadRadius: 2,
                     ),
@@ -3615,20 +3651,20 @@ class _EmptyState extends StatelessWidget {
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: GamaColors.surfaceCard,
+                  color: context.gama.surfaceCard,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: GamaColors.borderSoft),
+                  border: Border.all(color: context.gama.borderSoft),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.circle, color: GamaColors.success, size: 7),
+                    Icon(Icons.circle, color: context.gama.success, size: 7),
                     SizedBox(width: 7),
                     Text(
                       'SEU ESPAÇO DE TRABALHO',
                       style: TextStyle(
-                        color: GamaColors.textSecondary,
-                        fontSize: 11,
+                        color: context.gama.textSecondary,
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 1.0,
                       ),
@@ -3641,7 +3677,7 @@ class _EmptyState extends StatelessWidget {
                 'O que vamos criar hoje?',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: GamaColors.textPrimary,
+                  color: context.gama.textPrimary,
                   fontSize: 26,
                   fontWeight: FontWeight.w700,
                   letterSpacing: -0.8,
@@ -3653,7 +3689,7 @@ class _EmptyState extends StatelessWidget {
                 'Converse, programe ou explore uma ideia.\nA Gama ajuda você a dar o próximo passo.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: GamaColors.textMuted,
+                  color: context.gama.textMuted,
                   fontSize: 14,
                   height: 1.55,
                 ),
@@ -3664,7 +3700,7 @@ class _EmptyState extends StatelessWidget {
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Material(
-                    color: GamaColors.surfaceCard,
+                    color: context.gama.surfaceCard,
                     borderRadius: BorderRadius.circular(18),
                     child: InkWell(
                       onTap: () => onSuggestion(entry.value),
@@ -3674,7 +3710,7 @@ class _EmptyState extends StatelessWidget {
                         padding: const EdgeInsets.fromLTRB(13, 13, 14, 13),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: GamaColors.borderSoft),
+                          border: Border.all(color: context.gama.borderSoft),
                         ),
                         child: Row(
                           children: [
@@ -3682,12 +3718,12 @@ class _EmptyState extends StatelessWidget {
                               width: 42,
                               height: 42,
                               decoration: BoxDecoration(
-                                color: GamaColors.accentSoft,
+                                color: context.gama.accentSoft,
                                 borderRadius: BorderRadius.circular(13),
                               ),
                               child: Icon(
                                 _suggestionIcons[index],
-                                color: GamaColors.accentBright,
+                                color: context.gama.accentBright,
                                 size: 20,
                               ),
                             ),
@@ -3699,7 +3735,7 @@ class _EmptyState extends StatelessWidget {
                                   Text(
                                     _suggestionTitles[index],
                                     style: TextStyle(
-                                      color: GamaColors.textPrimary,
+                                      color: context.gama.textPrimary,
                                       fontSize: 13.5,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -3708,8 +3744,8 @@ class _EmptyState extends StatelessWidget {
                                   Text(
                                     _suggestionDescriptions[index],
                                     style: TextStyle(
-                                      color: GamaColors.textMuted,
-                                      fontSize: 11.5,
+                                      color: context.gama.textMuted,
+                                      fontSize: 12,
                                       height: 1.35,
                                     ),
                                   ),
@@ -3718,7 +3754,7 @@ class _EmptyState extends StatelessWidget {
                             ),
                             Icon(
                               Icons.arrow_forward_rounded,
-                              color: GamaColors.textMuted,
+                              color: context.gama.textMuted,
                               size: 18,
                             ),
                           ],
@@ -3761,7 +3797,7 @@ class _StreamingCursorState extends State<_StreamingCursor>
     opacity: Tween<double>(begin: 0.2, end: 1).animate(_controller),
     child: Text(
       '▍',
-      style: TextStyle(color: GamaColors.accentBright, fontSize: 17),
+      style: TextStyle(color: context.gama.accentBright, fontSize: 17),
     ),
   );
 }
@@ -3811,7 +3847,7 @@ class _TypingDotsState extends State<_TypingDots>
                   width: 7,
                   height: 7,
                   decoration: BoxDecoration(
-                    color: GamaColors.accent.withOpacity(0.85),
+                    color: context.gama.accent.withValues(alpha: 0.85),
                     shape: BoxShape.circle,
                   ),
                 ),

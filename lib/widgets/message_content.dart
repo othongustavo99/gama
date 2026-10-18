@@ -351,7 +351,7 @@ class MessageContentView extends StatelessWidget {
     final images = isUser ? extracted.$2 : parsed.images;
 
     final textStyle = TextStyle(
-      color: isUser ? Colors.white : GamaColors.textPrimary,
+      color: isUser ? Colors.white : context.gama.textPrimary,
       fontSize: 15,
       height: 1.55,
       letterSpacing: 0.1,
@@ -372,7 +372,7 @@ class MessageContentView extends StatelessWidget {
                 padding: EdgeInsets.only(bottom: 10),
                 child: Text(
                   '[imagem indisponível]',
-                  style: TextStyle(color: GamaColors.textMuted),
+                  style: TextStyle(color: context.gama.textMuted),
                 ),
               );
             }
@@ -387,7 +387,7 @@ class MessageContentView extends StatelessWidget {
                       gaplessPlayback: true,
                       errorBuilder: (_, __, ___) => Text(
                         '[imagem indisponível]',
-                        style: TextStyle(color: GamaColors.textMuted),
+                        style: TextStyle(color: context.gama.textMuted),
                       ),
                     )
                   : Image.memory(
@@ -396,7 +396,7 @@ class MessageContentView extends StatelessWidget {
                       gaplessPlayback: true,
                       errorBuilder: (_, __, ___) => Text(
                         '[imagem indisponível]',
-                        style: TextStyle(color: GamaColors.textMuted),
+                        style: TextStyle(color: context.gama.textMuted),
                       ),
                     );
               return Padding(
@@ -404,26 +404,36 @@ class MessageContentView extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    GestureDetector(
-                      onTap: () => showDialog<void>(
-                        context: context,
-                        barrierColor: Colors.black87,
-                        builder: (_) => _FullscreenImageDialog(
-                          image: fileExists
-                              ? Image.file(File(filePath!), fit: BoxFit.contain)
-                              : Image.memory(memoryBytes!, fit: BoxFit.contain),
-                          sourcePath: fileExists ? filePath : null,
-                          base64Data: img.base64,
-                          mime: img.mime,
+                    Semantics(
+                      button: true,
+                      label: 'Abrir imagem em tela cheia',
+                      child: GestureDetector(
+                        onTap: () => showDialog<void>(
+                          context: context,
+                          barrierColor: Colors.black87,
+                          builder: (_) => _FullscreenImageDialog(
+                            image: fileExists
+                                ? Image.file(
+                                    File(filePath!),
+                                    fit: BoxFit.contain,
+                                  )
+                                : Image.memory(
+                                    memoryBytes!,
+                                    fit: BoxFit.contain,
+                                  ),
+                            sourcePath: fileExists ? filePath : null,
+                            base64Data: img.base64,
+                            mime: img.mime,
+                          ),
                         ),
-                      ),
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(14),
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxHeight: 480),
-                            child: imageWidget,
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 480),
+                              child: imageWidget,
+                            ),
                           ),
                         ),
                       ),
@@ -436,7 +446,7 @@ class MessageContentView extends StatelessWidget {
                         children: [
                           TextButton.icon(
                             style: TextButton.styleFrom(
-                              foregroundColor: GamaColors.accent,
+                              foregroundColor: context.gama.accent,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
                               ),
@@ -609,7 +619,11 @@ class _MarkdownMessage extends StatelessWidget {
                     onTapLink: onTapLink,
                   ),
                 },
-                styleSheet: _markdownStyleSheet(isUser, textStyle),
+                styleSheet: _markdownStyleSheet(
+                  isUser,
+                  textStyle,
+                  context.gama,
+                ),
               ),
             ),
       ],
@@ -619,13 +633,14 @@ class _MarkdownMessage extends StatelessWidget {
   static MarkdownStyleSheet _markdownStyleSheet(
     bool isUser,
     TextStyle textStyle,
+    GamaPalette palette,
   ) {
     return MarkdownStyleSheet(
       p: textStyle,
       a: textStyle.copyWith(
-        color: isUser ? Colors.white : GamaColors.accent,
+        color: isUser ? Colors.white : palette.accent,
         decoration: TextDecoration.underline,
-        decorationColor: isUser ? Colors.white70 : GamaColors.accent,
+        decorationColor: isUser ? Colors.white70 : palette.accent,
       ),
       code: textStyle.copyWith(
         fontSize: 13,
@@ -641,15 +656,13 @@ class _MarkdownMessage extends StatelessWidget {
             : const Color(0xFF0E0E10),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: isUser
-              ? Colors.white.withValues(alpha: 0.12)
-              : GamaColors.border,
+          color: isUser ? Colors.white.withValues(alpha: 0.12) : palette.border,
         ),
       ),
       blockquote: textStyle.copyWith(
         color: isUser
             ? Colors.white.withValues(alpha: 0.9)
-            : GamaColors.textSecondary,
+            : palette.textSecondary,
         fontSize: 14,
         height: 1.45,
       ),
@@ -657,13 +670,13 @@ class _MarkdownMessage extends StatelessWidget {
       blockquoteDecoration: BoxDecoration(
         color: isUser
             ? Colors.black.withValues(alpha: 0.18)
-            : GamaColors.surfaceCard,
+            : palette.surfaceCard,
         borderRadius: BorderRadius.circular(10),
         border: Border(
           left: BorderSide(
             color: isUser
                 ? Colors.white38
-                : GamaColors.accent.withValues(alpha: 0.55),
+                : palette.accent.withValues(alpha: 0.55),
             width: 3,
           ),
         ),
@@ -675,9 +688,7 @@ class _MarkdownMessage extends StatelessWidget {
       tableHead: textStyle.copyWith(fontWeight: FontWeight.w700),
       tableBody: textStyle.copyWith(fontSize: 13),
       tableBorder: TableBorder.all(
-        color: isUser
-            ? Colors.white.withValues(alpha: 0.25)
-            : GamaColors.border,
+        color: isUser ? Colors.white.withValues(alpha: 0.25) : palette.border,
         width: 1,
       ),
       tableCellsPadding: const EdgeInsets.symmetric(
@@ -917,7 +928,7 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
         : const Color(0xFFF8F8F8);
     final border = widget.isUser
         ? Colors.white.withValues(alpha: 0.12)
-        : GamaColors.border;
+        : context.gama.border;
     final muted = isDark ? const Color(0xFFB8B8B2) : const Color(0xFF666666);
     final highlighted = _highlightedText(theme);
     final content = SelectionArea(
@@ -942,7 +953,7 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            height: 38,
+            height: 48,
             padding: const EdgeInsets.only(left: 12, right: 6),
             decoration: BoxDecoration(
               color: Colors.black.withValues(
@@ -970,7 +981,10 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
                   tooltip: _wrapLines
                       ? 'Desativar quebra de linha'
                       : 'Ativar quebra de linha',
-                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 48,
+                    height: 48,
+                  ),
                   onPressed: () => setState(() => _wrapLines = !_wrapLines),
                   icon: Icon(
                     _wrapLines ? Icons.wrap_text_rounded : Icons.notes_rounded,
@@ -980,7 +994,10 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
                 ),
                 IconButton(
                   tooltip: 'Baixar como arquivo',
-                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 48,
+                    height: 48,
+                  ),
                   onPressed: _save,
                   icon: Icon(
                     _saved ? Icons.check_rounded : Icons.download_outlined,
@@ -990,7 +1007,10 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
                 ),
                 IconButton(
                   tooltip: _copied ? 'Código copiado' : 'Copiar código',
-                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 48,
+                    height: 48,
+                  ),
                   onPressed: () => _copy(context),
                   icon: Icon(
                     _copied ? Icons.check_rounded : Icons.copy_rounded,
@@ -1070,7 +1090,7 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
     TextStyle? preferredStyle,
     TextStyle? parentStyle,
   ) {
-    final color = isUser ? Colors.white : GamaColors.textPrimary;
+    final color = isUser ? Colors.white : context.gama.textPrimary;
     final rows = <TableRow>[];
 
     for (final section in element.children ?? <md.Node>[]) {
@@ -1088,7 +1108,7 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
               color: isHead
                   ? (isUser
                         ? Colors.white.withValues(alpha: 0.16)
-                        : GamaColors.surfaceElevated)
+                        : context.gama.surfaceElevated)
                   : null,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               child: MarkdownBody(
@@ -1112,7 +1132,7 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
                     fontWeight: isHead ? FontWeight.w700 : FontWeight.w400,
                   ),
                   a: TextStyle(
-                    color: isUser ? Colors.white : GamaColors.accent,
+                    color: isUser ? Colors.white : context.gama.accent,
                     decoration: TextDecoration.underline,
                   ),
                   code: TextStyle(
@@ -1120,7 +1140,7 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
                     fontFamily: 'monospace',
                     backgroundColor: isUser
                         ? Colors.black.withValues(alpha: 0.18)
-                        : GamaColors.surfaceCard,
+                        : context.gama.surfaceCard,
                   ),
                 ),
               ),
@@ -1140,7 +1160,7 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
         border: TableBorder.all(
           color: isUser
               ? Colors.white.withValues(alpha: 0.25)
-              : GamaColors.border,
+              : context.gama.border,
           width: 1,
         ),
         children: rows,
@@ -1190,104 +1210,112 @@ class _AttachmentChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final label = preview.kindLabel.toUpperCase();
     final size = _fmtBytes(preview.bytes);
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
+    return Semantics(
+      button: true,
+      label: 'Pré-visualizar anexo ${preview.name}',
+      child: Material(
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(10),
-        onTap: () => showDialog<void>(
-          context: context,
-          builder: (dialogContext) => AlertDialog(
-            backgroundColor: GamaColors.surfaceElevated,
-            title: Text(preview.name),
-            content: SizedBox(
-              width: 560,
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      size.isEmpty ? label : '$label • $size',
-                      style: TextStyle(color: GamaColors.textMuted),
-                    ),
-                    const SizedBox(height: 12),
-                    SelectableText(
-                      preview.body.isEmpty
-                          ? 'Prévia do anexo indisponível. O arquivo continua anexado à mensagem.'
-                          : preview.body,
-                      style: TextStyle(
-                        color: GamaColors.textPrimary,
-                        fontFamily:
-                            preview.kindLabel.toLowerCase().contains('código')
-                            ? 'monospace'
-                            : null,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => showDialog<void>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              backgroundColor: context.gama.surfaceElevated,
+              title: Text(preview.name),
+              content: SizedBox(
+                width: 560,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        size.isEmpty ? label : '$label • $size',
+                        style: TextStyle(color: context.gama.textMuted),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 12),
+                      SelectableText(
+                        preview.body.isEmpty
+                            ? 'Prévia do anexo indisponível. O arquivo continua anexado à mensagem.'
+                            : preview.body,
+                        style: TextStyle(
+                          color: context.gama.textPrimary,
+                          fontFamily:
+                              preview.kindLabel.toLowerCase().contains('código')
+                              ? 'monospace'
+                              : null,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Fechar'),
+                ),
+              ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Fechar'),
-              ),
-            ],
           ),
-        ),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: isUser
-                ? Colors.white.withValues(alpha: 0.10)
-                : GamaColors.surfaceCard,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
               color: isUser
-                  ? Colors.white.withValues(alpha: 0.12)
-                  : GamaColors.border,
+                  ? Colors.white.withValues(alpha: 0.10)
+                  : context.gama.surfaceCard,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isUser
+                    ? Colors.white.withValues(alpha: 0.12)
+                    : context.gama.border,
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                _iconForKind(preview.kindLabel),
-                color: isUser ? Colors.white : GamaColors.accent,
-                size: 20,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      preview.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: isUser ? Colors.white : GamaColors.textPrimary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      size.isEmpty ? label : '$label • $size',
-                      style: TextStyle(
-                        color: isUser ? Colors.white70 : GamaColors.textMuted,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
+            child: Row(
+              children: [
+                Icon(
+                  _iconForKind(preview.kindLabel),
+                  color: isUser ? Colors.white : context.gama.accent,
+                  size: 20,
                 ),
-              ),
-              Icon(
-                Icons.open_in_full_rounded,
-                color: isUser ? Colors.white70 : GamaColors.textMuted,
-                size: 16,
-              ),
-            ],
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        preview.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isUser
+                              ? Colors.white
+                              : context.gama.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        size.isEmpty ? label : '$label • $size',
+                        style: TextStyle(
+                          color: isUser
+                              ? Colors.white70
+                              : context.gama.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.open_in_full_rounded,
+                  color: isUser ? Colors.white70 : context.gama.textMuted,
+                  size: 16,
+                ),
+              ],
+            ),
           ),
         ),
       ),

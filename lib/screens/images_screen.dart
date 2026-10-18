@@ -44,24 +44,22 @@ class _ImagesScreenState extends State<ImagesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: GamaColors.background,
+      backgroundColor: context.gama.background,
       appBar: AppBar(
-        backgroundColor: GamaColors.surface,
+        backgroundColor: context.gama.surface,
         title: const Text('Imagens'),
       ),
       body: _loading
-          ?  Center(
-              child: CircularProgressIndicator(color: GamaColors.accent),
-            )
+          ? Center(child: CircularProgressIndicator(color: context.gama.accent))
           : _items.isEmpty
-          ?  Center(
+          ? Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
                   'Nenhuma imagem gerada ou anexada ainda.\n'
                   'Use o clipe no chat ou peça à Gama para criar uma imagem.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: GamaColors.textMuted),
+                  style: TextStyle(color: context.gama.textMuted),
                 ),
               ),
             )
@@ -82,7 +80,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
                     path != null && path.isNotEmpty && File(path).existsSync();
 
                 return Material(
-                  color: GamaColors.surfaceCard,
+                  color: context.gama.surfaceCard,
                   borderRadius: BorderRadius.circular(14),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(14),
@@ -99,17 +97,17 @@ class _ImagesScreenState extends State<ImagesScreen> {
                                 ? Image.file(
                                     File(path!),
                                     fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) =>  Center(
+                                    errorBuilder: (_, __, ___) => Center(
                                       child: Icon(
                                         Icons.broken_image_outlined,
-                                        color: GamaColors.textMuted,
+                                        color: context.gama.textMuted,
                                       ),
                                     ),
                                   )
-                                :  Center(
+                                : Center(
                                     child: Icon(
                                       Icons.image_not_supported_outlined,
-                                      color: GamaColors.textMuted,
+                                      color: context.gama.textMuted,
                                     ),
                                   ),
                           ),
@@ -120,8 +118,8 @@ class _ImagesScreenState extends State<ImagesScreen> {
                             name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style:  TextStyle(
-                              color: GamaColors.textSecondary,
+                            style: TextStyle(
+                              color: context.gama.textSecondary,
                               fontSize: 12,
                             ),
                           ),

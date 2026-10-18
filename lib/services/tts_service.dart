@@ -142,10 +142,7 @@ class TtsService {
     ];
 
     for (final p in pairs) {
-      t = t.replaceAllMapped(
-        RegExp(p[0], caseSensitive: false),
-        (_) => p[1],
-      );
+      t = t.replaceAllMapped(RegExp(p[0], caseSensitive: false), (_) => p[1]);
     }
     return t;
   }
@@ -171,19 +168,13 @@ class TtsService {
 
     // 2min / 2 min / 2mins
     t = t.replaceAllMapped(
-      RegExp(
-        r'\b(\d+(?:[.,]\d+)?)\s*(mins?|minutos?)\b',
-        caseSensitive: false,
-      ),
+      RegExp(r'\b(\d+(?:[.,]\d+)?)\s*(mins?|minutos?)\b', caseSensitive: false),
       (m) => _pluralUnit(m.group(1)!, 'minuto', 'minutos'),
     );
 
     // 3h / 3 hr / 3 hrs / 3 horas
     t = t.replaceAllMapped(
-      RegExp(
-        r'\b(\d+(?:[.,]\d+)?)\s*(hrs?|horas?)\b',
-        caseSensitive: false,
-      ),
+      RegExp(r'\b(\d+(?:[.,]\d+)?)\s*(hrs?|horas?)\b', caseSensitive: false),
       (m) => _pluralUnit(m.group(1)!, 'hora', 'horas'),
     );
 
@@ -204,10 +195,7 @@ class TtsService {
 
     // 2kb / 5MB / 1GB (leitura aproximada)
     t = t.replaceAllMapped(
-      RegExp(
-        r'\b(\d+(?:[.,]\d+)?)\s*(kb|mb|gb|tb)\b',
-        caseSensitive: false,
-      ),
+      RegExp(r'\b(\d+(?:[.,]\d+)?)\s*(kb|mb|gb|tb)\b', caseSensitive: false),
       (m) {
         final n = m.group(1)!;
         switch (m.group(2)!.toLowerCase()) {

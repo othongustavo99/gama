@@ -123,15 +123,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: GamaColors.surfaceCard,
-        title:  Text(
+        backgroundColor: context.gama.surfaceCard,
+        title: Text(
           'Resetar memória?',
-          style: TextStyle(color: GamaColors.textPrimary),
+          style: TextStyle(color: context.gama.textPrimary),
         ),
-        content:  Text(
+        content: Text(
           'Todos os fatos que a Gama guardou sobre você serão apagados. '
           'Essa ação não pode ser desfeita.',
-          style: TextStyle(color: GamaColors.textMuted, height: 1.4),
+          style: TextStyle(color: context.gama.textMuted, height: 1.4),
         ),
         actions: [
           TextButton(
@@ -140,7 +140,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: GamaColors.error),
+            style: TextButton.styleFrom(foregroundColor: context.gama.error),
             child: const Text('Resetar'),
           ),
         ],
@@ -182,9 +182,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: GamaColors.background,
+      backgroundColor: context.gama.background,
       appBar: AppBar(
-        backgroundColor: GamaColors.surface,
+        backgroundColor: context.gama.surface,
         title: const Text('Configurações'),
       ),
       body: ListView(
@@ -194,26 +194,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 10),
           TextField(
             controller: _urlController,
-            style:  TextStyle(color: GamaColors.textPrimary, fontSize: 15),
+            style: TextStyle(color: context.gama.textPrimary, fontSize: 15),
             decoration: InputDecoration(
               hintText: 'https://sua-api.com',
-              hintStyle:  TextStyle(color: GamaColors.textHint),
+              hintStyle: TextStyle(color: context.gama.textHint),
               filled: true,
-              fillColor: GamaColors.surfaceInput,
+              fillColor: context.gama.surfaceInput,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide:  BorderSide(color: GamaColors.border),
+                borderSide: BorderSide(color: context.gama.border),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide:  BorderSide(color: GamaColors.border),
+                borderSide: BorderSide(color: context.gama.border),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide:  BorderSide(
-                  color: GamaColors.accent,
-                  width: 1.2,
-                ),
+                borderSide: BorderSide(color: context.gama.accent, width: 1.2),
               ),
               contentPadding: const EdgeInsets.symmetric(
                 horizontal: 14,
@@ -229,19 +226,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: OutlinedButton.icon(
               onPressed: _testing ? null : _testConnection,
               icon: _testing
-                  ?  SizedBox(
+                  ? SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: GamaColors.accent,
+                        color: context.gama.accent,
                       ),
                     )
                   : const Icon(Icons.wifi_tethering_rounded, size: 18),
               label: Text(_testing ? 'Testando…' : 'Testar conexão'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: GamaColors.textPrimary,
-                side:  BorderSide(color: GamaColors.border),
+                foregroundColor: context.gama.textPrimary,
+                side: BorderSide(color: context.gama.border),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -256,21 +253,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: (_statusOk == true)
-                    ? GamaColors.success.withValues(alpha: 0.12)
-                    : GamaColors.error.withValues(alpha: 0.12),
+                    ? context.gama.success.withValues(alpha: 0.12)
+                    : context.gama.error.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: (_statusOk == true)
-                      ? GamaColors.success.withValues(alpha: 0.4)
-                      : GamaColors.error.withValues(alpha: 0.4),
+                      ? context.gama.success.withValues(alpha: 0.4)
+                      : context.gama.error.withValues(alpha: 0.4),
                 ),
               ),
               child: Text(
                 _statusMessage!,
                 style: TextStyle(
                   color: (_statusOk == true)
-                      ? GamaColors.success
-                      : GamaColors.error,
+                      ? context.gama.success
+                      : context.gama.error,
                   fontSize: 13,
                   height: 1.35,
                 ),
@@ -306,8 +303,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _mode == GamaMode.programar
                 ? 'Otimizado para código, debug e análise de projetos.'
                 : 'Otimizado para diálogo rápido e respostas faláveis (voz).',
-            style:  TextStyle(
-              color: GamaColors.textMuted,
+            style: TextStyle(
+              color: context.gama.textMuted,
               fontSize: 12,
               height: 1.35,
             ),
@@ -317,22 +314,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               const Expanded(child: _SectionTitle('Modelo')),
               if (_loadingModels)
-                 SizedBox(
+                SizedBox(
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: GamaColors.accent,
+                    color: context.gama.accent,
                   ),
                 )
               else
                 IconButton(
                   tooltip: 'Atualizar lista do servidor',
                   onPressed: _loadModels,
-                  icon:  Icon(
+                  icon: Icon(
                     Icons.refresh_rounded,
                     size: 20,
-                    color: GamaColors.textMuted,
+                    color: context.gama.textMuted,
                   ),
                 ),
             ],
@@ -341,9 +338,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
-              color: GamaColors.surfaceInput,
+              color: context.gama.surfaceInput,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: GamaColors.border),
+              border: Border.all(color: context.gama.border),
             ),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
@@ -355,13 +352,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       : (_models.isEmpty
                             ? 'Nenhum modelo disponível'
                             : 'Selecione um modelo'),
-                  style:  TextStyle(color: GamaColors.textMuted),
+                  style: TextStyle(color: context.gama.textMuted),
                 ),
-                dropdownColor: GamaColors.surfaceCard,
-                style:  TextStyle(
-                  color: GamaColors.textPrimary,
-                  fontSize: 15,
-                ),
+                dropdownColor: context.gama.surfaceCard,
+                style: TextStyle(color: context.gama.textPrimary, fontSize: 15),
                 items: _models
                     .map(
                       (model) => DropdownMenuItem(
@@ -379,12 +373,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           if (_models.isEmpty && !_loadingModels)
-             Padding(
+            Padding(
               padding: EdgeInsets.only(top: 8),
               child: Text(
                 'Nenhum modelo retornado pelo backend. Teste a conexão ou '
                 'verifique OPENROUTER_MODELS / OLLAMA_MODELS no servidor.',
-                style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+                style: TextStyle(color: context.gama.textMuted, fontSize: 12),
               ),
             )
           else if (_selectedModel != null)
@@ -392,10 +386,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.only(top: 6),
               child: Text(
                 'ID: $_selectedModel',
-                style:  TextStyle(
-                  color: GamaColors.textHint,
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: context.gama.textHint, fontSize: 12),
               ),
             ),
           const SizedBox(height: 28),
@@ -403,16 +394,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 6),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title:  Text(
+            title: Text(
               'Ler respostas automaticamente',
-              style: TextStyle(color: GamaColors.textPrimary, fontSize: 15),
+              style: TextStyle(color: context.gama.textPrimary, fontSize: 15),
             ),
-            subtitle:  Text(
+            subtitle: Text(
               'TTS ao finalizar cada resposta do assistente',
-              style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+              style: TextStyle(color: context.gama.textMuted, fontSize: 12),
             ),
             value: _ttsAuto,
-            activeThumbColor: GamaColors.accent,
+            activeThumbColor: context.gama.accent,
             onChanged: (v) => setState(() => _ttsAuto = v),
           ),
           const SizedBox(height: 28),
@@ -427,7 +418,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             items: const [
               DropdownMenuItem(value: ThemeMode.dark, child: Text('Escuro')),
               DropdownMenuItem(value: ThemeMode.light, child: Text('Claro')),
-              DropdownMenuItem(value: ThemeMode.system, child: Text('Seguir sistema')),
+              DropdownMenuItem(
+                value: ThemeMode.system,
+                child: Text('Seguir sistema'),
+              ),
             ],
             onChanged: (value) async {
               if (value == null) return;
@@ -460,14 +454,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             contentPadding: EdgeInsets.zero,
             title: Text(
               'Mostrar detalhes técnicos',
-              style: TextStyle(color: GamaColors.textPrimary, fontSize: 15),
+              style: TextStyle(color: context.gama.textPrimary, fontSize: 15),
             ),
             subtitle: Text(
               'Exibe resultados de validação, diagnósticos e custos informados pelo provedor.',
-              style: TextStyle(color: GamaColors.textMuted, fontSize: 12),
+              style: TextStyle(color: context.gama.textMuted, fontSize: 12),
             ),
             value: _developerMode,
-            activeThumbColor: GamaColors.accent,
+            activeThumbColor: context.gama.accent,
             onChanged: (value) async {
               setState(() => _developerMode = value);
               await SettingsService.instance.setDeveloperMode(value);
@@ -476,11 +470,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 28),
           const _SectionTitle('Memória'),
           const SizedBox(height: 6),
-           Text(
+          Text(
             'Apaga tudo o que a Gama lembra sobre você (nome, preferências, '
             'projetos…).',
             style: TextStyle(
-              color: GamaColors.textMuted,
+              color: context.gama.textMuted,
               fontSize: 12,
               height: 1.35,
             ),
@@ -491,19 +485,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: OutlinedButton.icon(
               onPressed: _resettingMemory ? null : _resetMemory,
               icon: _resettingMemory
-                  ?  SizedBox(
+                  ? SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: GamaColors.error,
+                        color: context.gama.error,
                       ),
                     )
                   : const Icon(Icons.delete_sweep_rounded, size: 18),
               label: Text(_resettingMemory ? 'Resetando…' : 'Resetar memória'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: GamaColors.error,
-                side: BorderSide(color: GamaColors.error.withValues(alpha: 0.5)),
+                foregroundColor: context.gama.error,
+                side: BorderSide(
+                  color: context.gama.error.withValues(alpha: 0.5),
+                ),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -517,7 +513,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: ElevatedButton(
               onPressed: _save,
               style: ElevatedButton.styleFrom(
-                backgroundColor: GamaColors.accent,
+                backgroundColor: context.gama.accent,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 elevation: 0,
@@ -532,12 +528,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 20),
-           Text(
+          Text(
             'Emulador Android: http://10.0.2.2:8000\n'
             'Celular físico: IP da máquina onde a API está rodando.\n'
             'Release: use sempre HTTPS.',
             style: TextStyle(
-              color: GamaColors.textMuted,
+              color: context.gama.textMuted,
               fontSize: 12,
               height: 1.45,
             ),
@@ -560,15 +556,15 @@ class _SectionTitle extends StatelessWidget {
           width: 3,
           height: 14,
           decoration: BoxDecoration(
-            color: GamaColors.accent,
+            color: context.gama.accent,
             borderRadius: BorderRadius.circular(3),
           ),
         ),
         const SizedBox(width: 9),
         Text(
           text.toUpperCase(),
-          style:  TextStyle(
-            color: GamaColors.textSecondary,
+          style: TextStyle(
+            color: context.gama.textSecondary,
             fontSize: 12,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.9,
@@ -595,7 +591,7 @@ class _ModeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? GamaColors.accentSoft : GamaColors.surfaceCard,
+      color: selected ? context.gama.accentSoft : context.gama.surfaceCard,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
@@ -605,7 +601,7 @@ class _ModeChip extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: selected ? GamaColors.accent : GamaColors.border,
+              color: selected ? context.gama.accent : context.gama.border,
             ),
           ),
           child: Row(
@@ -614,13 +610,15 @@ class _ModeChip extends StatelessWidget {
               Icon(
                 icon,
                 size: 18,
-                color: selected ? GamaColors.accent : GamaColors.textMuted,
+                color: selected ? context.gama.accent : context.gama.textMuted,
               ),
               const SizedBox(width: 8),
               Text(
                 label,
                 style: TextStyle(
-                  color: selected ? GamaColors.accent : GamaColors.textPrimary,
+                  color: selected
+                      ? context.gama.accent
+                      : context.gama.textPrimary,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                   fontSize: 14,
                 ),

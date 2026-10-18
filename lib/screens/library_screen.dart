@@ -115,7 +115,7 @@ class LibraryScreen extends StatefulWidget {
       await showDialog<void>(
         context: context,
         builder: (ctx) => Dialog(
-          backgroundColor: GamaColors.surface,
+          backgroundColor: context.gama.surface,
           insetPadding: const EdgeInsets.all(12),
           child: ConstrainedBox(
             constraints: BoxConstraints(
@@ -132,8 +132,8 @@ class LibraryScreen extends StatefulWidget {
                       Expanded(
                         child: Text(
                           name,
-                          style:  TextStyle(
-                            color: GamaColors.textPrimary,
+                          style: TextStyle(
+                            color: context.gama.textPrimary,
                             fontWeight: FontWeight.w600,
                           ),
                           maxLines: 1,
@@ -141,10 +141,7 @@ class LibraryScreen extends StatefulWidget {
                         ),
                       ),
                       IconButton(
-                        icon:  Icon(
-                          Icons.close,
-                          color: GamaColors.textMuted,
-                        ),
+                        icon: Icon(Icons.close, color: context.gama.textMuted),
                         onPressed: () => Navigator.pop(ctx),
                       ),
                     ],
@@ -157,11 +154,11 @@ class LibraryScreen extends StatefulWidget {
                     child: Image.file(
                       file,
                       fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) =>  Padding(
+                      errorBuilder: (_, __, ___) => Padding(
                         padding: EdgeInsets.all(24),
                         child: Text(
                           'Não foi possível carregar a imagem',
-                          style: TextStyle(color: GamaColors.textMuted),
+                          style: TextStyle(color: context.gama.textMuted),
                         ),
                       ),
                     ),
@@ -226,30 +223,30 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: GamaColors.background,
+      backgroundColor: context.gama.background,
       appBar: AppBar(
-        backgroundColor: GamaColors.surface,
+        backgroundColor: context.gama.surface,
         title: const Text('Biblioteca'),
         actions: [
           if (_items.isNotEmpty)
             TextButton(
               onPressed: _clear,
-              child:  Text(
+              child: Text(
                 'Limpar',
-                style: TextStyle(color: GamaColors.error),
+                style: TextStyle(color: context.gama.error),
               ),
             ),
         ],
       ),
       body: _items.isEmpty
-          ?  Center(
+          ? Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
                   'Nenhum anexo ainda.\n'
                   'Use o clipe no chat (câmera, galeria ou arquivos).',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: GamaColors.textMuted),
+                  style: TextStyle(color: context.gama.textMuted),
                 ),
               ),
             )
@@ -264,7 +261,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 final hasFile = path != null && path.isNotEmpty;
 
                 return Material(
-                  color: GamaColors.surfaceCard,
+                  color: context.gama.surfaceCard,
                   borderRadius: BorderRadius.circular(12),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(12),
@@ -276,7 +273,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       ),
                       child: Row(
                         children: [
-                          Icon(_icon(kind), color: GamaColors.accent, size: 22),
+                          Icon(
+                            _icon(kind),
+                            color: context.gama.accent,
+                            size: 22,
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -284,16 +285,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               children: [
                                 Text(
                                   it['name']?.toString() ?? '',
-                                  style:  TextStyle(
-                                    color: GamaColors.textPrimary,
+                                  style: TextStyle(
+                                    color: context.gama.textPrimary,
                                     fontWeight: FontWeight.w500,
                                   ),
                                 ),
                                 Text(
                                   '${it['kind']} · ${_fmtBytes(it['bytes'] as int? ?? 0)}'
                                   '${hasFile ? '' : ' · (sem arquivo)'}',
-                                  style:  TextStyle(
-                                    color: GamaColors.textMuted,
+                                  style: TextStyle(
+                                    color: context.gama.textMuted,
                                     fontSize: 12,
                                   ),
                                 ),
@@ -304,7 +305,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             hasFile
                                 ? Icons.chevron_right_rounded
                                 : Icons.block_flipped,
-                            color: GamaColors.textMuted,
+                            color: context.gama.textMuted,
                             size: 20,
                           ),
                         ],

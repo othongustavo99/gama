@@ -46,7 +46,7 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: GamaColors.background,
+      backgroundColor: context.gama.background,
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -65,8 +65,8 @@ class _SplashScreenState extends State<SplashScreen> {
                 height: 32,
                 child: CircularProgressIndicator(
                   strokeWidth: 3,
-                  valueColor:  AlwaysStoppedAnimation<Color>(
-                    GamaColors.accent,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    context.gama.accent,
                   ),
                 ),
               ),

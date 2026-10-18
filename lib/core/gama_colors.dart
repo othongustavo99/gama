@@ -1,40 +1,200 @@
 import 'package:flutter/material.dart';
 
-/// Paleta global da Gama. O aplicativo define a variante ao mudar ThemeMode.
-/// O padrão continua escuro para preservar o visual existente.
-class GamaColors {
-  GamaColors._();
-  static bool _lightMode = false;
-  static void setLightMode(bool value) { _lightMode = value; }
+/// Paleta da Gama guardada no tema ativo, em vez de estado mutável global.
+@immutable
+class GamaPalette extends ThemeExtension<GamaPalette> {
+  final Color background;
+  final Color surface;
+  final Color surfaceElevated;
+  final Color surfaceCard;
+  final Color surfaceInput;
+  final Color surfaceHover;
+  final Color accent;
+  final Color accentSoft;
+  final Color accentMuted;
+  final Color accentGlow;
+  final Color accentBright;
+  final Color accentCool;
+  final Color textPrimary;
+  final Color textSecondary;
+  final Color textMuted;
+  final Color textHint;
+  final Color border;
+  final Color borderSoft;
+  final Color divider;
+  final Color error;
+  final Color success;
+  final Color bubbleUser;
+  final Color bubbleUserSoft;
+  final Color bubbleAssistant;
 
-  static Color get background => _lightMode ? const Color(0xFFF6F7F9) : const Color(0xFF0B0E13);
-  static Color get surface => _lightMode ? const Color(0xFFFFFFFF) : const Color(0xFF10141B);
-  static Color get surfaceElevated => _lightMode ? const Color(0xFFFFFFFF) : const Color(0xFF151A23);
-  static Color get surfaceCard => _lightMode ? const Color(0xFFF0F2F5) : const Color(0xFF191F29);
-  static Color get surfaceInput => _lightMode ? const Color(0xFFF4F5F7) : const Color(0xFF121821);
-  static Color get surfaceHover => _lightMode ? const Color(0xFFE7EBF0) : const Color(0xFF222B37);
+  const GamaPalette({
+    required this.background,
+    required this.surface,
+    required this.surfaceElevated,
+    required this.surfaceCard,
+    required this.surfaceInput,
+    required this.surfaceHover,
+    required this.accent,
+    required this.accentSoft,
+    required this.accentMuted,
+    required this.accentGlow,
+    required this.accentBright,
+    required this.accentCool,
+    required this.textPrimary,
+    required this.textSecondary,
+    required this.textMuted,
+    required this.textHint,
+    required this.border,
+    required this.borderSoft,
+    required this.divider,
+    required this.error,
+    required this.success,
+    required this.bubbleUser,
+    required this.bubbleUserSoft,
+    required this.bubbleAssistant,
+  });
 
-  // Laranja da marca: escurecido ligeiramente no tema claro para contraste.
-  static Color get accent => _lightMode ? const Color(0xFFC45A20) : const Color(0xFFFF8A3D);
-  static Color get accentSoft => _lightMode ? const Color(0x26C45A20) : const Color(0x26FF8A3D);
-  static Color get accentMuted => _lightMode ? const Color(0xFFB95015) : const Color(0xFFD96D2B);
-  static Color get accentGlow => _lightMode ? const Color(0x20C45A20) : const Color(0x32FF8A3D);
-  static Color get accentBright => _lightMode ? const Color(0xFFB95015) : const Color(0xFFFFA66D);
-  static Color get accentCool => _lightMode ? const Color(0xFF3D559D) : const Color(0xFF9AAEFF);
+  factory GamaPalette.dark() => const GamaPalette(
+    background: Color(0xFF0B0E13),
+    surface: Color(0xFF10141B),
+    surfaceElevated: Color(0xFF151A23),
+    surfaceCard: Color(0xFF191F29),
+    surfaceInput: Color(0xFF121821),
+    surfaceHover: Color(0xFF222B37),
+    accent: Color(0xFFFF8A3D),
+    accentSoft: Color(0x26FF8A3D),
+    accentMuted: Color(0xFFD96D2B),
+    accentGlow: Color(0x32FF8A3D),
+    accentBright: Color(0xFFFFA66D),
+    accentCool: Color(0xFF9AAEFF),
+    textPrimary: Color(0xFFF3F5F8),
+    textSecondary: Color(0xFFADB6C4),
+    textMuted: Color(0xFF7D8999),
+    textHint: Color(0xFF596474),
+    border: Color(0xFF2A3442),
+    borderSoft: Color(0xFF202833),
+    divider: Color(0xFF1C242E),
+    error: Color(0xFFFF5C5C),
+    success: Color(0xFF34D399),
+    bubbleUser: Color(0xFF33271F),
+    bubbleUserSoft: Color(0xFF443025),
+    bubbleAssistant: Color(0xFF121821),
+  );
 
-  static Color get textPrimary => _lightMode ? const Color(0xFF171A20) : const Color(0xFFF3F5F8);
-  static Color get textSecondary => _lightMode ? const Color(0xFF46515E) : const Color(0xFFADB6C4);
-  static Color get textMuted => _lightMode ? const Color(0xFF66717F) : const Color(0xFF7D8999);
-  static Color get textHint => _lightMode ? const Color(0xFF7D8794) : const Color(0xFF596474);
+  factory GamaPalette.light() => const GamaPalette(
+    background: Color(0xFFF6F7F9),
+    surface: Color(0xFFFFFFFF),
+    surfaceElevated: Color(0xFFFFFFFF),
+    surfaceCard: Color(0xFFF0F2F5),
+    surfaceInput: Color(0xFFF4F5F7),
+    surfaceHover: Color(0xFFE7EBF0),
+    accent: Color(0xFFC45A20),
+    accentSoft: Color(0x26C45A20),
+    accentMuted: Color(0xFFB95015),
+    accentGlow: Color(0x20C45A20),
+    accentBright: Color(0xFFB95015),
+    accentCool: Color(0xFF3D559D),
+    textPrimary: Color(0xFF171A20),
+    textSecondary: Color(0xFF46515E),
+    textMuted: Color(0xFF66717F),
+    textHint: Color(0xFF7D8794),
+    border: Color(0xFFD9DEE5),
+    borderSoft: Color(0xFFE3E7ED),
+    divider: Color(0xFFE6E9EF),
+    error: Color(0xFFB42318),
+    success: Color(0xFF087443),
+    bubbleUser: Color(0xFFC45A20),
+    bubbleUserSoft: Color(0xFFD96D2B),
+    bubbleAssistant: Color(0xFFFFFFFF),
+  );
 
-  static Color get border => _lightMode ? const Color(0xFFD9DEE5) : const Color(0xFF2A3442);
-  static Color get borderSoft => _lightMode ? const Color(0xFFE3E7ED) : const Color(0xFF202833);
-  static Color get divider => _lightMode ? const Color(0xFFE6E9EF) : const Color(0xFF1C242E);
+  @override
+  GamaPalette copyWith({
+    Color? background,
+    Color? surface,
+    Color? surfaceElevated,
+    Color? surfaceCard,
+    Color? surfaceInput,
+    Color? surfaceHover,
+    Color? accent,
+    Color? accentSoft,
+    Color? accentMuted,
+    Color? accentGlow,
+    Color? accentBright,
+    Color? accentCool,
+    Color? textPrimary,
+    Color? textSecondary,
+    Color? textMuted,
+    Color? textHint,
+    Color? border,
+    Color? borderSoft,
+    Color? divider,
+    Color? error,
+    Color? success,
+    Color? bubbleUser,
+    Color? bubbleUserSoft,
+    Color? bubbleAssistant,
+  }) => GamaPalette(
+    background: background ?? this.background,
+    surface: surface ?? this.surface,
+    surfaceElevated: surfaceElevated ?? this.surfaceElevated,
+    surfaceCard: surfaceCard ?? this.surfaceCard,
+    surfaceInput: surfaceInput ?? this.surfaceInput,
+    surfaceHover: surfaceHover ?? this.surfaceHover,
+    accent: accent ?? this.accent,
+    accentSoft: accentSoft ?? this.accentSoft,
+    accentMuted: accentMuted ?? this.accentMuted,
+    accentGlow: accentGlow ?? this.accentGlow,
+    accentBright: accentBright ?? this.accentBright,
+    accentCool: accentCool ?? this.accentCool,
+    textPrimary: textPrimary ?? this.textPrimary,
+    textSecondary: textSecondary ?? this.textSecondary,
+    textMuted: textMuted ?? this.textMuted,
+    textHint: textHint ?? this.textHint,
+    border: border ?? this.border,
+    borderSoft: borderSoft ?? this.borderSoft,
+    divider: divider ?? this.divider,
+    error: error ?? this.error,
+    success: success ?? this.success,
+    bubbleUser: bubbleUser ?? this.bubbleUser,
+    bubbleUserSoft: bubbleUserSoft ?? this.bubbleUserSoft,
+    bubbleAssistant: bubbleAssistant ?? this.bubbleAssistant,
+  );
 
-  static Color get error => _lightMode ? const Color(0xFFB42318) : const Color(0xFFFF5C5C);
-  static Color get success => _lightMode ? const Color(0xFF087443) : const Color(0xFF34D399);
+  @override
+  GamaPalette lerp(ThemeExtension<GamaPalette>? other, double t) {
+    if (other is! GamaPalette) return this;
+    return GamaPalette(
+      background: Color.lerp(background, other.background, t)!,
+      surface: Color.lerp(surface, other.surface, t)!,
+      surfaceElevated: Color.lerp(surfaceElevated, other.surfaceElevated, t)!,
+      surfaceCard: Color.lerp(surfaceCard, other.surfaceCard, t)!,
+      surfaceInput: Color.lerp(surfaceInput, other.surfaceInput, t)!,
+      surfaceHover: Color.lerp(surfaceHover, other.surfaceHover, t)!,
+      accent: Color.lerp(accent, other.accent, t)!,
+      accentSoft: Color.lerp(accentSoft, other.accentSoft, t)!,
+      accentMuted: Color.lerp(accentMuted, other.accentMuted, t)!,
+      accentGlow: Color.lerp(accentGlow, other.accentGlow, t)!,
+      accentBright: Color.lerp(accentBright, other.accentBright, t)!,
+      accentCool: Color.lerp(accentCool, other.accentCool, t)!,
+      textPrimary: Color.lerp(textPrimary, other.textPrimary, t)!,
+      textSecondary: Color.lerp(textSecondary, other.textSecondary, t)!,
+      textMuted: Color.lerp(textMuted, other.textMuted, t)!,
+      textHint: Color.lerp(textHint, other.textHint, t)!,
+      border: Color.lerp(border, other.border, t)!,
+      borderSoft: Color.lerp(borderSoft, other.borderSoft, t)!,
+      divider: Color.lerp(divider, other.divider, t)!,
+      error: Color.lerp(error, other.error, t)!,
+      success: Color.lerp(success, other.success, t)!,
+      bubbleUser: Color.lerp(bubbleUser, other.bubbleUser, t)!,
+      bubbleUserSoft: Color.lerp(bubbleUserSoft, other.bubbleUserSoft, t)!,
+      bubbleAssistant: Color.lerp(bubbleAssistant, other.bubbleAssistant, t)!,
+    );
+  }
+}
 
-  static Color get bubbleUser => _lightMode ? const Color(0xFFC45A20) : const Color(0xFF33271F);
-  static Color get bubbleUserSoft => _lightMode ? const Color(0xFFD96D2B) : const Color(0xFF443025);
-  static Color get bubbleAssistant => _lightMode ? const Color(0xFFFFFFFF) : const Color(0xFF121821);
+extension GamaThemeContext on BuildContext {
+  GamaPalette get gama =>
+      Theme.of(this).extension<GamaPalette>() ?? GamaPalette.dark();
 }

@@ -20,13 +20,20 @@ class MessageSanitize {
   static const int maxCharsPerMessage = 12000;
 
   /// Total aproximado máximo de caracteres no histórico (≈ tokens*4).
-  static const int maxTotalChars = 280000; // ~70k tokens de texto, folga vs 400k
+  static const int maxTotalChars =
+      280000; // ~70k tokens de texto, folga vs 400k
 
   static String forApi(String content) {
     var t = content;
     // Imagens geradas: não reenviar base64
-    t = t.replaceAll(_gamaImageRe, '\n[imagem gerada anteriormente nesta conversa]\n');
-    t = t.replaceAll(_gamaImageFileRe, '\n[imagem gerada anteriormente nesta conversa]\n');
+    t = t.replaceAll(
+      _gamaImageRe,
+      '\n[imagem gerada anteriormente nesta conversa]\n',
+    );
+    t = t.replaceAll(
+      _gamaImageFileRe,
+      '\n[imagem gerada anteriormente nesta conversa]\n',
+    );
     // ZIP index info verbosa: manter só project_id
     t = t.replaceAllMapped(_projectDumpRe, (m) {
       final id = RegExp(r'\[project_id:([^\]]+)\]').firstMatch(m.group(0)!);

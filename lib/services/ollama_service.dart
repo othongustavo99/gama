@@ -17,6 +17,7 @@ class ChatStreamEvent {
   final String? phase; // searching | thinking | typing | generating_image | image_ready | video_generating
   final String? webSearchQuery;
   final List<Map<String, dynamic>>? sources;
+
   /// Imagem gerada (base64 puro, sem data: prefix)
   final String? imageBase64;
   final String? imageMime;
@@ -57,7 +58,6 @@ class ChatStreamEvent {
   );
 }
 
-
 class ChatApiException implements Exception {
   final String message;
   final bool retryable;
@@ -84,21 +84,32 @@ ChatApiException _friendlyDioException(DioException error) {
     );
   }
   if (status == 429) {
-    return const ChatApiException('O servidor está ocupado ou atingiu o limite de requisições. Aguarde um pouco e tente novamente.');
+    return const ChatApiException(
+      'O servidor está ocupado ou atingiu o limite de requisições. Aguarde um pouco e tente novamente.',
+    );
   }
   if (status != null && status >= 500) {
-    return const ChatApiException('O servidor está temporariamente indisponível. Tente novamente em instantes.');
+    return const ChatApiException(
+      'O servidor está temporariamente indisponível. Tente novamente em instantes.',
+    );
   }
   if (error.type == DioExceptionType.connectionTimeout ||
       error.type == DioExceptionType.connectionError ||
       error.type == DioExceptionType.sendTimeout ||
       error.type == DioExceptionType.receiveTimeout) {
-    return const ChatApiException('Sem conexão com a Gama. Verifique a internet e tente novamente.');
+    return const ChatApiException(
+      'Sem conexão com a Gama. Verifique a internet e tente novamente.',
+    );
   }
   if (status == 413) {
-    return const ChatApiException('O conteúdo enviado é grande demais. Remova alguns anexos e tente novamente.', retryable: false);
+    return const ChatApiException(
+      'O conteúdo enviado é grande demais. Remova alguns anexos e tente novamente.',
+      retryable: false,
+    );
   }
-  return const ChatApiException('Não foi possível concluir a solicitação. Tente novamente.');
+  return const ChatApiException(
+    'Não foi possível concluir a solicitação. Tente novamente.',
+  );
 }
 
 class OllamaService {
@@ -171,7 +182,9 @@ class OllamaService {
       if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
         throw _friendlyDioException(e);
       }
-      throw Exception('Não foi possível listar os modelos. Verifique a conexão e tente novamente.');
+      throw Exception(
+        'Não foi possível listar os modelos. Verifique a conexão e tente novamente.',
+      );
     } catch (e) {
       throw Exception('Erro ao processar lista de modelos: $e');
     }
@@ -250,8 +263,10 @@ class OllamaService {
         data: {
           'model': selectedModel,
           'messages': requestMessages,
-          if (images != null && images.isNotEmpty &&
-              pluginFlags['attachments'] != false && pluginFlags['vision'] != false)
+          if (images != null &&
+              images.isNotEmpty &&
+              pluginFlags['attachments'] != false &&
+              pluginFlags['vision'] != false)
             'images': images,
           'user_id': IdentityService.instance.userId,
           'auto_memory': pluginFlags['memory'] ?? true,
@@ -299,7 +314,9 @@ class OllamaService {
     } on ChatApiException {
       rethrow;
     } catch (_) {
-      throw const ChatApiException('Ocorreu um erro ao receber a resposta. Tente novamente.');
+      throw const ChatApiException(
+        'Ocorreu um erro ao receber a resposta. Tente novamente.',
+      );
     }
   }
 
@@ -317,24 +334,37 @@ class OllamaService {
     if (json['error'] != null) {
       final error = json['error'].toString().toLowerCase();
       final detail = json['detail']?.toString().toLowerCase() ?? '';
-      if (error.contains('401') || error.contains('403') || detail.contains('api key')) {
-        throw _friendlyDioException(DioException(
-          requestOptions: RequestOptions(path: '/chat'),
-          response: Response<dynamic>(
+      if (error.contains('401') ||
+          error.contains('403') ||
+          detail.contains('api key')) {
+        throw _friendlyDioException(
+          DioException(
             requestOptions: RequestOptions(path: '/chat'),
-            statusCode: error.contains('403') ? 403 : 401,
-            data: json,
+            response: Response<dynamic>(
+              requestOptions: RequestOptions(path: '/chat'),
+              statusCode: error.contains('403') ? 403 : 401,
+              data: json,
+            ),
+            type: DioExceptionType.badResponse,
           ),
-          type: DioExceptionType.badResponse,
-        ));
+        );
       }
       if (error.contains('429') || error.contains('rate limit')) {
-        throw const ChatApiException('O servidor está ocupado ou atingiu o limite de requisições. Aguarde um pouco e tente novamente.');
+        throw const ChatApiException(
+          'O servidor está ocupado ou atingiu o limite de requisições. Aguarde um pouco e tente novamente.',
+        );
       }
-      if (error.contains('500') || error.contains('502') || error.contains('503') || error.contains('504')) {
-        throw const ChatApiException('O servidor está temporariamente indisponível. Tente novamente em instantes.');
+      if (error.contains('500') ||
+          error.contains('502') ||
+          error.contains('503') ||
+          error.contains('504')) {
+        throw const ChatApiException(
+          'O servidor está temporariamente indisponível. Tente novamente em instantes.',
+        );
       }
-      throw const ChatApiException('A Gama não conseguiu concluir a resposta. Tente novamente.');
+      throw const ChatApiException(
+        'A Gama não conseguiu concluir a resposta. Tente novamente.',
+      );
     }
 
     final meta = json['gama_meta'];

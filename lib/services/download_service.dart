@@ -86,9 +86,15 @@ class DownloadService {
     required String filename,
   }) async {
     if (!downloadPath.startsWith('/artifacts/')) {
-      throw ArgumentError.value(downloadPath, 'downloadPath', 'caminho inválido');
+      throw ArgumentError.value(
+        downloadPath,
+        'downloadPath',
+        'caminho inválido',
+      );
     }
-    final safeName = p.basename(filename).replaceAll(RegExp(r'[\\/\x00-\x1F]'), '_');
+    final safeName = p
+        .basename(filename)
+        .replaceAll(RegExp(r'[\\/\x00-\x1F]'), '_');
     final token = await AuthService.instance.bearerToken();
     final dio = Dio(
       BaseOptions(
@@ -135,7 +141,9 @@ class DownloadService {
         detail = body.trim();
       }
       if (detail.isNotEmpty) {
-        throw Exception('Falha ao baixar arquivo (HTTP ${e.response?.statusCode}): $detail');
+        throw Exception(
+          'Falha ao baixar arquivo (HTTP ${e.response?.statusCode}): $detail',
+        );
       }
       rethrow;
     } catch (_) {
@@ -171,11 +179,10 @@ class DownloadService {
       if (!await file.exists()) {
         throw FileSystemException('Arquivo não encontrado', path);
       }
-      await Process.start(
-        'explorer.exe',
-        ['/select,', p.normalize(file.absolute.path)],
-        mode: ProcessStartMode.detached,
-      );
+      await Process.start('explorer.exe', [
+        '/select,',
+        p.normalize(file.absolute.path),
+      ], mode: ProcessStartMode.detached);
       return;
     }
 

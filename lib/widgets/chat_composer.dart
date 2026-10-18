@@ -60,7 +60,7 @@ class ChatComposer extends StatelessWidget {
     };
 
     return Container(
-      color: GamaColors.surface,
+      color: context.gama.surface,
       child: SafeArea(
         top: false,
         child: Padding(
@@ -69,18 +69,18 @@ class ChatComposer extends StatelessWidget {
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
             decoration: BoxDecoration(
-              color: GamaColors.surfaceCard,
+              color: context.gama.surfaceCard,
               borderRadius: BorderRadius.circular(22),
               border: Border.all(
                 color: isListening
-                    ? GamaColors.accent.withOpacity(0.55)
-                    : GamaColors.border,
+                    ? context.gama.accent.withValues(alpha: 0.55)
+                    : context.gama.border,
                 width: isListening ? 1.2 : 1,
               ),
               boxShadow: isListening
                   ? [
                       BoxShadow(
-                        color: GamaColors.accentGlow,
+                        color: context.gama.accentGlow,
                         blurRadius: 16,
                         offset: const Offset(0, 2),
                       ),
@@ -118,7 +118,7 @@ class ChatComposer extends StatelessWidget {
                         controller: controller,
                         focusNode: focusNode,
                         style: TextStyle(
-                          color: GamaColors.textPrimary,
+                          color: context.gama.textPrimary,
                           fontSize: 15.5,
                           height: 1.35,
                           letterSpacing: 0.1,
@@ -131,7 +131,7 @@ class ChatComposer extends StatelessWidget {
                               ? 'Ouvindo… o texto aparece aqui'
                               : 'Escreva sua mensagem...',
                           hintStyle: TextStyle(
-                            color: GamaColors.textMuted,
+                            color: context.gama.textMuted,
                             fontSize: 14.5,
                           ),
                           // Remove qualquer fundo/caixa do tema global.
@@ -180,8 +180,8 @@ class ChatComposer extends StatelessWidget {
                       onPressed: isLoading ? null : onAttach,
                       tooltip: 'Anexar',
                       style: IconButton.styleFrom(
-                        foregroundColor: GamaColors.textSecondary,
-                        disabledForegroundColor: GamaColors.textHint,
+                        foregroundColor: context.gama.textSecondary,
+                        disabledForegroundColor: context.gama.textHint,
                         visualDensity: VisualDensity.compact,
                       ),
                       icon: const Icon(
@@ -196,9 +196,9 @@ class ChatComposer extends StatelessWidget {
                           : 'Gravar voz → texto',
                       style: IconButton.styleFrom(
                         foregroundColor: isListening
-                            ? GamaColors.accent
-                            : GamaColors.textSecondary,
-                        disabledForegroundColor: GamaColors.textHint,
+                            ? context.gama.accent
+                            : context.gama.textSecondary,
+                        disabledForegroundColor: context.gama.textHint,
                         visualDensity: VisualDensity.compact,
                       ),
                       icon: Icon(
@@ -212,8 +212,8 @@ class ChatComposer extends StatelessWidget {
                           ? 'Encerrar conversa por voz'
                           : 'Iniciar conversa por voz',
                       style: IconButton.styleFrom(
-                        foregroundColor: GamaColors.textSecondary,
-                        disabledForegroundColor: GamaColors.textHint,
+                        foregroundColor: context.gama.textSecondary,
+                        disabledForegroundColor: context.gama.textHint,
                         visualDensity: VisualDensity.compact,
                       ),
                       icon: Icon(
@@ -226,11 +226,11 @@ class ChatComposer extends StatelessWidget {
                     const SizedBox(width: 4),
                     Material(
                       color: isLoading
-                          ? GamaColors.accent.withOpacity(0.45)
-                          : GamaColors.accent,
+                          ? context.gama.accent.withValues(alpha: 0.45)
+                          : context.gama.accent,
                       borderRadius: BorderRadius.circular(14),
                       elevation: isLoading ? 0 : 2,
-                      shadowColor: GamaColors.accentGlow,
+                      shadowColor: context.gama.accentGlow,
                       child: InkWell(
                         borderRadius: BorderRadius.circular(14),
                         onTap: isLoading ? onStop : onSend,
@@ -278,7 +278,7 @@ class _ModeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? GamaColors.accentSoft : GamaColors.surfaceCard,
+      color: selected ? context.gama.accentSoft : context.gama.surfaceCard,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: onTap,
@@ -290,8 +290,8 @@ class _ModeChip extends StatelessWidget {
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: selected
-                  ? GamaColors.accent.withOpacity(0.55)
-                  : GamaColors.border,
+                  ? context.gama.accent.withValues(alpha: 0.55)
+                  : context.gama.border,
               width: selected ? 1.1 : 1,
             ),
           ),
@@ -301,15 +301,15 @@ class _ModeChip extends StatelessWidget {
               Icon(
                 icon,
                 size: 14,
-                color: selected ? GamaColors.accent : GamaColors.textMuted,
+                color: selected ? context.gama.accent : context.gama.textMuted,
               ),
               const SizedBox(width: 5),
               Text(
                 label,
                 style: TextStyle(
                   color: selected
-                      ? GamaColors.accentBright
-                      : GamaColors.textSecondary,
+                      ? context.gama.accentBright
+                      : context.gama.textSecondary,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.1,

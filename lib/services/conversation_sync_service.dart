@@ -170,13 +170,18 @@ class ConversationSyncService {
                 content: (raw['content'] ?? '').toString(),
                 conversationId: id,
                 timestamp: _parseDate(raw['timestamp']),
-                attachmentMetadataJson: (raw['attachmentMetadataJson'] ?? '').toString(),
+                attachmentMetadataJson: (raw['attachmentMetadataJson'] ?? '')
+                    .toString(),
                 variants: raw['variants'] is List
-                    ? (raw['variants'] as List).map((v) => v.toString()).toList()
+                    ? (raw['variants'] as List)
+                          .map((v) => v.toString())
+                          .toList()
                     : null,
-                selectedVariantIndex: int.tryParse(
-                  (raw['selectedVariantIndex'] ?? 0).toString(),
-                ) ?? 0,
+                selectedVariantIndex:
+                    int.tryParse(
+                      (raw['selectedVariantIndex'] ?? 0).toString(),
+                    ) ??
+                    0,
               ),
         ],
       );

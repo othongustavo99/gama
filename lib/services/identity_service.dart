@@ -59,10 +59,7 @@ class IdentityService {
 
   /// Chave estável de memória para conta Google.
   /// Prioridade: e-mail normalizado → id numérico Google.
-  static String stableGoogleUserId({
-    required String googleId,
-    String? email,
-  }) {
+  static String stableGoogleUserId({required String googleId, String? email}) {
     final e = (email ?? '').trim().toLowerCase();
     if (e.contains('@') && e.length >= 5) {
       // só caracteres seguros para path no backend

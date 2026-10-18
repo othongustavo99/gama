@@ -2,6 +2,7 @@
 .dart_tool/
 .packages
 .pub/
+.pub-cache/
 build/
 .flutter-plugins
 .flutter-plugins-dependencies
@@ -30,6 +31,9 @@ __pycache__/
 *.pyd
 .venv/
 venv/
+backend/venv/
+**/.venv/
+**/venv/
 env/
 ENV/
 
@@ -57,3 +61,7 @@ backend/data/
 
 # Logs
 *.log
+
+# Local patch backups and one-off migration scripts
+**/*.bak_video_*
+/aplicar_correcao_video.py

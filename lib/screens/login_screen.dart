@@ -74,7 +74,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: GamaColors.background,
+      backgroundColor: context.gama.background,
       body: Stack(
         children: [
           Positioned(
@@ -86,7 +86,10 @@ class _LoginScreenState extends State<LoginScreen> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
-                  colors: [GamaColors.accent.withValues(alpha: 0.14), Colors.transparent],
+                  colors: [
+                    context.gama.accent.withValues(alpha: 0.14),
+                    Colors.transparent,
+                  ],
                 ),
               ),
             ),
@@ -100,7 +103,10 @@ class _LoginScreenState extends State<LoginScreen> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
-                  colors: [GamaColors.accentCool.withValues(alpha: 0.08), Colors.transparent],
+                  colors: [
+                    context.gama.accentCool.withValues(alpha: 0.08),
+                    Colors.transparent,
+                  ],
                 ),
               ),
             ),
@@ -120,13 +126,16 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Container(
                       padding: const EdgeInsets.fromLTRB(24, 30, 24, 24),
                       decoration: BoxDecoration(
-                        gradient:  LinearGradient(
+                        gradient: LinearGradient(
                           begin: Alignment.topLeft,
                           end: Alignment.bottomRight,
-                          colors: [GamaColors.surfaceElevated, GamaColors.surface],
+                          colors: [
+                            context.gama.surfaceElevated,
+                            context.gama.surface,
+                          ],
                         ),
                         borderRadius: BorderRadius.circular(28),
-                        border: Border.all(color: GamaColors.borderSoft),
+                        border: Border.all(color: context.gama.borderSoft),
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withValues(alpha: 0.25),
@@ -143,12 +152,14 @@ class _LoginScreenState extends State<LoginScreen> {
                             height: 78,
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: GamaColors.surfaceCard,
+                              color: context.gama.surfaceCard,
                               borderRadius: BorderRadius.circular(24),
-                              border: Border.all(color: GamaColors.border),
+                              border: Border.all(color: context.gama.border),
                               boxShadow: [
                                 BoxShadow(
-                                  color: GamaColors.accent.withValues(alpha: 0.13),
+                                  color: context.gama.accent.withValues(
+                                    alpha: 0.13,
+                                  ),
                                   blurRadius: 24,
                                 ),
                               ],
@@ -159,21 +170,21 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                           Text(
+                          Text(
                             'Gama',
                             style: TextStyle(
-                              color: GamaColors.textPrimary,
+                              color: context.gama.textPrimary,
                               fontSize: 29,
                               fontWeight: FontWeight.w700,
                               letterSpacing: -0.8,
                             ),
                           ),
                           const SizedBox(height: 8),
-                           Text(
+                          Text(
                             'Seu espaço para programar, criar\ne conversar com inteligência.',
                             textAlign: TextAlign.center,
                             style: TextStyle(
-                              color: GamaColors.textSecondary,
+                              color: context.gama.textSecondary,
                               fontSize: 14,
                               height: 1.55,
                             ),
@@ -184,17 +195,21 @@ class _LoginScreenState extends State<LoginScreen> {
                               width: double.infinity,
                               padding: const EdgeInsets.all(13),
                               decoration: BoxDecoration(
-                                color: GamaColors.error.withValues(alpha: 0.10),
+                                color: context.gama.error.withValues(
+                                  alpha: 0.10,
+                                ),
                                 borderRadius: BorderRadius.circular(14),
                                 border: Border.all(
-                                  color: GamaColors.error.withValues(alpha: 0.28),
+                                  color: context.gama.error.withValues(
+                                    alpha: 0.28,
+                                  ),
                                 ),
                               ),
                               child: Text(
                                 _error!,
                                 textAlign: TextAlign.center,
-                                style:  TextStyle(
-                                  color: GamaColors.error,
+                                style: TextStyle(
+                                  color: context.gama.error,
                                   fontSize: 12,
                                   height: 1.4,
                                 ),
@@ -225,7 +240,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                       ),
                                     )
                                   : const Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
                                       children: [
                                         Icon(Icons.g_mobiledata, size: 28),
                                         SizedBox(width: 8),
@@ -247,8 +263,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: OutlinedButton(
                               onPressed: _loading ? null : _onGuest,
                               style: OutlinedButton.styleFrom(
-                                foregroundColor: GamaColors.textPrimary,
-                                side:  BorderSide(color: GamaColors.border),
+                                foregroundColor: context.gama.textPrimary,
+                                side: BorderSide(color: context.gama.border),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(16),
                                 ),
@@ -257,13 +273,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                           Row(
+                          Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
                                 Icons.lock_outline_rounded,
                                 size: 13,
-                                color: GamaColors.textMuted,
+                                color: context.gama.textMuted,
                               ),
                               SizedBox(width: 7),
                               Flexible(
@@ -271,7 +287,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   'A memória fica vinculada à sua conta.',
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
-                                    color: GamaColors.textMuted,
+                                    color: context.gama.textMuted,
                                     fontSize: 12,
                                   ),
                                 ),

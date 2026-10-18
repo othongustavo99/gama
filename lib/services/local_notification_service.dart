@@ -18,7 +18,8 @@ class LocalNotificationService {
   static const String channelId = 'gama_reminders';
   static const String channelName = 'Lembretes da Gama';
 
-  final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
   bool _initialized = false;
 
   Future<void> initialize() async {
@@ -30,7 +31,11 @@ class LocalNotificationService {
       requestSoundPermission: false,
     );
     await _plugin.initialize(
-      settings: const InitializationSettings(android: android, iOS: darwin, macOS: darwin),
+      settings: const InitializationSettings(
+        android: android,
+        iOS: darwin,
+        macOS: darwin,
+      ),
     );
 
     tzdata.initializeTimeZones();
@@ -50,29 +55,38 @@ class LocalNotificationService {
     if (kIsWeb) return false;
     try {
       if (Platform.isAndroid) {
-        final android = _plugin.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-        final notificationAllowed = await android?.requestNotificationsPermission() ?? true;
+        final android = _plugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
+        final notificationAllowed =
+            await android?.requestNotificationsPermission() ?? true;
         if (!notificationAllowed) return false;
         return true;
       }
       if (Platform.isIOS) {
-        final ios = _plugin.resolvePlatformSpecificImplementation<
-            IOSFlutterLocalNotificationsPlugin>();
+        final ios = _plugin
+            .resolvePlatformSpecificImplementation<
+              IOSFlutterLocalNotificationsPlugin
+            >();
         return await ios?.requestPermissions(
               alert: true,
               badge: true,
               sound: true,
-            ) ?? true;
+            ) ??
+            true;
       }
       if (Platform.isMacOS) {
-        final macos = _plugin.resolvePlatformSpecificImplementation<
-            MacOSFlutterLocalNotificationsPlugin>();
+        final macos = _plugin
+            .resolvePlatformSpecificImplementation<
+              MacOSFlutterLocalNotificationsPlugin
+            >();
         return await macos?.requestPermissions(
               alert: true,
               badge: true,
               sound: true,
-            ) ?? true;
+            ) ??
+            true;
       }
       return true;
     } catch (_) {
@@ -124,10 +138,14 @@ class LocalNotificationService {
     );
   }
 
-  Future<AndroidScheduleMode> _androidScheduleMode({required bool requestExact}) async {
+  Future<AndroidScheduleMode> _androidScheduleMode({
+    required bool requestExact,
+  }) async {
     if (!kIsWeb && Platform.isAndroid) {
-      final android = _plugin.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
+      final android = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
       var allowed = await android?.canScheduleExactNotifications() ?? false;
       if (!allowed && requestExact) {
         await android?.requestExactAlarmsPermission();
@@ -182,7 +200,11 @@ class LocalNotificationService {
       final text = reminder['text']?.toString().trim() ?? '';
       final when = DateTime.tryParse(reminder['when']?.toString() ?? '');
       final done = reminder['done'] == true;
-      if (id.isEmpty || text.isEmpty || when == null || done || !when.isAfter(DateTime.now())) {
+      if (id.isEmpty ||
+          text.isEmpty ||
+          when == null ||
+          done ||
+          !when.isAfter(DateTime.now())) {
         continue;
       }
       liveIds.add(_notificationId(id));

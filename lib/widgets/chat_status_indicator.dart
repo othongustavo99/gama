@@ -24,7 +24,11 @@ class ChatStatusIndicator extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           if (isError)
-            Icon(Icons.error_outline_rounded, color: GamaColors.error, size: 16)
+            Icon(
+              Icons.error_outline_rounded,
+              color: context.gama.error,
+              size: 16,
+            )
           else
             const _AnimatedTypingDots(),
           const SizedBox(width: 8),
@@ -34,7 +38,7 @@ class ChatStatusIndicator extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: isError ? GamaColors.error : GamaColors.textMuted,
+                color: isError ? context.gama.error : context.gama.textMuted,
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
                 height: 1.3,
@@ -48,9 +52,11 @@ class ChatStatusIndicator extends StatelessWidget {
               icon: const Icon(Icons.refresh_rounded, size: 16),
               label: const Text('Tentar novamente'),
               style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                minimumSize: const Size(48, 48),
               ),
             ),
           ],
@@ -105,7 +111,7 @@ class _AnimatedTypingDotsState extends State<_AnimatedTypingDots>
                   width: 6,
                   height: 6,
                   decoration: BoxDecoration(
-                    color: GamaColors.accent.withValues(alpha: 0.9),
+                    color: context.gama.accent.withValues(alpha: 0.9),
                     shape: BoxShape.circle,
                   ),
                 ),

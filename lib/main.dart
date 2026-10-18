@@ -68,27 +68,27 @@ class GamaApp extends StatelessWidget {
 
   ThemeData _theme(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
-    GamaColors.setLightMode(!isDark);
-    final background = isDark ? GamaColors.background : const Color(0xFFF6F7F9);
-    final surface = isDark ? GamaColors.surface : Colors.white;
-    final textPrimary = isDark ? GamaColors.textPrimary : const Color(0xFF171A20);
-    final textSecondary = isDark ? GamaColors.textSecondary : const Color(0xFF535B66);
-    final border = isDark ? GamaColors.border : const Color(0xFFD9DEE5);
+    final palette = isDark ? GamaPalette.dark() : GamaPalette.light();
+    final background = palette.background;
+    final surface = palette.surface;
+    final textPrimary = palette.textPrimary;
+    final textSecondary = palette.textSecondary;
+    final border = palette.border;
     final scheme = isDark
-        ?  ColorScheme.dark(
-            primary: GamaColors.accent,
-            secondary: GamaColors.accentCool,
-            surface: GamaColors.surface,
-            error: GamaColors.error,
+        ? ColorScheme.dark(
+            primary: palette.accent,
+            secondary: palette.accentCool,
+            surface: palette.surface,
+            error: palette.error,
             onPrimary: Colors.white,
             onSecondary: Colors.white,
-            onSurface: GamaColors.textPrimary,
+            onSurface: palette.textPrimary,
           )
         : ColorScheme.light(
-            primary: GamaColors.accentMuted,
-            secondary: GamaColors.accentCool,
+            primary: palette.accentMuted,
+            secondary: palette.accentCool,
             surface: surface,
-            error: GamaColors.error,
+            error: palette.error,
             onPrimary: Colors.white,
             onSecondary: Colors.white,
             onSurface: textPrimary,
@@ -96,6 +96,7 @@ class GamaApp extends StatelessWidget {
     return ThemeData(
       brightness: brightness,
       useMaterial3: true,
+      extensions: [palette],
       scaffoldBackgroundColor: background,
       colorScheme: scheme,
       appBarTheme: AppBarTheme(
@@ -118,13 +119,11 @@ class GamaApp extends StatelessWidget {
         surfaceTintColor: Colors.transparent,
         dragHandleColor: textSecondary,
       ),
-      progressIndicatorTheme:  ProgressIndicatorThemeData(
-        color: GamaColors.accent,
-      ),
-      textSelectionTheme:  TextSelectionThemeData(
-        cursorColor: GamaColors.accent,
-        selectionColor: GamaColors.accentSoft,
-        selectionHandleColor: GamaColors.accent,
+      progressIndicatorTheme: ProgressIndicatorThemeData(color: palette.accent),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: palette.accent,
+        selectionColor: palette.accentSoft,
+        selectionHandleColor: palette.accent,
       ),
       dividerColor: border,
       snackBarTheme: SnackBarThemeData(
@@ -155,7 +154,7 @@ class GamaApp extends StatelessWidget {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: isDark ? GamaColors.surfaceInput : const Color(0xFFF0F2F5),
+        fillColor: palette.surfaceInput,
         hintStyle: TextStyle(color: textSecondary),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
@@ -167,28 +166,32 @@ class GamaApp extends StatelessWidget {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide:  BorderSide(color: GamaColors.accent, width: 1.4),
+          borderSide: BorderSide(color: palette.accent, width: 1.4),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: textPrimary,
           side: BorderSide(color: border),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(foregroundColor: GamaColors.accentMuted),
+        style: TextButton.styleFrom(foregroundColor: palette.accentMuted),
       ),
       chipTheme: ChipThemeData(
         backgroundColor: surface,
-        selectedColor: isDark ? GamaColors.accentSoft : const Color(0xFFFFE9DA),
+        selectedColor: palette.accentSoft,
         side: BorderSide(color: border),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         labelStyle: TextStyle(color: textSecondary),
@@ -205,10 +208,6 @@ class GamaApp extends StatelessWidget {
         final mode = SettingsService.instance.themeMode;
         final lightTheme = _theme(Brightness.light);
         final darkTheme = _theme(Brightness.dark);
-        final useLightPalette = mode == ThemeMode.light ||
-            (mode == ThemeMode.system &&
-                WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.light);
-        GamaColors.setLightMode(useLightPalette);
         return MaterialApp(
           title: 'Gama',
           debugShowCheckedModeBanner: false,
@@ -224,16 +223,25 @@ class GamaApp extends StatelessWidget {
           ],
           builder: (context, child) {
             final media = MediaQuery.of(context);
-            final useLight = mode == ThemeMode.light ||
-                (mode == ThemeMode.system && media.platformBrightness == Brightness.light);
-            GamaColors.setLightMode(useLight);
+            final useLight =
+                mode == ThemeMode.light ||
+                (mode == ThemeMode.system &&
+                    media.platformBrightness == Brightness.light);
             SystemChrome.setSystemUIOverlayStyle(
               SystemUiOverlayStyle(
                 statusBarColor: Colors.transparent,
-                statusBarIconBrightness: useLight ? Brightness.dark : Brightness.light,
-                systemNavigationBarColor: useLight ? const Color(0xFFF6F7F9) : Colors.black,
-                systemNavigationBarIconBrightness: useLight ? Brightness.dark : Brightness.light,
-                systemNavigationBarDividerColor: useLight ? const Color(0xFFD9DEE5) : Colors.black,
+                statusBarIconBrightness: useLight
+                    ? Brightness.dark
+                    : Brightness.light,
+                systemNavigationBarColor: useLight
+                    ? const Color(0xFFF6F7F9)
+                    : Colors.black,
+                systemNavigationBarIconBrightness: useLight
+                    ? Brightness.dark
+                    : Brightness.light,
+                systemNavigationBarDividerColor: useLight
+                    ? const Color(0xFFD9DEE5)
+                    : Colors.black,
                 systemNavigationBarContrastEnforced: false,
               ),
             );
@@ -263,7 +271,7 @@ class GamaStartupError extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true),
       home: Scaffold(
-        backgroundColor: GamaColors.background,
+        backgroundColor: context.gama.background,
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(28),
@@ -274,36 +282,36 @@ class GamaStartupError extends StatelessWidget {
                   width: 72,
                   height: 72,
                   decoration: BoxDecoration(
-                    color: GamaColors.accentSoft,
+                    color: context.gama.accentSoft,
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: GamaColors.accent.withValues(alpha: 0.35),
+                      color: context.gama.accent.withValues(alpha: 0.35),
                     ),
                   ),
-                  child:  Icon(
+                  child: Icon(
                     Icons.warning_amber_rounded,
-                    color: GamaColors.accent,
+                    color: context.gama.accent,
                     size: 36,
                   ),
                 ),
                 const SizedBox(height: 20),
-                 Text(
+                Text(
                   'Não foi possível iniciar a Gama',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: GamaColors.textPrimary,
+                    color: context.gama.textPrimary,
                     fontSize: 19,
                     fontWeight: FontWeight.w600,
                     letterSpacing: -0.3,
                   ),
                 ),
                 const SizedBox(height: 10),
-                 Text(
+                Text(
                   'O histórico não foi apagado. Feche e abra o app novamente.\n'
                   'Se o problema persistir, faça uma cópia dos dados antes de qualquer reparo.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: GamaColors.textSecondary,
+                    color: context.gama.textSecondary,
                     height: 1.45,
                   ),
                 ),
@@ -313,10 +321,7 @@ class GamaStartupError extends StatelessWidget {
                   textAlign: TextAlign.center,
                   maxLines: 4,
                   overflow: TextOverflow.ellipsis,
-                  style:  TextStyle(
-                    color: GamaColors.textMuted,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: context.gama.textMuted, fontSize: 12),
                 ),
               ],
             ),

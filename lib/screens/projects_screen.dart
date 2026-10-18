@@ -12,9 +12,9 @@ class ProjectsScreen extends StatelessWidget {
     final service = ConversationService.instance;
 
     return Scaffold(
-      backgroundColor: GamaColors.background,
+      backgroundColor: context.gama.background,
       appBar: AppBar(
-        backgroundColor: GamaColors.surface,
+        backgroundColor: context.gama.surface,
         title: const Text('Projetos'),
       ),
       body: ListenableBuilder(
@@ -32,31 +32,31 @@ class ProjectsScreen extends StatelessWidget {
                       width: 64,
                       height: 64,
                       decoration: BoxDecoration(
-                        color: GamaColors.accentSoft,
+                        color: context.gama.accentSoft,
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      child:  Icon(
+                      child: Icon(
                         Icons.folder_special_rounded,
-                        color: GamaColors.accent,
+                        color: context.gama.accent,
                         size: 32,
                       ),
                     ),
                     const SizedBox(height: 20),
-                     Text(
+                    Text(
                       'Nenhum projeto ainda',
                       style: TextStyle(
-                        color: GamaColors.textPrimary,
+                        color: context.gama.textPrimary,
                         fontSize: 17,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 10),
-                     Text(
+                    Text(
                       'Fixe uma conversa no menu ⋮ do histórico (drawer) '
                       'para ela aparecer aqui como espaço de trabalho.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: GamaColors.textMuted,
+                        color: context.gama.textMuted,
                         height: 1.4,
                       ),
                     ),
@@ -77,30 +77,30 @@ class ProjectsScreen extends StatelessWidget {
               final hh = updated.hour.toString().padLeft(2, '0');
               final mi = updated.minute.toString().padLeft(2, '0');
               return Material(
-                color: GamaColors.surfaceCard,
+                color: context.gama.surfaceCard,
                 borderRadius: BorderRadius.circular(14),
                 child: ListTile(
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  leading:  Icon(
+                  leading: Icon(
                     Icons.push_pin_rounded,
-                    color: GamaColors.accent,
+                    color: context.gama.accent,
                   ),
                   title: Text(
                     c.title,
-                    style:  TextStyle(color: GamaColors.textPrimary),
+                    style: TextStyle(color: context.gama.textPrimary),
                   ),
                   subtitle: Text(
                     'Atualizado $dd/$mm $hh:$mi',
-                    style:  TextStyle(
-                      color: GamaColors.textMuted,
+                    style: TextStyle(
+                      color: context.gama.textMuted,
                       fontSize: 12,
                     ),
                   ),
-                  trailing:  Icon(
+                  trailing: Icon(
                     Icons.chevron_right_rounded,
-                    color: GamaColors.textMuted,
+                    color: context.gama.textMuted,
                   ),
                   onTap: () async {
                     await service.selectConversation(c.id);
@@ -110,15 +110,15 @@ class ProjectsScreen extends StatelessWidget {
                     final confirm = await showDialog<bool>(
                       context: context,
                       builder: (ctx) => AlertDialog(
-                        backgroundColor: GamaColors.surfaceCard,
-                        title:  Text(
+                        backgroundColor: context.gama.surfaceCard,
+                        title: Text(
                           'Desafixar projeto?',
-                          style: TextStyle(color: GamaColors.textPrimary),
+                          style: TextStyle(color: context.gama.textPrimary),
                         ),
                         content: Text(
                           'A conversa "${c.title}" sai da lista de projetos, '
                           'mas continua no histórico.',
-                          style:  TextStyle(color: GamaColors.textSecondary),
+                          style: TextStyle(color: context.gama.textSecondary),
                         ),
                         actions: [
                           TextButton(

@@ -22,18 +22,18 @@ class _Reminder {
   });
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'text': text,
-        'when': when.toIso8601String(),
-        'done': done,
-      };
+    'id': id,
+    'text': text,
+    'when': when.toIso8601String(),
+    'done': done,
+  };
 
   factory _Reminder.fromJson(Map<String, dynamic> j) => _Reminder(
-        id: j['id'] as String,
-        text: j['text'] as String? ?? '',
-        when: DateTime.tryParse(j['when'] as String? ?? '') ?? DateTime.now(),
-        done: j['done'] as bool? ?? false,
-      );
+    id: j['id'] as String,
+    text: j['text'] as String? ?? '',
+    when: DateTime.tryParse(j['when'] as String? ?? '') ?? DateTime.now(),
+    done: j['done'] as bool? ?? false,
+  );
 }
 
 /// Lembretes locais (SharedPreferences). Não depende do backend.
@@ -76,17 +76,24 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
       _loading = false;
     });
     try {
-      final enabled = await PluginSettingsService.instance.isEnabled('scheduled');
+      final enabled = await PluginSettingsService.instance.isEnabled(
+        'scheduled',
+      );
       final hasFutureReminder = list.any(
         (item) => !item.done && item.when.isAfter(DateTime.now()),
       );
       if (enabled && hasFutureReminder) {
-        final permitted = await LocalNotificationService.instance.requestPermission();
+        final permitted = await LocalNotificationService.instance
+            .requestPermission();
         if (!permitted) {
-          _snack('Permita as notificações da Gama nas configurações do aparelho para receber lembretes.');
+          _snack(
+            'Permita as notificações da Gama nas configurações do aparelho para receber lembretes.',
+          );
         }
       }
-      await LocalNotificationService.instance.syncSavedReminders(enabled: enabled);
+      await LocalNotificationService.instance.syncSavedReminders(
+        enabled: enabled,
+      );
     } catch (_) {}
   }
 
@@ -106,10 +113,10 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
         return StatefulBuilder(
           builder: (ctx, setLocal) {
             return AlertDialog(
-              backgroundColor: GamaColors.surfaceCard,
-              title:  Text(
+              backgroundColor: context.gama.surfaceCard,
+              title: Text(
                 'Novo lembrete',
-                style: TextStyle(color: GamaColors.textPrimary),
+                style: TextStyle(color: context.gama.textPrimary),
               ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -117,24 +124,24 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                   TextField(
                     controller: textCtrl,
                     autofocus: true,
-                    style:  TextStyle(color: GamaColors.textPrimary),
-                    decoration:  InputDecoration(
+                    style: TextStyle(color: context.gama.textPrimary),
+                    decoration: InputDecoration(
                       hintText: 'Ex.: revisar uma tarefa',
-                      hintStyle: TextStyle(color: GamaColors.textHint),
+                      hintStyle: TextStyle(color: context.gama.textHint),
                     ),
                     maxLines: 2,
                   ),
                   const SizedBox(height: 16),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading:  Icon(Icons.event, color: GamaColors.accent),
+                    leading: Icon(Icons.event, color: context.gama.accent),
                     title: Text(
                       _fmt(when),
-                      style:  TextStyle(color: GamaColors.textPrimary),
+                      style: TextStyle(color: context.gama.textPrimary),
                     ),
-                    trailing:  Icon(
+                    trailing: Icon(
                       Icons.edit_calendar_rounded,
-                      color: GamaColors.textMuted,
+                      color: context.gama.textMuted,
                     ),
                     onTap: () async {
                       final d = await showDatePicker(
@@ -196,7 +203,9 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
     });
     await _persist();
     try {
-      final enabled = await PluginSettingsService.instance.isEnabled('scheduled');
+      final enabled = await PluginSettingsService.instance.isEnabled(
+        'scheduled',
+      );
       if (enabled) {
         await LocalNotificationService.instance.schedule(
           id: reminder.id,
@@ -205,10 +214,14 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
         );
         _snack('Lembrete salvo e notificação agendada.');
       } else {
-        _snack('Lembrete salvo. Ative Agendamentos em Plugins para receber notificações.');
+        _snack(
+          'Lembrete salvo. Ative Agendamentos em Plugins para receber notificações.',
+        );
       }
     } catch (e) {
-      _snack('Lembrete salvo, mas não foi possível ativar a notificação. Verifique a permissão do app.');
+      _snack(
+        'Lembrete salvo, mas não foi possível ativar a notificação. Verifique a permissão do app.',
+      );
     }
   }
 
@@ -227,7 +240,11 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
         await LocalNotificationService.instance.cancel(r.id);
       } else if (r.when.isAfter(DateTime.now()) &&
           await PluginSettingsService.instance.isEnabled('scheduled')) {
-        await LocalNotificationService.instance.schedule(id: r.id, text: r.text, when: r.when);
+        await LocalNotificationService.instance.schedule(
+          id: r.id,
+          text: r.text,
+          when: r.when,
+        );
       }
     } catch (_) {}
   }
@@ -235,7 +252,9 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
   Future<void> _remove(_Reminder r) async {
     setState(() => _items.removeWhere((e) => e.id == r.id));
     await _persist();
-    try { await LocalNotificationService.instance.cancel(r.id); } catch (_) {}
+    try {
+      await LocalNotificationService.instance.cancel(r.id);
+    } catch (_) {}
   }
 
   static String _fmt(DateTime d) {
@@ -252,9 +271,9 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
     final done = _items.where((e) => e.done).toList();
 
     return Scaffold(
-      backgroundColor: GamaColors.background,
+      backgroundColor: context.gama.background,
       appBar: AppBar(
-        backgroundColor: GamaColors.surface,
+        backgroundColor: context.gama.surface,
         title: const Text('Agendado'),
         actions: [
           IconButton(
@@ -265,89 +284,87 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        backgroundColor: GamaColors.accent,
+        backgroundColor: context.gama.accent,
         onPressed: _add,
         child: const Icon(Icons.add, color: Colors.white),
       ),
       body: _loading
-          ?  Center(
-              child: CircularProgressIndicator(color: GamaColors.accent),
-            )
+          ? Center(child: CircularProgressIndicator(color: context.gama.accent))
           : _items.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(28),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Container(
-                          width: 64,
-                          height: 64,
-                          decoration: BoxDecoration(
-                            color: GamaColors.accentSoft,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child:  Icon(
-                            Icons.schedule_rounded,
-                            color: GamaColors.accent,
-                            size: 32,
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                         Text(
-                          'Nenhum lembrete ainda',
-                          style: TextStyle(
-                            color: GamaColors.textPrimary,
-                            fontSize: 17,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                         Text(
-                          'Crie lembretes locais neste aparelho.\n'
-                          'Eles ficam só no seu dispositivo (não vão para o servidor).',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: GamaColors.textMuted,
-                            height: 1.4,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    if (pending.isNotEmpty) ...[
-                       Text(
-                        'PENDENTES',
-                        style: TextStyle(
-                          color: GamaColors.textMuted,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.6,
-                        ),
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        color: context.gama.accentSoft,
+                        borderRadius: BorderRadius.circular(16),
                       ),
-                      const SizedBox(height: 8),
-                      ...pending.map(_tile),
-                    ],
-                    if (done.isNotEmpty) ...[
-                      const SizedBox(height: 20),
-                       Text(
-                        'CONCLUÍDOS',
-                        style: TextStyle(
-                          color: GamaColors.textMuted,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.6,
-                        ),
+                      child: Icon(
+                        Icons.schedule_rounded,
+                        color: context.gama.accent,
+                        size: 32,
                       ),
-                      const SizedBox(height: 8),
-                      ...done.map(_tile),
-                    ],
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      'Nenhum lembrete ainda',
+                      style: TextStyle(
+                        color: context.gama.textPrimary,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Crie lembretes locais neste aparelho.\n'
+                      'Eles ficam só no seu dispositivo (não vão para o servidor).',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: context.gama.textMuted,
+                        height: 1.4,
+                      ),
+                    ),
                   ],
                 ),
+              ),
+            )
+          : ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
+              children: [
+                if (pending.isNotEmpty) ...[
+                  Text(
+                    'PENDENTES',
+                    style: TextStyle(
+                      color: context.gama.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...pending.map(_tile),
+                ],
+                if (done.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  Text(
+                    'CONCLUÍDOS',
+                    style: TextStyle(
+                      color: context.gama.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...done.map(_tile),
+                ],
+              ],
+            ),
     );
   }
 
@@ -356,7 +373,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: GamaColors.surfaceCard,
+        color: context.gama.surfaceCard,
         borderRadius: BorderRadius.circular(14),
         child: ListTile(
           shape: RoundedRectangleBorder(
@@ -368,28 +385,28 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
               r.done
                   ? Icons.check_circle_rounded
                   : Icons.radio_button_unchecked_rounded,
-              color: r.done ? GamaColors.success : GamaColors.textMuted,
+              color: r.done ? context.gama.success : context.gama.textMuted,
             ),
           ),
           title: Text(
             r.text,
             style: TextStyle(
-              color: r.done ? GamaColors.textMuted : GamaColors.textPrimary,
+              color: r.done ? context.gama.textMuted : context.gama.textPrimary,
               decoration: r.done ? TextDecoration.lineThrough : null,
             ),
           ),
           subtitle: Text(
             _fmt(r.when) + (overdue ? '  · atrasado' : ''),
             style: TextStyle(
-              color: overdue ? GamaColors.error : GamaColors.textMuted,
+              color: overdue ? context.gama.error : context.gama.textMuted,
               fontSize: 12,
             ),
           ),
           trailing: IconButton(
             onPressed: () => _remove(r),
-            icon:  Icon(
+            icon: Icon(
               Icons.delete_outline_rounded,
-              color: GamaColors.textMuted,
+              color: context.gama.textMuted,
               size: 20,
             ),
           ),

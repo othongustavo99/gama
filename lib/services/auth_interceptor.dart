@@ -15,10 +15,10 @@ class GammaAuthInterceptor extends Interceptor {
     if (status == 401 || status == 403) {
       final message = AppConstants.apiKey.isEmpty
           ? 'A API recusou o acesso (HTTP $status). Este build está sem GAMA_API_KEY. '
-              'Se o Railway exige essa chave, gere o APK com --dart-define=GAMA_API_KEY=SUA_CHAVE '
-              'e confirme a autenticação da sessão.'
+                'Se o Railway exige essa chave, gere o APK com --dart-define=GAMA_API_KEY=SUA_CHAVE '
+                'e confirme a autenticação da sessão.'
           : 'A API recusou o acesso (HTTP $status). Confira se GAMA_API_KEY no build corresponde '
-              'à chave do Railway e se a sessão de autenticação continua válida.';
+                'à chave do Railway e se a sessão de autenticação continua válida.';
       handler.reject(err.copyWith(message: message));
       return;
     }
