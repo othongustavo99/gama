@@ -1,5 +1,6 @@
 from typing import List, Dict, Optional, Tuple, Any
 import logging
+import re
 
 from .context import ContextManager, SummaryStore, _text_of
 from .memory import get_store, try_extract_memories
@@ -112,7 +113,12 @@ class GamaCore:
                     )
                     break
 
-        if enable_memory and auto_memory and last_user:
+        user_turns = sum(1 for item in messages if item.get("role") == "user")
+        memory_scan_every = max(1, int(getattr(settings, "MEMORY_LLM_SCAN_EVERY_TURNS", 5)))
+        explicit_memory_request = bool(re.search(r"\b(lembre|memorize|guarde|grave|anote|salve na memória)\b", last_user, re.I))
+        if enable_memory and auto_memory and last_user and (
+            explicit_memory_request or user_turns % memory_scan_every == 0
+        ):
             try:
                 for extracted in try_extract_memories(last_user):
                     try:

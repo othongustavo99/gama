@@ -105,6 +105,12 @@ class MemoryService {
     return MemoryFact.fromJson(Map<String, dynamic>.from(data['fact'] as Map));
   }
 
+  Future<MemoryFact> updateFact(String id, String text) async {
+    final res = await _dio().patch('/memory/$id', data: {'text': text});
+    final data = res.data as Map<String, dynamic>;
+    return MemoryFact.fromJson(Map<String, dynamic>.from(data['fact'] as Map));
+  }
+
   Future<void> deleteFact(String id) async {
     await _dio().delete('/memory/$id');
   }

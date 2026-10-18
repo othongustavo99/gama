@@ -134,12 +134,11 @@ def _restore_older_conversation_context(
 
 _PROJECT_ID_RE = re.compile(r"\[project_id:([A-Za-z0-9_-]{6,128})\]", re.IGNORECASE)
 _DEEP_PROJECT_INTENT = re.compile(
-    r"\b(analisa(?:r|e)?|an[aá]lise\s+(?:geral|completa)|revise|revisar|"
-    r"revis[aã]o\s+(?:geral|completa)|audita(?:r|e)?|corrija|corrigir|"
-    r"melhore|melhorar|melhoria(?:s)?|pontos?\s+de\s+melhoria(?:s)?|"
-    r"refatora(?:r|e)?|polir|polida|polimentos?|"
-    r"c[oó]digos? completos?|"
-    r"arquivos? completos?|prontos? para substituir|projeto inteiro|zip inteiro)\b",
+    r"\b(revis[aã]o\s+(?:completa|integral)\s+do\s+projeto|"
+    r"auditoria\s+(?:completa|integral)\s+do\s+projeto|"
+    r"an[aá]lise\s+profunda\s+do\s+projeto|"
+    r"revise\s+(?:todo|o\s+projeto\s+inteiro)|"
+    r"analise\s+(?:todo|o\s+projeto\s+inteiro))\b",
     re.IGNORECASE,
 )
 
@@ -758,23 +757,14 @@ async def chat(
         "github.com/" in _message_text(message.get("content")).lower()
         for message in messages
     )
-    simple_flutter_download_files = (
-        _simple_flutter_project_files(
-            last_user,
-            has_existing_project=has_existing_code_project,
-        )
-        if wants_zip_request
-        else None
-    )
+    # O agente escolhe se deve criar arquivos; não gere um ZIP por uma
+    # correspondência de palavras-chave no pedido.
+    simple_flutter_download_files = None
 
     # Agente: o modelo decide quando pesquisar (tool calling). Só com OpenRouter.
     # Pedidos de arquivo usam o fluxo normal para que possamos validar o artefato
     # antes de exibir uma resposta final ao usuário.
-    use_agent = bool(
-        app_settings.AGENT_TOOLS_ENABLED
-        and llm.provider == "openrouter"
-        and not download_requested
-    )
+    use_agent = bool(app_settings.AGENT_TOOLS_ENABLED and llm.provider == "openrouter")
     will_search = bool(
         web_search_enabled and last_user and not use_agent and should_search(last_user)
     )
@@ -788,29 +778,10 @@ async def chat(
     deep_project_review = bool(
         code_analyzer_enabled
         and (project_id or has_current_github_link)
-        and (_DEEP_PROJECT_INTENT.search(last_user) or wants_zip_request)
+        and _DEEP_PROJECT_INTENT.search(last_user)
     )
 
     has_imgs = bool(getattr(request, "images", None) and vision_enabled)
-    image_req = detect_image_intent(last_user, has_attached_images=has_imgs) if last_user else None
-    want_image_gen = bool(
-        getattr(app_settings, "IMAGE_GEN_ENABLED", True)
-        and last_user
-        and image_req is not None
-        and image_req.intent in (ImageIntent.GENERATE, ImageIntent.EDIT, ImageIntent.IMPROVE)
-    )
-
-    # Video Generator: o módulo já existia, mas não era acionado pela rota /chat.
-    # Só intercepta pedidos explícitos de criação/animação, sem desviar análise comum.
-    video_req = detect_video_intent(
-        last_user,
-        has_attached_images=has_imgs,
-    ) if last_user else None
-    want_video_gen = bool(
-        video_req is not None
-        and video_req.intent in (VideoIntent.CREATE, VideoIntent.ANIMATE)
-    )
-
     # Image Analyzer: faz a leitura visual eficiente antes do modelo principal.
     # Se falhar, o fluxo multimodal antigo continua como fallback.
     image_analysis_context = ""
@@ -831,255 +802,7 @@ async def chat(
 
         try:
             nonlocal image_analysis_context, image_analysis_ok
-            # --- Video Generator: criação de vídeo por texto ou animação de imagem ---
-            if want_video_gen and video_req is not None:
-                if not bool(plugin_flags.get("video_gen", True)):
-                    reply = "A geração de vídeo está desativada em Plugins. Ative-a e tente novamente."
-                    yield json.dumps({"message": {"role": "assistant", "content": reply}, "done": False}, ensure_ascii=False) + "\n"
-                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
-                    return
-                if not getattr(app_settings, "VIDEO_GEN_ENABLED", True):
-                    reply = "A geração de vídeo está desativada no backend. Configure VIDEO_GEN_ENABLED=true no Railway."
-                    yield json.dumps({"message": {"role": "assistant", "content": reply}, "done": False}, ensure_ascii=False) + "\n"
-                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
-                    return
-                video_intent = video_req.intent
-                video_prompt = build_video_prompt(last_user, intent=video_intent)
-                video_options = parse_video_options(last_user)
-                try:
-                    consume_daily_media_quota(user_id, "video")
-                except DailyQuotaExceeded as exc:
-                    yield json.dumps({"message": {"role": "assistant", "content": str(exc)}, "done": False}, ensure_ascii=False) + "\n"
-                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
-                    return
-                except RuntimeError as exc:
-                    yield json.dumps({"message": {"role": "assistant", "content": str(exc)}, "done": False}, ensure_ascii=False) + "\n"
-                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
-                    return
-                reference_images = []
-                if video_intent == VideoIntent.ANIMATE:
-                    for image in (request.images or []):
-                        image_data = getattr(image, "data", None)
-                        if image_data:
-                            reference_images.append({
-                                "mime": (
-                                    getattr(image, "mime", None)
-                                    or getattr(image, "mime_type", None)
-                                    or "image/jpeg"
-                                ),
-                                "data": image_data,
-                            })
-                generated_artifact = None
-                generation_error = None
-                try:
-                    async for video_event in generate_video_events(
-                        video_prompt,
-                        duration=video_options["duration"],
-                        resolution=video_options["resolution"],
-                        aspect_ratio=video_options["aspect_ratio"],
-                        reference_images=(reference_images if reference_images else None),
-                        generate_audio=video_options["generate_audio"],
-                    ):
-                        event_type = video_event.get("type")
-                        if event_type == "phase":
-                            phase = str(video_event.get("phase") or "video_generating")
-                            yield json.dumps({"gama_meta": {"phase": phase}}, ensure_ascii=False) + "\n"
-                        elif event_type == "error":
-                            generation_error = str(video_event.get("error") or "O provedor não conseguiu gerar o vídeo.")[:600]
-                        elif event_type == "completed":
-                            video_bytes = video_event.get("data")
-                            if not isinstance(video_bytes, bytes) or not video_bytes:
-                                generation_error = "O provedor não retornou um arquivo de vídeo válido."
-                                continue
-                            try:
-                                stored = save_artifact(
-                                    kind="video",
-                                    filename="gama_video_gerado.mp4",
-                                    data=video_bytes,
-                                    user_id=user_id,
-                                    meta={
-                                        "duration_seconds": video_options["duration"],
-                                        "resolution": video_options["resolution"],
-                                        "aspect_ratio": video_options["aspect_ratio"],
-                                        "audio_generated": video_options["generate_audio"],
-                                        "provider_cost_usd": video_event.get("cost"),
-                                        "model": video_event.get("model"),
-                                    },
-                                )
-                                generated_artifact = {
-                                    "artifact_id": stored.get("artifact_id"),
-                                    "filename": stored.get("filename", "gama_video_gerado.mp4"),
-                                    "kind": "video",
-                                    "size": stored.get("size", len(video_bytes)),
-                                    "duration_seconds": video_options["duration"],
-                                    "resolution": video_options["resolution"],
-                                    "aspect_ratio": video_options["aspect_ratio"],
-                                    "audio_generated": video_options["generate_audio"],
-                                    "provider_cost_usd": video_event.get("cost"),
-                                    "model": video_event.get("model"),
-                                }
-                                yield json.dumps(
-                                    {"gama_meta": {"phase": "artifact_ready", "artifact": generated_artifact}},
-                                    ensure_ascii=False,
-                                ) + "\n"
-                            except Exception:
-                                logger.exception("Could not save generated video artifact")
-                                generation_error = (
-                                    "O vídeo foi gerado, mas não consegui salvá-lo na Biblioteca. "
-                                    "Verifique o espaço disponível no armazenamento do Railway."
-                                )
-                except Exception:
-                    logger.exception("Video generation flow failed")
-                    generation_error = "Falha inesperada ao gerar o vídeo. Tente novamente."
-                if generated_artifact:
-                    reply = (
-                        "Vídeo gerado com sucesso. O arquivo está disponível no cartão abaixo "
-                        "e também pode ser salvo na Biblioteca."
-                    )
-                else:
-                    reply = "Não consegui gerar o vídeo. " + (
-                        generation_error or "O serviço de vídeo não retornou um resultado válido."
-                    )
-                yield json.dumps({"message": {"role": "assistant", "content": reply}, "done": False}, ensure_ascii=False) + "\n"
-                yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
-                return
-            # --- fase: geração de imagem (quando o usuário pede para criar/imaginar) ---
-                        # --- fase: geração / edição / melhoria de imagem ---
-            if want_image_gen and image_req is not None:
-                intent = image_req.intent
-                phase_label = {
-                    ImageIntent.GENERATE: "generating_image",
-                    ImageIntent.EDIT: "editing_image",
-                    ImageIntent.IMPROVE: "improving_image",
-                }.get(intent, "generating_image")
-
-                yield json.dumps(
-                    {
-                        "gama_meta": {
-                            "phase": phase_label,
-                            "image_intent": intent.value,
-                        }
-                    },
-                    ensure_ascii=False,
-                ) + "\n"
-
-                # EDIT/IMPROVE sem imagem anexada → avisa e não tenta gerar do zero
-                if intent in (ImageIntent.EDIT, ImageIntent.IMPROVE) and not has_imgs:
-                    msg = (
-                        "Para editar ou melhorar uma imagem, anexe a foto primeiro e depois "
-                        "diga o que quer mudar ou melhorar."
-                        if intent == ImageIntent.EDIT
-                        else
-                        "Para melhorar a qualidade de uma imagem, anexe a foto primeiro e peça "
-                        "para melhorar/upscale."
-                    )
-                    yield json.dumps(
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": msg,
-                            },
-                            "done": False,
-                        },
-                        ensure_ascii=False,
-                    ) + "\n"
-                    yield json.dumps(
-                        {"message": {"role": "assistant", "content": ""}, "done": True},
-                        ensure_ascii=False,
-                    ) + "\n"
-                    return
-
-                prompt = build_image_prompt(last_user, intent=intent)
-                try:
-                    consume_daily_media_quota(user_id, "image")
-                except (DailyQuotaExceeded, RuntimeError) as exc:
-                    yield json.dumps({"message": {"role": "assistant", "content": str(exc)}, "done": False}, ensure_ascii=False) + "\n"
-                    yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}, ensure_ascii=False) + "\n"
-                    return
-                result = await generate_image(
-                    prompt,
-                    reference_images=(
-                        [{"mime": i.mime, "data": i.data, "name": i.name} for i in request.images]
-                        if intent in (ImageIntent.EDIT, ImageIntent.IMPROVE) and request.images
-                        else None
-                    ),
-                )
-
-                if result.get("ok") and result.get("base64"):
-                    yield json.dumps(
-                        {
-                            "gama_meta": {
-                                "phase": "image_ready",
-                                "image_intent": intent.value,
-                                "image": {
-                                    "mime": result.get("mime") or "image/png",
-                                    "data": result["base64"],
-                                    "model": result.get("model"),
-                                    "prompt": result.get("prompt") or prompt[:200],
-                                },
-                            }
-                        },
-                        ensure_ascii=False,
-                    ) + "\n"
-
-                    # Legenda adaptada à intenção
-                    if intent == ImageIntent.EDIT:
-                        caption_system = (
-                            "Você é a Gama. O usuário pediu uma edição de imagem e ela já foi feita. "
-                            "Responda em 1-3 frases em português, confirmando a alteração, "
-                            "sem markdown de imagem e sem pedir desculpas. Seja natural."
-                        )
-                    elif intent == ImageIntent.IMPROVE:
-                        caption_system = (
-                            "Você é a Gama. O usuário pediu para melhorar a qualidade de uma imagem "
-                            "e ela já foi aprimorada. Responda em 1-3 frases em português, "
-                            "confirmando a melhoria, sem markdown de imagem. Seja natural."
-                        )
-                    else:
-                        caption_system = (
-                            "Você é a Gama. O usuário pediu uma imagem e ela já foi gerada. "
-                            "Responda em 1-3 frases em português, confirmando o que foi criado, "
-                            "sem markdown de imagem e sem pedir desculpas. Seja natural."
-                        )
-
-                    caption_messages = [
-                        {"role": "system", "content": caption_system},
-                        {"role": "user", "content": last_user},
-                    ]
-                    async for chunk in llm.stream_chat(model=model, messages=caption_messages):
-                        yield chunk
-                    return
-                else:
-                    err = result.get("error") or "falha desconhecida"
-                    yield json.dumps(
-                        {
-                            "gama_meta": {
-                                "phase": "image_failed",
-                                "image_intent": intent.value,
-                                "error": err,
-                            }
-                        },
-                        ensure_ascii=False,
-                    ) + "\n"
-                    yield json.dumps(
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": (
-                                    f"Não consegui processar a imagem agora ({err}). "
-                                    "Pode tentar de novo com uma descrição um pouco diferente?"
-                                ),
-                            },
-                            "done": False,
-                        },
-                        ensure_ascii=False,
-                    ) + "\n"
-                    yield json.dumps(
-                        {"message": {"role": "assistant", "content": ""}, "done": True},
-                        ensure_ascii=False,
-                    ) + "\n"
-                    return
-
+            # Geração de imagem, vídeo e arquivos ocorre somente quando o agente escolhe a ferramenta.
             # --- fase: Image Analyzer ---
             if getattr(request, "images", None):
                 yield json.dumps(
@@ -1321,6 +1044,170 @@ async def chat(
                 ) + "\n"
 
             agent_done = False
+            agent_file_created = False
+            agent_memory_tool_used = False
+            answer_truncated = False
+
+            async def agent_media_or_file_tool(args: dict):
+                nonlocal agent_file_created
+                tool_name = str(args.pop("_tool_name", ""))
+                if tool_name == "generate_image":
+                    if not getattr(app_settings, "IMAGE_GEN_ENABLED", True):
+                        yield {"type": "result", "content": "A geração de imagens está desativada no servidor."}
+                        return
+                    prompt = str(args.get("prompt") or "").strip()
+                    if not prompt:
+                        yield {"type": "result", "content": "Descreva a imagem a gerar."}
+                        return
+                    try:
+                        consume_daily_media_quota(user_id, "image")
+                    except (DailyQuotaExceeded, RuntimeError) as exc:
+                        yield {"type": "result", "content": str(exc)}
+                        return
+                    yield {"type": "phase", "phase": "generating_image"}
+                    refs = [
+                        {"mime": image.mime, "data": image.data, "name": image.name}
+                        for image in (request.images or [])
+                        if image.data
+                    ]
+                    result = await generate_image(
+                        prompt,
+                        aspect_ratio=str(args.get("aspect_ratio") or "1:1"),
+                        reference_images=refs or None,
+                    )
+                    if not result.get("ok") or not result.get("base64"):
+                        yield {"type": "result", "content": str(result.get("error") or "Não consegui gerar a imagem.")}
+                        return
+                    yield {
+                        "type": "image",
+                        "image": {
+                            "mime": result.get("mime") or "image/png",
+                            "data": result["base64"],
+                            "model": result.get("model"),
+                            "prompt": prompt[:200],
+                        },
+                    }
+                    yield {"type": "result", "content": "A imagem foi gerada e anexada à resposta."}
+                    return
+
+                if tool_name == "generate_video":
+                    if not getattr(app_settings, "VIDEO_GEN_ENABLED", True):
+                        yield {"type": "result", "content": "A geração de vídeos está desativada no servidor."}
+                        return
+                    prompt = str(args.get("prompt") or "").strip()
+                    if not prompt:
+                        yield {"type": "result", "content": "Descreva o vídeo a gerar."}
+                        return
+                    try:
+                        consume_daily_media_quota(user_id, "video")
+                    except (DailyQuotaExceeded, RuntimeError) as exc:
+                        yield {"type": "result", "content": str(exc)}
+                        return
+                    refs = [
+                        {"mime": image.mime, "data": image.data, "name": image.name}
+                        for image in (request.images or [])
+                        if image.data
+                    ]
+                    stored_artifact = None
+                    error = None
+                    yield {"type": "phase", "phase": "video_queued"}
+                    try:
+                        async for event in generate_video_events(
+                            prompt,
+                            duration=args.get("duration"),
+                            resolution=str(args.get("resolution") or "480p"),
+                            aspect_ratio=str(args.get("aspect_ratio") or "16:9"),
+                            reference_images=refs or None,
+                            generate_audio=bool(args.get("generate_audio", True)),
+                        ):
+                            if event.get("type") == "phase":
+                                yield {"type": "phase", "phase": event.get("phase") or "video_generating"}
+                            elif event.get("type") == "error":
+                                error = str(event.get("error") or "O provedor não conseguiu gerar o vídeo.")[:500]
+                            elif event.get("type") == "completed":
+                                data = event.get("data")
+                                if isinstance(data, bytes) and data:
+                                    saved = save_artifact(
+                                        kind="video",
+                                        filename="gama_video_gerado.mp4",
+                                        data=data,
+                                        user_id=user_id,
+                                        meta={"model": event.get("model"), "provider_cost_usd": event.get("cost")},
+                                    )
+                                    stored_artifact = {
+                                        "artifact_id": saved.get("artifact_id"),
+                                        "filename": saved.get("filename", "gama_video_gerado.mp4"),
+                                        "kind": "video",
+                                        "size": saved.get("size", len(data)),
+                                    }
+                    except Exception as exc:
+                        logger.exception("agent video tool failed")
+                        error = str(exc)[:300]
+                    if stored_artifact:
+                        yield {"type": "artifact", "artifact": stored_artifact}
+                        yield {"type": "result", "content": f"Vídeo criado: {stored_artifact['filename']}. O arquivo está anexado à resposta."}
+                    else:
+                        yield {"type": "result", "content": error or "O provedor não retornou um vídeo válido."}
+                    return
+
+                if tool_name == "create_file":
+                    file_format = str(args.get("format") or "zip").lower()
+                    filename = str(args.get("filename") or ("gama_arquivo.pdf" if file_format == "pdf" else "gama_arquivos.zip"))[:120]
+                    try:
+                        if file_format == "pdf":
+                            body = str(args.get("content") or "").strip()
+                            if not body:
+                                yield {"type": "result", "content": "Para gerar PDF, forneça conteúdo no argumento content."}
+                                return
+                            built = build_pdf(
+                                title=str(args.get("title") or "Documento da Gama")[:160],
+                                sections=[{"type": "paragraph", "text": body[:60_000]}],
+                                filename=filename if filename.lower().endswith(".pdf") else f"{filename}.pdf",
+                                user_id=user_id,
+                            )
+                        elif file_format == "zip":
+                            raw_files = args.get("files")
+                            files = _filter_real_files(
+                                {str(k): str(v) for k, v in raw_files.items()}
+                            ) if isinstance(raw_files, dict) else {}
+                            if not files:
+                                file_messages = list(gama_messages or messages)
+                                instruction = str(args.get("instructions") or last_user).strip()
+                                file_messages.append({"role": "user", "content": f"Crie um ZIP com os arquivos completos pedidos. Instruções: {instruction[:4000]}"})
+                                bundle = await _generate_files_for_download(
+                                    model=active_model,
+                                    prepared_messages=file_messages,
+                                    assistant_text="",
+                                )
+                                files = _filter_real_files(_parse_gama_files(bundle))
+                            if not files:
+                                yield {"type": "result", "content": "Não consegui gerar arquivos válidos para o ZIP."}
+                                return
+                            built = build_zip_from_files(
+                                files,
+                                filename=filename if filename.lower().endswith(".zip") else f"{filename}.zip",
+                                user_id=user_id,
+                            )
+                        else:
+                            yield {"type": "result", "content": "Formato de arquivo não suportado; use zip ou pdf."}
+                            return
+                        if not built.get("ok"):
+                            yield {"type": "result", "content": str(built.get("error") or "Não consegui criar o arquivo.")}
+                            return
+                        artifact = {
+                            "artifact_id": built.get("artifact_id"),
+                            "filename": built.get("filename", filename),
+                            "kind": built.get("kind", file_format),
+                            "size": built.get("size"),
+                        }
+                        agent_file_created = True
+                        yield {"type": "artifact", "artifact": artifact}
+                        yield {"type": "result", "content": f"Arquivo {artifact['filename']} criado e anexado à resposta."}
+                    except Exception as exc:
+                        logger.exception("agent create_file tool failed")
+                        yield {"type": "result", "content": f"Não consegui criar o arquivo: {str(exc)[:300]}"}
+                    return
+
             if use_agent:
                 _typing_sent = False
                 _uid_agent = user_id
@@ -1333,6 +1220,14 @@ async def chat(
                         user_text=last_user,
                         web_enabled=(web_search_enabled and web_tools_enabled_for_turn(last_user)),
                         user_urls=extract_urls(" ".join(_message_text(m.get("content")) for m in messages)),
+                        image_enabled=(bool(plugin_flags.get("image_gen", True)) and bool(getattr(app_settings, "IMAGE_GEN_ENABLED", True))),
+                        video_enabled=(bool(plugin_flags.get("video_gen", True)) and bool(getattr(app_settings, "VIDEO_GEN_ENABLED", True))),
+                        file_enabled=True,
+                        tool_handlers={
+                            "generate_image": agent_media_or_file_tool,
+                            "generate_video": agent_media_or_file_tool,
+                            "create_file": agent_media_or_file_tool,
+                        },
                     ):
                         kind = ev["type"]
                         if kind == "token":
@@ -1355,9 +1250,19 @@ async def chat(
                                 ensure_ascii=False,
                             ) + "\n"
                         elif kind == "memory_saved":
+                            agent_memory_tool_used = True
                             yield json.dumps({"gama_meta": {"memory_saved": ev["text"]}}, ensure_ascii=False) + "\n"
                         elif kind == "memory_forgotten":
                             yield json.dumps({"gama_meta": {"memory_forgotten": ev["items"]}}, ensure_ascii=False) + "\n"
+                        elif kind == "image":
+                            yield json.dumps({"gama_meta": {"phase": "image_ready", "image": ev.get("image")}}, ensure_ascii=False) + "\n"
+                        elif kind == "artifact":
+                            artifact = ev.get("artifact") or {}
+                            if artifact.get("kind") in {"zip", "pdf"}:
+                                agent_file_created = True
+                            yield json.dumps({"gama_meta": {"phase": "artifact_ready", "artifact": artifact}}, ensure_ascii=False) + "\n"
+                        elif kind == "finish":
+                            answer_truncated = ev.get("reason") == "length"
                     agent_done = True
                 except ToolsUnsupported:
                     logger.warning("modelo %s sem tool calling; usando fluxo clássico", active_model)
@@ -1383,6 +1288,10 @@ async def chat(
                             if c:
                                 assistant_acc.append(c)
                             if obj.get("done") is True:
+                                answer_truncated = (
+                                    obj.get("finish_reason") == "length"
+                                    or obj.get("done_reason") == "length"
+                                )
                                 # O evento terminal é emitido uma única vez,
                                 # depois da preparação de artefatos e do agendamento
                                 # das tarefas em background.
@@ -1403,7 +1312,7 @@ async def chat(
                 full_assistant = "".join(assistant_acc)
                 wants_zip = wants_zip_request
                 wants_pdf = wants_pdf_request
-                if "[[GAMA_FILES]]" in full_assistant or wants_zip or wants_pdf:
+                if not agent_file_created and "[[GAMA_FILES]]" in full_assistant:
                     artifact_user = user_id
                     bundle_text = full_assistant
                     files = {}
@@ -1584,7 +1493,7 @@ async def chat(
                             },
                             ensure_ascii=False,
                         ) + "\n"
-                    if (wants_zip or wants_pdf) and not delivered:
+                    if not agent_file_created and (wants_zip or wants_pdf) and not delivered:
                         yield json.dumps(
                             {
                                 "message": {
@@ -1610,7 +1519,20 @@ async def chat(
                     ) + "\n"
 
             # A extração de fatos não deve atrasar o encerramento visível do chat.
-            if memory_enabled:
+            user_turns = sum(1 for item in messages if item.get("role") == "user")
+            memory_scan_every = max(1, int(getattr(app_settings, "MEMORY_LLM_SCAN_EVERY_TURNS", 5)))
+            explicit_memory_request = bool(re.search(
+                r"\b(lembre|memorize|guarde|grave|anote|salve na memória)\b",
+                str(last_user or ""), re.I,
+            ))
+            # O fluxo síncrono já extrai fatos determinísticos e o agente pode
+            # chamar remember; evite uma segunda chamada LLM no mesmo turno.
+            if (
+                memory_enabled
+                and not fact_saved
+                and not agent_memory_tool_used
+                and (explicit_memory_request or user_turns % memory_scan_every == 0)
+            ):
                 _schedule_memory_after_turn(
                     user_id=user_id,
                     user_text=last_user if isinstance(last_user, str) else "",
@@ -1629,6 +1551,9 @@ async def chat(
                 )
             except Exception as sum_err:
                 logger.warning("summary schedule: %s", sum_err)
+
+            if answer_truncated:
+                yield json.dumps({"gama_meta": {"finish_reason": "length"}}, ensure_ascii=False) + "\n"
 
             yield json.dumps(
                 {"message": {"role": "assistant", "content": ""}, "done": True},

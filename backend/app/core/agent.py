@@ -22,7 +22,7 @@ import operator
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Callable, Optional
 
 from ..config import settings
 from ..llm import LLMError
@@ -38,7 +38,13 @@ class ToolsUnsupported(Exception):
     """O modelo/provedor não aceita tool calling; usar o fluxo clássico."""
 
 
-def build_tools(web_enabled: bool = True) -> list[dict]:
+def build_tools(
+    web_enabled: bool = True,
+    *,
+    image_enabled: bool = True,
+    video_enabled: bool = True,
+    file_enabled: bool = True,
+) -> list[dict]:
     def fn(name: str, desc: str, props: dict, required: list[str]) -> dict:
         return {
             "type": "function",
@@ -76,6 +82,27 @@ def build_tools(web_enabled: bool = True) -> list[dict]:
         fn("forget_memory", "Apaga da memória o que o usuário pediu para esquecer.",
            {"about": {"type": "string", "description": "trecho que descreve o fato a apagar"}}, ["about"]),
     ]
+    if image_enabled:
+        tools.append(fn(
+            "generate_image",
+            "Gera ou edita uma imagem quando o usuário pedir explicitamente uma imagem. Para analisar uma imagem anexada, responda normalmente sem usar esta ferramenta.",
+            {"prompt": {"type": "string"}, "aspect_ratio": {"type": "string", "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"]}},
+            ["prompt"],
+        ))
+    if video_enabled:
+        tools.append(fn(
+            "generate_video",
+            "Gera um vídeo somente quando o usuário pedir explicitamente para criar ou animar um vídeo. Use a ferramenta de imagem para imagens estáticas.",
+            {"prompt": {"type": "string"}, "duration": {"type": "integer"}, "resolution": {"type": "string"}, "aspect_ratio": {"type": "string"}, "generate_audio": {"type": "boolean"}},
+            ["prompt"],
+        ))
+    if file_enabled:
+        tools.append(fn(
+            "create_file",
+            "Cria um arquivo para download quando o usuário pedir um arquivo ou exportação. Use format=zip para arquivos de projeto/código e format=pdf para documento legível. Não use para responder com código inline.",
+            {"format": {"type": "string", "enum": ["zip", "pdf"]}, "filename": {"type": "string"}, "title": {"type": "string"}, "content": {"type": "string"}, "instructions": {"type": "string"}, "files": {"type": "object", "additionalProperties": {"type": "string"}}},
+            ["format"],
+        ))
     return tools
 
 
@@ -241,13 +268,27 @@ async def run_agent(
     user_text: str,
     web_enabled: bool = True,
     user_urls: Optional[list[str]] = None,
+    image_enabled: bool = True,
+    video_enabled: bool = True,
+    file_enabled: bool = True,
+    tool_handlers: Optional[dict[str, Callable[[dict], AsyncIterator[dict]]]] = None,
 ) -> AsyncIterator[dict]:
     """Eventos: phase | sources | token | memory_saved | memory_forgotten.
 
     Levanta ToolsUnsupported (antes de qualquer saída) se o modelo não aceitar tools.
     """
-    tools = build_tools(web_enabled)
+    tools = build_tools(web_enabled, image_enabled=image_enabled, video_enabled=video_enabled, file_enabled=file_enabled)
     msgs = llm.prepare_messages(messages)
+    if web_enabled:
+        citation_instruction = (
+            "Ao usar resultados da web, cite cada afirmação factual com links Markdown numerados "
+            "no próprio texto, no formato [1](URL), usando exatamente as URLs fornecidas pelos resultados. "
+            "Não invente números nem URLs de fontes."
+        )
+        if msgs and msgs[0].get("role") == "system":
+            msgs[0] = {**msgs[0], "content": f"{msgs[0].get('content', '')}\n\n{citation_instruction}"}
+        else:
+            msgs.insert(0, {"role": "system", "content": citation_instruction})
     ctx = ToolContext(user_id=user_id, user_text=user_text, allowed_urls={_norm_url(u) for u in (user_urls or [])})
     max_rounds = settings.MAX_TOOL_ROUNDS
     yielded = False
@@ -256,6 +297,7 @@ async def run_agent(
         use_tools = round_no < max_rounds and ctx.calls < settings.MAX_TOOL_CALLS
         text_parts: list[str] = []
         calls: list[dict] = []
+        finish_reason: Optional[str] = None
         try:
             async for ev in llm.stream_events(model, msgs, tools=tools if use_tools else None, raw=True):
                 if ev["type"] == "token":
@@ -264,12 +306,16 @@ async def run_agent(
                     yield {"type": "token", "text": ev["text"]}
                 elif ev["type"] == "tool_calls":
                     calls = ev["calls"]
+                elif ev["type"] == "finish":
+                    finish_reason = ev.get("reason")
         except LLMError as exc:
             if not yielded and round_no == 0 and exc.tools_unsupported:
                 raise ToolsUnsupported() from exc
             raise
 
         if not calls or not use_tools:
+            if finish_reason:
+                yield {"type": "finish", "reason": finish_reason}
             return
 
         msgs.append({
@@ -293,7 +339,17 @@ async def run_agent(
             else:
                 if c["name"] == "web_search":
                     yield {"type": "phase", "phase": "searching", "query": str(args.get("query") or "")[:200]}
-                result, extras = await execute_tool(c["name"], args, ctx)
+                handler = (tool_handlers or {}).get(c["name"])
+                if handler:
+                    result, extras = "", {}
+                    async for tool_event in handler({**args, "_tool_name": c["name"]}):
+                        if tool_event.get("type") == "result":
+                            result = str(tool_event.get("content") or "")
+                            extras = dict(tool_event.get("extras") or {})
+                        else:
+                            yield tool_event
+                else:
+                    result, extras = await execute_tool(c["name"], args, ctx)
                 # Mantém compatibilidade para integrações; o Flutter atual não renderiza
                 # as fontes como caixa separada na bolha de mensagem.
                 if c["name"] == "web_search":

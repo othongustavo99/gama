@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_highlight/themes/github.dart';
 import 'package:flutter_highlight/themes/monokai.dart';
 import 'package:highlight/highlight.dart' show highlight, Node;
@@ -56,6 +57,46 @@ final _gamaImageAnyRe = RegExp(
   r'|\[gama_image\]\s*mime:([^\n]+)\s*data:([A-Za-z0-9+/=\s]+)\s*\[/gama_image\]',
   multiLine: true,
 );
+
+class _TexMathInlineSyntax extends md.InlineSyntax {
+  _TexMathInlineSyntax()
+    : super(r'(?<!\\)\$\$([\s\S]+?)\$\$|(?<!\\)\$([^\n$]+?)\$|\\\[([\s\S]+?)\\\]|\\\((.+?)\\\)');
+
+  @override
+  bool onMatch(md.InlineParser parser, Match match) {
+    final expression = match[1] ?? match[2] ?? match[3] ?? match[4] ?? '';
+    final element = md.Element.text('math', expression.trim());
+    element.attributes['display'] = (match[1] != null || match[3] != null)
+        ? 'true'
+        : 'false';
+    parser.addNode(element);
+    return true;
+  }
+}
+
+class _TexMathBuilder extends MarkdownElementBuilder {
+  final TextStyle? textStyle;
+
+  _TexMathBuilder(this.textStyle);
+
+  @override
+  Widget? visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final display = element.attributes['display'] == 'true';
+    return Math.tex(
+      element.textContent,
+      mathStyle: display ? MathStyle.display : MathStyle.text,
+      textStyle: (preferredStyle ?? textStyle)?.copyWith(
+        color: (preferredStyle ?? textStyle)?.color ?? context.gama.textPrimary,
+      ),
+      onErrorFallback: (_) => Text(element.textContent),
+    );
+  }
+}
 
 (String, List<GeneratedImageData>) extractGamaImages(String content) {
   final images = <GeneratedImageData>[];
@@ -603,6 +644,7 @@ class _MarkdownMessage extends StatelessWidget {
               child: MarkdownBody(
                 data: MessageContentView._linkifyBareUrls(part.content),
                 selectable: true,
+                inlineSyntaxes: [_TexMathInlineSyntax()],
                 onTapLink: (linkText, href, title) {
                   if (onTapLink != null) {
                     onTapLink!(href);
@@ -614,6 +656,7 @@ class _MarkdownMessage extends StatelessWidget {
                   }
                 },
                 builders: {
+                  'math': _TexMathBuilder(textStyle),
                   'table': _HScrollTableBuilder(
                     isUser: isUser,
                     onTapLink: onTapLink,
@@ -1114,6 +1157,7 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
               child: MarkdownBody(
                 data: _inlineMarkdown(cell),
                 selectable: true,
+                inlineSyntaxes: [_TexMathInlineSyntax()],
                 onTapLink: (text, href, title) {
                   if (onTapLink != null) {
                     onTapLink!(href);
@@ -1143,6 +1187,7 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
                         : context.gama.surfaceCard,
                   ),
                 ),
+                builders: {'math': _TexMathBuilder(TextStyle(color: color, fontSize: 13))},
               ),
             ),
           );

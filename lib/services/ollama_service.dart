@@ -23,6 +23,7 @@ class ChatStreamEvent {
   final String? imageBase64;
   final String? imageMime;
   final Map<String, dynamic>? artifact;
+  final bool truncated;
   final bool done;
 
   const ChatStreamEvent._({
@@ -34,6 +35,7 @@ class ChatStreamEvent {
     this.imageBase64,
     this.imageMime,
     this.artifact,
+    this.truncated = false,
     this.done = false,
   });
 
@@ -51,6 +53,7 @@ class ChatStreamEvent {
     String? imageBase64,
     String? imageMime,
     Map<String, dynamic>? artifact,
+    bool truncated = false,
   }) => ChatStreamEvent._(
     phase: phase,
     webSearchQuery: webSearchQuery,
@@ -59,6 +62,7 @@ class ChatStreamEvent {
     imageBase64: imageBase64,
     imageMime: imageMime,
     artifact: artifact,
+    truncated: truncated,
   );
 }
 
@@ -442,6 +446,7 @@ class OllamaService {
     if (meta is Map) {
       final m = Map<String, dynamic>.from(meta);
       final saved = m['memory_saved'] as String?;
+      final truncated = m['finish_reason'] == 'length';
       final phase = m['phase'] as String?;
       final query = m['web_search'] as String?;
       String? imgB64;
@@ -470,6 +475,7 @@ class OllamaService {
         imageBase64: imgB64,
         imageMime: imgMime,
         artifact: artifact,
+        truncated: truncated,
       );
       return;
     }

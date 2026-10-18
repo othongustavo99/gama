@@ -182,8 +182,11 @@ async def iter_openai_events(lines: AsyncIterator[str]) -> AsyncIterator[dict]:
     yield {"type": "finish", "reason": finish_reason}
 
 
-def _ndjson(content: str, done: bool) -> str:
-    return json.dumps({"message": {"role": "assistant", "content": content}, "done": done}, ensure_ascii=False) + "\n"
+def _ndjson(content: str, done: bool, finish_reason: Optional[str] = None) -> str:
+    payload = {"message": {"role": "assistant", "content": content}, "done": done}
+    if finish_reason:
+        payload["finish_reason"] = finish_reason
+    return json.dumps(payload, ensure_ascii=False) + "\n"
 
 
 # --------------------------------------------------------------------------- cliente
@@ -422,10 +425,13 @@ class LLMClient:
         model = self.resolve_model(model)
 
         if settings.PROVIDER == "openrouter":
+            finish_reason = None
             async for ev in self.stream_events(model, messages):
                 if ev["type"] == "token":
                     yield _ndjson(ev["text"], False)
-            yield _ndjson("", True)
+                elif ev["type"] == "finish":
+                    finish_reason = ev.get("reason")
+            yield _ndjson("", True, finish_reason)
             return
 
         msgs = self.prepare_messages(messages)

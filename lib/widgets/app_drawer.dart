@@ -7,6 +7,7 @@ import '../services/identity_service.dart';
 import '../services/auth_service.dart';
 import '../screens/login_screen.dart';
 import '../screens/settings_screen.dart';
+import '../screens/memory_screen.dart';
 
 class AppDrawer extends StatelessWidget {
   final VoidCallback onNewChat;
@@ -191,6 +192,14 @@ class AppDrawer extends StatelessWidget {
               label: 'Plugins',
               onTap: onOpenPlugins ?? () => _comingSoon(context),
             ),
+            _DrawerItem(
+              icon: Icons.psychology_outlined,
+              label: 'Memória',
+              onTap: () {
+                _close(context);
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MemoryScreen()));
+              },
+            ),
 
             Padding(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -288,6 +297,7 @@ class AppDrawer extends StatelessWidget {
                                       ...pinned.map(
                                         (c) => _ConversationTile(
                                           conversation: c,
+                                          searchSnippet: _conversationSnippet(service, c, query),
                                           isSelected:
                                               c.id ==
                                               service.currentConversationId,
@@ -307,6 +317,7 @@ class AppDrawer extends StatelessWidget {
                                         ...entry.value.map(
                                           (c) => _ConversationTile(
                                             conversation: c,
+                                            searchSnippet: _conversationSnippet(service, c, query),
                                             isSelected:
                                                 c.id ==
                                                 service.currentConversationId,
@@ -550,6 +561,22 @@ bool _matchesConversation(
   return false;
 }
 
+String? _conversationSnippet(ConversationService service, Conversation conversation, String query) {
+  if (query.isEmpty) return null;
+  final titleAt = conversation.title.toLowerCase().indexOf(query);
+  if (titleAt >= 0) return 'Título: ${conversation.title}';
+  final hiddenImage = RegExp(r'\[gama_image\][\s\S]*?\[/gama_image\]|\[gama_image_file\][\s\S]*?\[/gama_image_file\]', caseSensitive: false);
+  for (final message in service.getMessages(conversation.id).reversed) {
+    final text = message.content.replaceAll(hiddenImage, ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    final at = text.toLowerCase().indexOf(query);
+    if (at < 0) continue;
+    final start = (at - 35).clamp(0, text.length).toInt();
+    final end = (at + query.length + 55).clamp(0, text.length).toInt();
+    return '${start > 0 ? '…' : ''}${text.substring(start, end)}${end < text.length ? '…' : ''}';
+  }
+  return null;
+}
+
 Map<String, List<Conversation>> _groupRecentConversations(
   List<Conversation> conversations,
 ) {
@@ -628,6 +655,7 @@ class _ConversationTile extends StatelessWidget {
   final VoidCallback onPin;
   final VoidCallback onDelete;
   final VoidCallback onRename;
+  final String? searchSnippet;
 
   const _ConversationTile({
     required this.conversation,
@@ -636,6 +664,7 @@ class _ConversationTile extends StatelessWidget {
     required this.onPin,
     required this.onDelete,
     required this.onRename,
+    this.searchSnippet,
   });
 
   @override
@@ -686,6 +715,7 @@ class _ConversationTile extends StatelessWidget {
                   fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
                 ),
               ),
+              subtitle: searchSnippet == null ? null : Text(searchSnippet!, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: context.gama.textMuted, fontSize: 11)),
               dense: true,
               contentPadding: const EdgeInsets.only(left: 10, right: 4),
               visualDensity: VisualDensity.compact,

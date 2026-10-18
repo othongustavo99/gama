@@ -78,6 +78,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _titleGenerationInProgress = false;
   List<String> _chatModels = List<String>.from(AppConstants.availableModels);
   final Map<String, List<Map<String, dynamic>>> _sourcesByMessageId = {};
+  final Set<String> _truncatedMessageIds = <String>{};
   final Map<String, int> _feedbackByMessageId = {};
   StreamSubscription<ChatStreamEvent>? _streamSubscription;
   Future<void>? _assistantPersistence;
@@ -380,16 +381,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  bool _looksTruncated(String content) {
-    final text = content.trimRight();
-    if (text.length < 180) return false;
-    final fenceCount = '```'.allMatches(text).length;
-    if (fenceCount.isOdd) return true;
-    // Heurística conservadora: finais de frase completos não ganham o botão.
-    return RegExp(r'(\.\.\.|…|[:,;—-])$').hasMatch(text) ||
-        !RegExp(r'[.!?…)]$').hasMatch(text);
-  }
-
   Future<void> _continueResponse() async {
     if (_isLoading) return;
     _controller.text = 'Continue a resposta anterior de onde parou, sem repetir o que já foi explicado.';
@@ -536,6 +527,30 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+  }
+
+  String _citationMarkdown(String messageId, String content) {
+    final sources = _sourcesByMessageId[messageId] ?? const [];
+    if (sources.isEmpty || !content.contains('[')) return content;
+    final chunks = content.split(RegExp(r'(```[\s\S]*?```)'));
+    for (var i = 0; i < chunks.length; i++) {
+      if (chunks[i].startsWith('```')) continue;
+      chunks[i] = chunks[i].replaceAllMapped(
+        RegExp(r'\[(\d{1,2})\](?!\s*\()'),
+        (match) {
+          final sourceIndex = int.tryParse(match.group(1) ?? '') ?? 0;
+          if (sourceIndex < 1 || sourceIndex > sources.length) {
+            return match.group(0)!;
+          }
+          final url = Uri.tryParse(sources[sourceIndex - 1]['url']?.toString() ?? '');
+          if (url == null || !{'http', 'https'}.contains(url.scheme)) {
+            return match.group(0)!;
+          }
+          return '[${match.group(1)}](${url.toString()})';
+        },
+      );
+    }
+    return chunks.join();
   }
 
   void _showPendingImagePreview(ProcessedAttachment attachment) {
@@ -1275,6 +1290,47 @@ class _ChatScreenState extends State<ChatScreen> {
     return MessageSanitize.forApi(message.content)
         .replaceAll('[imagem gerada anteriormente nesta conversa]', '')
         .trim();
+  }
+
+  String _conversationMarkdown() {
+    final title = _service.conversationById(widget.conversationId)?.title ?? 'Conversa Gama';
+    final out = StringBuffer('# $title\n\n');
+    for (final message in _messages) {
+      final text = _cleanMessageText(message);
+      if (text.isEmpty) continue;
+      out.writeln(message.isUser ? '## Você' : '## Gama');
+      out.writeln();
+      out.writeln(text);
+      out.writeln();
+    }
+    return out.toString().trim();
+  }
+
+  Future<void> _exportConversation() async {
+    try {
+      final text = _conversationMarkdown();
+      final path = await DownloadService.instance.saveText(text, filename: 'conversa_gama_${DateTime.now().millisecondsSinceEpoch}.md');
+      await DownloadService.instance.openPath(path);
+      _snack('Conversa exportada');
+    } catch (_) {
+      _snack('Não foi possível exportar a conversa.');
+    }
+  }
+
+  Future<void> _shareConversation(BuildContext shareContext) async {
+    final text = _conversationMarkdown();
+    if (text.isEmpty) return;
+    try {
+      final object = shareContext.findRenderObject();
+      final box = object is RenderBox ? object : null;
+      await SharePlus.instance.share(ShareParams(
+        title: 'Conversa da Gama',
+        text: text,
+        sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+      ));
+    } catch (_) {
+      _snack('Não foi possível compartilhar a conversa.');
+    }
   }
 
   Future<void> _copyMessage(Message message) async {
@@ -2099,6 +2155,7 @@ class _ChatScreenState extends State<ChatScreen> {
             content: '',
             conversationId: widget.conversationId,
           );
+    _truncatedMessageIds.remove(assistantMessage.id);
 
     setState(() {
       if (!isRegeneration) _messages.add(assistantMessage);
@@ -2136,6 +2193,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
       _streamSubscription = stream.listen(
         (event) {
+          if (event.truncated &&
+              _messages.isNotEmpty &&
+              _messages.last.isAssistant) {
+            _truncatedMessageIds.add(_messages.last.id);
+            if (mounted) setState(() {});
+          }
           if (!mounted) {
             final token = event.token;
             if (token != null) {
@@ -2756,6 +2819,12 @@ class _ChatScreenState extends State<ChatScreen> {
                             case 'clear':
                               _clearCurrentConversation();
                               break;
+                            case 'export':
+                              await _exportConversation();
+                              break;
+                            case 'share_chat':
+                              await _shareConversation(context);
+                              break;
                           }
                         },
                         itemBuilder: (context) => [
@@ -2796,6 +2865,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                 contentPadding: EdgeInsets.zero,
                               ),
                             ),
+                          const PopupMenuItem(
+                            value: 'export',
+                            child: ListTile(dense: true, leading: Icon(Icons.download_outlined), title: Text('Exportar conversa'), contentPadding: EdgeInsets.zero),
+                          ),
+                          const PopupMenuItem(
+                            value: 'share_chat',
+                            child: ListTile(dense: true, leading: Icon(Icons.share_outlined), title: Text('Compartilhar conversa'), contentPadding: EdgeInsets.zero),
+                          ),
                           const PopupMenuItem(
                             value: 'settings',
                             child: ListTile(
@@ -2971,9 +3048,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                                               msg.content
                                                                   .trim()
                                                                   .isNotEmpty &&
-                                                              _looksTruncated(
-                                                                msg.content,
-                                                              )
+                                                              _truncatedMessageIds
+                                                                  .contains(msg.id)
                                                           ? _continueResponse
                                                           : null,
                                                     ),
@@ -3017,8 +3093,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                     .min,
                                                             children: [
                                                               MessageContentView(
-                                                                content:
-                                                                    content,
+                                                                content: _citationMarkdown(
+                                                                  msg.id,
+                                                                  content,
+                                                                ),
                                                                 isUser: false,
                                                                 onTapLink:
                                                                     _openLink,
@@ -3029,7 +3107,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                                     )
                                                   else
                                                     MemoizedMessageContentView(
-                                                      content: msg.content,
+                                                      content: _citationMarkdown(
+                                                        msg.id,
+                                                        msg.content,
+                                                      ),
                                                       isUser: isUser,
                                                       onTapLink: _openLink,
                                                     ),
@@ -3067,6 +3148,21 @@ class _ChatScreenState extends State<ChatScreen> {
                                                               ?.isNotEmpty ??
                                                           false))
                                                     _sourceChips(msg.id),
+                                                  if (!isUser &&
+                                                      !_isLoading &&
+                                                      _truncatedMessageIds
+                                                          .contains(msg.id))
+                                                    Align(
+                                                      alignment: Alignment.centerLeft,
+                                                      child: TextButton.icon(
+                                                        onPressed: _continueResponse,
+                                                        icon: const Icon(
+                                                          Icons.more_horiz_rounded,
+                                                          size: 18,
+                                                        ),
+                                                        label: const Text('Continuar'),
+                                                      ),
+                                                    ),
                                                   if (!isUser &&
                                                       !_isLoading &&
                                                       msg.variants.length > 1)
