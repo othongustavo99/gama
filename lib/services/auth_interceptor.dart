@@ -35,11 +35,37 @@ class GammaAuthInterceptor extends Interceptor {
     request.extra[_retryKey] = true;
     try {
       return await _client.fetch<dynamic>(request);
-    } on DioException {
-      return null;
+    } on DioException catch (error) {
+      // Keep a server response (especially its useful 401 detail) so the
+      // caller can distinguish an OAuth configuration issue from expiration.
+      return error.response;
     } catch (_) {
       return null;
     }
+  }
+
+  String? _serverDetail(Response<dynamic>? response) {
+    final data = response?.data;
+    if (data is! Map) return null; // Ignore HTML proxy pages and raw bodies.
+    final detail = data['detail'];
+    if (detail is! String) return null; // FastAPI validation lists are noisy.
+    final normalized = detail.trim();
+    if (normalized.isEmpty) return null;
+    return normalized.length <= 300
+        ? normalized
+        : '${normalized.substring(0, 297)}...';
+  }
+
+  DioException _withAuthMessage(
+    DioException error, {
+    Response<dynamic>? response,
+  }) {
+    final detail = _serverDetail(response ?? error.response);
+    return error.copyWith(
+      response: response ?? error.response,
+      message: detail ??
+          'A sessão Google expirou ou não pôde ser renovada. Entre novamente e tente de novo.',
+    );
   }
 
   @override
@@ -51,7 +77,20 @@ class GammaAuthInterceptor extends Interceptor {
     if (response.statusCode == 401 && _canRefresh(request)) {
       final retry = await _retryWithFreshToken(request);
       if (retry != null) {
-        handler.resolve(retry);
+        if ((retry.statusCode ?? 0) >= 400) {
+          final retryError = DioException.badResponse(
+            statusCode: retry.statusCode!,
+            requestOptions: retry.requestOptions,
+            response: retry,
+          );
+          handler.reject(
+            retry.statusCode == 401
+                ? _withAuthMessage(retryError, response: retry)
+                : retryError,
+          );
+        } else {
+          handler.resolve(retry);
+        }
         return;
       }
     }
@@ -65,17 +104,19 @@ class GammaAuthInterceptor extends Interceptor {
     if (status == 401 && _canRefresh(request)) {
       final response = await _retryWithFreshToken(request);
       if (response != null) {
-        handler.resolve(response);
+        if ((response.statusCode ?? 0) < 400) {
+          handler.resolve(response);
+        } else if (response.statusCode == 401) {
+          handler.reject(_withAuthMessage(err, response: response));
+        } else {
+          handler.reject(err.copyWith(response: response));
+        }
         return;
       }
     }
 
     if (status == 401) {
-      handler.reject(
-        err.copyWith(
-          message: 'A sessão Google expirou. Entre novamente e tente de novo.',
-        ),
-      );
+      handler.reject(_withAuthMessage(err));
       return;
     }
     if (status == 403) {

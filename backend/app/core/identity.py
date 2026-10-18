@@ -47,6 +47,41 @@ def google_oauth_client_ids() -> set[str]:
     }
 
 
+def google_oauth_authorized_party_ids() -> set[str]:
+    """Android/desktop OAuth client IDs allowed as the token's ``azp``."""
+    return {
+        value.strip()
+        for value in os.getenv("GOOGLE_OAUTH_AUTHORIZED_PARTY_IDS", "").split(",")
+        if value.strip()
+    }
+
+
+def validate_google_client_claims(
+    payload: dict,
+    *,
+    allowed_audiences: set[str],
+    allowed_authorized_parties: set[str],
+) -> None:
+    """Keep token audience validation distinct from the OAuth client that requested it."""
+    audience = str(payload.get("aud") or "").strip()
+    if audience not in allowed_audiences:
+        raise PermissionError("token Google emitido para outro aplicativo")
+
+    authorized_party = str(payload.get("azp") or "").strip()
+    # Tokens issued to a single OAuth client can omit azp or have azp == aud.
+    # In a native + server client flow, azp identifies the native app and must
+    # be explicitly allowlisted without treating it as an acceptable audience.
+    if (
+        authorized_party
+        and authorized_party != audience
+        and authorized_party not in allowed_authorized_parties
+    ):
+        raise PermissionError(
+            "cliente Google autorizado (azp) não permitido; "
+            "configure GOOGLE_OAUTH_AUTHORIZED_PARTY_IDS"
+        )
+
+
 def canonical_google_user_id(*, google_id: str, email: str | None) -> str:
     """Retorna o mesmo identificador que IdentityService.stableGoogleUserId."""
     normalized_email = (email or "").strip().lower()
@@ -84,11 +119,11 @@ async def verify_google_id_token(token: str) -> str:
             raise PermissionError("token Google inválido") from exc
 
     payload = await asyncio.to_thread(verify_locally)
-    if str(payload.get("aud") or "").strip() not in allowed_client_ids:
-        raise PermissionError("token Google emitido para outro aplicativo")
-    authorized_party = str(payload.get("azp") or "").strip()
-    if authorized_party and authorized_party not in allowed_client_ids:
-        raise PermissionError("parte autorizada do token Google inválida")
+    validate_google_client_claims(
+        payload,
+        allowed_audiences=allowed_client_ids,
+        allowed_authorized_parties=google_oauth_authorized_party_ids(),
+    )
     gid = str(payload.get("sub") or "").strip()
     email = str(payload.get("email") or "").strip()
     # Se o provedor indicar explicitamente que o e-mail não é verificado,

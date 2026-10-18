@@ -88,8 +88,10 @@ ChatApiException _friendlyDioException(DioException error) {
             ? '${serverDetail.substring(0, 500)}…'
             : serverDetail);
   if (status == 401) {
-    return const ChatApiException(
-      'A sessão Google expirou ou não pôde ser renovada. Entre novamente e tente de novo.',
+    return ChatApiException(
+      boundedDetail ??
+          error.message ??
+          'A sessão Google expirou ou não pôde ser renovada. Entre novamente e tente de novo.',
       retryable: false,
     );
   }
