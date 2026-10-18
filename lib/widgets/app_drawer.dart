@@ -16,6 +16,7 @@ class AppDrawer extends StatelessWidget {
   final VoidCallback? onOpenProjects;
   final VoidCallback? onOpenScheduled;
   final VoidCallback? onOpenPlugins;
+  final bool persistent;
 
   const AppDrawer({
     super.key,
@@ -26,7 +27,12 @@ class AppDrawer extends StatelessWidget {
     this.onOpenProjects,
     this.onOpenScheduled,
     this.onOpenPlugins,
+    this.persistent = false,
   });
+
+  void _close(BuildContext context) {
+    if (!persistent) Navigator.pop(context);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -45,10 +51,13 @@ class AppDrawer extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.fromLTRB(12, 14, 8, 14),
                 decoration: BoxDecoration(
-                  gradient:  LinearGradient(
+                  gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [GamaColors.surfaceCard, GamaColors.surfaceElevated],
+                    colors: [
+                      GamaColors.surfaceCard,
+                      GamaColors.surfaceElevated,
+                    ],
                   ),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: GamaColors.borderSoft),
@@ -65,7 +74,7 @@ class AppDrawer extends StatelessWidget {
                             IdentityService.instance.displayName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style:  TextStyle(
+                            style: TextStyle(
                               color: GamaColors.textPrimary,
                               fontSize: 14,
                               fontWeight: FontWeight.w700,
@@ -79,7 +88,7 @@ class AppDrawer extends StatelessWidget {
                                     : 'Conta de convidado'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style:  TextStyle(
+                            style: TextStyle(
                               color: GamaColors.textMuted,
                               fontSize: 12,
                             ),
@@ -107,10 +116,13 @@ class AppDrawer extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
                     decoration: BoxDecoration(
-                      gradient:  LinearGradient(
+                      gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [GamaColors.accentBright, GamaColors.accentMuted],
+                        colors: [
+                          GamaColors.accentBright,
+                          GamaColors.accentMuted,
+                        ],
                       ),
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
@@ -122,10 +134,17 @@ class AppDrawer extends StatelessWidget {
                       ],
                     ),
                     child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 13,
+                      ),
                       child: Row(
                         children: [
-                          Icon(Icons.add_rounded, color: Colors.white, size: 21),
+                          Icon(
+                            Icons.add_rounded,
+                            color: Colors.white,
+                            size: 21,
+                          ),
                           SizedBox(width: 10),
                           Text(
                             'Nova conversa',
@@ -173,7 +192,7 @@ class AppDrawer extends StatelessWidget {
               onTap: onOpenPlugins ?? () => _comingSoon(context),
             ),
 
-             Padding(
+            Padding(
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Divider(color: GamaColors.divider, height: 1),
             ),
@@ -201,29 +220,47 @@ class AppDrawer extends StatelessWidget {
                           child: TextField(
                             decoration: InputDecoration(
                               hintText: 'Buscar título ou mensagem',
-                              prefixIcon: const Icon(Icons.search_rounded, size: 19),
+                              prefixIcon: const Icon(
+                                Icons.search_rounded,
+                                size: 19,
+                              ),
                               suffixIcon: query.isEmpty
                                   ? null
                                   : IconButton(
                                       tooltip: 'Limpar busca',
-                                      icon: const Icon(Icons.close_rounded, size: 18),
-                                      onPressed: () => setLocalState(() => conversationQuery = ''),
+                                      icon: const Icon(
+                                        Icons.close_rounded,
+                                        size: 18,
+                                      ),
+                                      onPressed: () => setLocalState(
+                                        () => conversationQuery = '',
+                                      ),
                                     ),
                               filled: true,
                               fillColor: GamaColors.surfaceCard,
                               isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                              contentPadding: const EdgeInsets.symmetric(
+                                vertical: 10,
+                              ),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(13),
-                                borderSide:  BorderSide(color: GamaColors.border),
+                                borderSide: BorderSide(
+                                  color: GamaColors.border,
+                                ),
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(13),
-                                borderSide:  BorderSide(color: GamaColors.border),
+                                borderSide: BorderSide(
+                                  color: GamaColors.border,
+                                ),
                               ),
                             ),
-                            style:  TextStyle(color: GamaColors.textPrimary, fontSize: 13),
-                            onChanged: (value) => setLocalState(() => conversationQuery = value),
+                            style: TextStyle(
+                              color: GamaColors.textPrimary,
+                              fontSize: 13,
+                            ),
+                            onChanged: (value) =>
+                                setLocalState(() => conversationQuery = value),
                           ),
                         ),
                         Expanded(
@@ -232,8 +269,13 @@ class AppDrawer extends StatelessWidget {
                                   child: Padding(
                                     padding: const EdgeInsets.all(24),
                                     child: Text(
-                                      query.isEmpty ? 'Nenhuma conversa ainda' : 'Nenhuma conversa encontrada',
-                                      style:  TextStyle(color: GamaColors.textMuted, fontSize: 13),
+                                      query.isEmpty
+                                          ? 'Nenhuma conversa ainda'
+                                          : 'Nenhuma conversa encontrada',
+                                      style: TextStyle(
+                                        color: GamaColors.textMuted,
+                                        fontSize: 13,
+                                      ),
                                       textAlign: TextAlign.center,
                                     ),
                                   ),
@@ -243,26 +285,41 @@ class AppDrawer extends StatelessWidget {
                                   children: [
                                     if (pinned.isNotEmpty) ...[
                                       const _SectionLabel('Fixados'),
-                                      ...pinned.map((c) => _ConversationTile(
-                                        conversation: c,
-                                        isSelected: c.id == service.currentConversationId,
-                                        onTap: () => onSelectConversation(c.id),
-                                        onPin: () => service.togglePin(c.id),
-                                        onDelete: () => _confirmDelete(context, c),
-                                        onRename: () => _renameDialog(context, c),
-                                      )),
+                                      ...pinned.map(
+                                        (c) => _ConversationTile(
+                                          conversation: c,
+                                          isSelected:
+                                              c.id ==
+                                              service.currentConversationId,
+                                          onTap: () =>
+                                              onSelectConversation(c.id),
+                                          onPin: () => service.togglePin(c.id),
+                                          onDelete: () =>
+                                              _confirmDelete(context, c),
+                                          onRename: () =>
+                                              _renameDialog(context, c),
+                                        ),
+                                      ),
                                     ],
                                     for (final entry in groupedRecent.entries)
                                       if (entry.value.isNotEmpty) ...[
                                         _SectionLabel(entry.key),
-                                        ...entry.value.map((c) => _ConversationTile(
-                                          conversation: c,
-                                          isSelected: c.id == service.currentConversationId,
-                                          onTap: () => onSelectConversation(c.id),
-                                          onPin: () => service.togglePin(c.id),
-                                          onDelete: () => _confirmDelete(context, c),
-                                          onRename: () => _renameDialog(context, c),
-                                        )),
+                                        ...entry.value.map(
+                                          (c) => _ConversationTile(
+                                            conversation: c,
+                                            isSelected:
+                                                c.id ==
+                                                service.currentConversationId,
+                                            onTap: () =>
+                                                onSelectConversation(c.id),
+                                            onPin: () =>
+                                                service.togglePin(c.id),
+                                            onDelete: () =>
+                                                _confirmDelete(context, c),
+                                            onRename: () =>
+                                                _renameDialog(context, c),
+                                          ),
+                                        ),
                                       ],
                                   ],
                                 ),
@@ -275,7 +332,7 @@ class AppDrawer extends StatelessWidget {
             ),
 
             // ===== RODAPÉ =====
-             Divider(color: GamaColors.divider, height: 1),
+            Divider(color: GamaColors.divider, height: 1),
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
               child: ListTile(
@@ -287,13 +344,13 @@ class AppDrawer extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: GamaColors.border),
                   ),
-                  child:  Icon(
+                  child: Icon(
                     Icons.settings_outlined,
                     color: GamaColors.textSecondary,
                     size: 18,
                   ),
                 ),
-                title:  Text(
+                title: Text(
                   'Configurações',
                   style: TextStyle(
                     color: GamaColors.textPrimary,
@@ -306,7 +363,7 @@ class AppDrawer extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 onTap: () {
-                  Navigator.pop(context);
+                  _close(context);
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const SettingsScreen()),
@@ -325,13 +382,13 @@ class AppDrawer extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: GamaColors.border),
                   ),
-                  child:  Icon(
+                  child: Icon(
                     Icons.logout_rounded,
                     color: GamaColors.error,
                     size: 18,
                   ),
                 ),
-                title:  Text(
+                title: Text(
                   'Sair da conta',
                   style: TextStyle(
                     color: GamaColors.error,
@@ -353,7 +410,7 @@ class AppDrawer extends StatelessWidget {
   }
 
   Future<void> _logout(BuildContext context) async {
-    Navigator.pop(context);
+    _close(context);
     try {
       await AuthService.instance.signOut();
     } catch (_) {
@@ -372,7 +429,7 @@ class AppDrawer extends StatelessWidget {
   }
 
   void _comingSoon(BuildContext context) {
-    Navigator.pop(context);
+    _close(context);
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('Em breve')));
   }
@@ -382,28 +439,25 @@ class AppDrawer extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: GamaColors.surfaceCard,
-        title:  Text(
+        title: Text(
           'Apagar conversa?',
           style: TextStyle(color: GamaColors.textPrimary),
         ),
         content: Text(
           '“${c.title}” será apagada permanentemente.',
-          style:  TextStyle(color: GamaColors.textSecondary),
+          style: TextStyle(color: GamaColors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child:  Text(
+            child: Text(
               'Cancelar',
               style: TextStyle(color: GamaColors.textSecondary),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child:  Text(
-              'Apagar',
-              style: TextStyle(color: GamaColors.error),
-            ),
+            child: Text('Apagar', style: TextStyle(color: GamaColors.error)),
           ),
         ],
       ),
@@ -421,30 +475,27 @@ class AppDrawer extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: GamaColors.surfaceCard,
-        title:  Text(
+        title: Text(
           'Renomear conversa',
           style: TextStyle(color: GamaColors.textPrimary),
         ),
         content: TextField(
           controller: controller,
           autofocus: true,
-          style:  TextStyle(color: GamaColors.textPrimary),
+          style: TextStyle(color: GamaColors.textPrimary),
           decoration: const InputDecoration(hintText: 'Título da conversa'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child:  Text(
+            child: Text(
               'Cancelar',
               style: TextStyle(color: GamaColors.textSecondary),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, controller.text),
-            child:  Text(
-              'Salvar',
-              style: TextStyle(color: GamaColors.accent),
-            ),
+            child: Text('Salvar', style: TextStyle(color: GamaColors.accent)),
           ),
         ],
       ),
@@ -468,7 +519,7 @@ class _SectionLabel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
       child: Text(
         text,
-        style:  TextStyle(
+        style: TextStyle(
           color: GamaColors.textMuted,
           fontSize: 12,
           fontWeight: FontWeight.w600,
@@ -499,7 +550,9 @@ bool _matchesConversation(
   return false;
 }
 
-Map<String, List<Conversation>> _groupRecentConversations(List<Conversation> conversations) {
+Map<String, List<Conversation>> _groupRecentConversations(
+  List<Conversation> conversations,
+) {
   final groups = <String, List<Conversation>>{
     'Hoje': [],
     'Ontem': [],
@@ -515,10 +568,10 @@ Map<String, List<Conversation>> _groupRecentConversations(List<Conversation> con
     final group = daysAgo <= 0
         ? 'Hoje'
         : daysAgo == 1
-            ? 'Ontem'
-            : daysAgo <= 7
-                ? 'Últimos 7 dias'
-                : 'Mais antigas';
+        ? 'Ontem'
+        : daysAgo <= 7
+        ? 'Últimos 7 dias'
+        : 'Mais antigas';
     groups[group]!.add(conversation);
   }
   return groups;
@@ -540,19 +593,19 @@ class _DrawerItem extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: ListTile(
-      leading: Container(
-        width: 34,
-        height: 34,
-        decoration: BoxDecoration(
-          color: GamaColors.surfaceCard,
-          borderRadius: BorderRadius.circular(11),
-          border: Border.all(color: GamaColors.borderSoft),
+        leading: Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: GamaColors.surfaceCard,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: GamaColors.borderSoft),
+          ),
+          child: Icon(icon, color: GamaColors.textSecondary, size: 18),
         ),
-        child: Icon(icon, color: GamaColors.textSecondary, size: 18),
-      ),
         title: Text(
           label,
-          style:  TextStyle(
+          style: TextStyle(
             color: GamaColors.textPrimary,
             fontSize: 14,
             fontWeight: FontWeight.w400,
@@ -613,11 +666,7 @@ class _ConversationTile extends StatelessWidget {
                       ),
                     )
                   : conversation.isPinned
-                  ?  Icon(
-                      Icons.push_pin,
-                      size: 14,
-                      color: GamaColors.textMuted,
-                    )
+                  ? Icon(Icons.push_pin, size: 14, color: GamaColors.textMuted)
                   : const SizedBox(width: 3),
               title: Text(
                 conversation.title,
@@ -635,7 +684,7 @@ class _ConversationTile extends StatelessWidget {
               contentPadding: const EdgeInsets.only(left: 10, right: 4),
               visualDensity: VisualDensity.compact,
               trailing: PopupMenuButton<String>(
-                icon:  Icon(
+                icon: Icon(
                   Icons.more_horiz,
                   color: GamaColors.textMuted,
                   size: 18,
@@ -651,17 +700,17 @@ class _ConversationTile extends StatelessWidget {
                     value: 'pin',
                     child: Text(
                       conversation.isPinned ? 'Desafixar' : 'Fixar',
-                      style:  TextStyle(color: GamaColors.textPrimary),
+                      style: TextStyle(color: GamaColors.textPrimary),
                     ),
                   ),
-                   PopupMenuItem(
+                  PopupMenuItem(
                     value: 'rename',
                     child: Text(
                       'Renomear',
                       style: TextStyle(color: GamaColors.textPrimary),
                     ),
                   ),
-                   PopupMenuItem(
+                  PopupMenuItem(
                     value: 'delete',
                     child: Text(
                       'Apagar',
@@ -707,7 +756,7 @@ class _ProfileAvatar extends StatelessWidget {
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => Text(
                 letter,
-                style:  TextStyle(
+                style: TextStyle(
                   color: GamaColors.accent,
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
@@ -716,7 +765,7 @@ class _ProfileAvatar extends StatelessWidget {
             )
           : Text(
               letter,
-              style:  TextStyle(
+              style: TextStyle(
                 color: GamaColors.accent,
                 fontSize: 18,
                 fontWeight: FontWeight.w700,

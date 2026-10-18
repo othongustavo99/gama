@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/conversation.dart';
 import '../models/message.dart';
@@ -14,12 +15,41 @@ class ConversationService extends ChangeNotifier {
   late Box<Message> _messagesBox;
 
   String? _currentConversationId;
+  final Map<String, String> _drafts = <String, String>{};
+  static const _draftPrefix = 'gama_chat_draft_';
 
   String? get currentConversationId => _currentConversationId;
+
+  String? draftFor(String id) => _drafts[id];
+
+  Future<void> saveDraft(String id, String value) async {
+    if (value.isEmpty) {
+      _drafts.remove(id);
+    } else {
+      _drafts[id] = value;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final key = '$_draftPrefix$id';
+    if (value.isEmpty) {
+      await prefs.remove(key);
+    } else {
+      await prefs.setString(key, value);
+    }
+    notifyListeners();
+  }
 
   Future<void> init() async {
     _conversationsBox = await Hive.openBox<Conversation>('conversations');
     _messagesBox = await Hive.openBox<Message>('messages');
+
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in prefs.getKeys()) {
+      if (!key.startsWith(_draftPrefix)) continue;
+      final draft = prefs.getString(key);
+      if (draft != null && draft.trim().isNotEmpty) {
+        _drafts[key.substring(_draftPrefix.length)] = draft;
+      }
+    }
 
     // Remove TODOS os rascunhos vazios de sessões anteriores.
     await purgeEmptyConversations(exceptId: '');
@@ -42,7 +72,12 @@ class ConversationService extends ChangeNotifier {
   /// [exceptId] preservada (passe string vazia ou null para apagar todas as vazias).
   Future<void> purgeEmptyConversations({String? exceptId}) async {
     final empties = _conversationsBox.values
-        .where((c) => c.id != exceptId && !conversationHasMessages(c.id))
+        .where(
+          (c) =>
+              c.id != exceptId &&
+              !conversationHasMessages(c.id) &&
+              (_drafts[c.id]?.trim().isNotEmpty ?? false) == false,
+        )
         .toList();
     if (empties.isEmpty) return;
     for (final c in empties) {
@@ -57,17 +92,25 @@ class ConversationService extends ChangeNotifier {
   }
 
   List<Conversation> get pinnedConversations {
-    // Só lista conversas que já receberam mensagem (não mostra rascunhos vazios)
     return _conversationsBox.values
-        .where((c) => c.isPinned && conversationHasMessages(c.id))
+        .where(
+          (c) =>
+              c.isPinned &&
+              (conversationHasMessages(c.id) ||
+                  (_drafts[c.id]?.isNotEmpty ?? false)),
+        )
         .toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
 
   List<Conversation> get recentConversations {
-    // Só lista conversas que já receberam mensagem (não mostra rascunhos vazios)
     return _conversationsBox.values
-        .where((c) => !c.isPinned && conversationHasMessages(c.id))
+        .where(
+          (c) =>
+              !c.isPinned &&
+              (conversationHasMessages(c.id) ||
+                  (_drafts[c.id]?.isNotEmpty ?? false)),
+        )
         .toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
@@ -137,7 +180,9 @@ class ConversationService extends ChangeNotifier {
     String title = 'Nova conversa',
   }) async {
     final currentId = _currentConversationId;
-    if (currentId != null && !conversationHasMessages(currentId)) {
+    if (currentId != null &&
+        !conversationHasMessages(currentId) &&
+        (_drafts[currentId]?.trim().isNotEmpty ?? false) == false) {
       final existing = _conversationsBox.get(currentId);
       if (existing != null) return existing;
     }
@@ -159,7 +204,8 @@ class ConversationService extends ChangeNotifier {
     // Se saiu de um rascunho vazio, apaga para não acumular
     if (previousId != null &&
         previousId != id &&
-        !conversationHasMessages(previousId)) {
+        !conversationHasMessages(previousId) &&
+        (_drafts[previousId]?.trim().isNotEmpty ?? false) == false) {
       await _conversationsBox.delete(previousId);
     }
     notifyListeners();
@@ -198,6 +244,9 @@ class ConversationService extends ChangeNotifier {
     }
 
     await _conversationsBox.delete(id);
+    _drafts.remove(id);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_draftPrefix$id');
 
     // Se apagou a conversa atual, seleciona outra
     if (_currentConversationId == id) {
@@ -245,7 +294,10 @@ class ConversationService extends ChangeNotifier {
 
   /// Remove um conjunto de mensagens e sincroniza a conversa uma única vez.
   /// Usado por editar/reenviar e regenerar a última resposta.
-  Future<void> deleteMessages(List<Message> messages, {bool sync = true}) async {
+  Future<void> deleteMessages(
+    List<Message> messages, {
+    bool sync = true,
+  }) async {
     if (messages.isEmpty) return;
     final conversationIds = <String>{};
     for (final message in messages) {

@@ -20,6 +20,8 @@ class ChatComposer extends StatelessWidget {
   final VoidCallback onSpeakSend;
   final VoidCallback? onStop;
   final ValueChanged<GamaMode> onModeChanged;
+  final VoidCallback? onPasteImage;
+  final FocusNode? focusNode;
 
   const ChatComposer({
     super.key,
@@ -33,6 +35,8 @@ class ChatComposer extends StatelessWidget {
     required this.onSpeakSend,
     this.onStop,
     required this.onModeChanged,
+    this.onPasteImage,
+    this.focusNode,
   });
 
   bool get _usesDesktopEnterShortcut =>
@@ -56,17 +60,7 @@ class ChatComposer extends StatelessWidget {
     };
 
     return Container(
-      decoration: BoxDecoration(
-        color: GamaColors.surface,
-        border: Border(top: BorderSide(color: GamaColors.divider)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.18),
-            blurRadius: 18,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
+      color: GamaColors.surface,
       child: SafeArea(
         top: false,
         child: Padding(
@@ -91,13 +85,7 @@ class ChatComposer extends StatelessWidget {
                         offset: const Offset(0, 2),
                       ),
                     ]
-                  : [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.18),
-                        blurRadius: 16,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
+                  : const [],
             ),
             padding: const EdgeInsets.fromLTRB(14, 12, 8, 8),
             child: Column(
@@ -107,52 +95,62 @@ class ChatComposer extends StatelessWidget {
                 // Campo de texto — SEM caixa de fundo por trás do placeholder.
                 // No desktop, Enter envia e Shift+Enter continua inserindo
                 // uma quebra de linha (o atalho não é registrado com Shift).
-                Shortcuts(
-                  shortcuts: shortcuts,
-                  child: Actions(
-                    actions: <Type, Action<Intent>>{
-                      _SendMessageIntent: CallbackAction<_SendMessageIntent>(
-                        onInvoke: (_) {
-                          _submitIfPossible();
-                          return null;
-                        },
-                      ),
-                    },
-                    child: TextField(
-                      controller: controller,
-                      style: TextStyle(
-                        color: GamaColors.textPrimary,
-                        fontSize: 15.5,
-                        height: 1.35,
-                        letterSpacing: 0.1,
-                      ),
-                      maxLines: 5,
-                      minLines: 1,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: InputDecoration(
-                        hintText: isListening
-                            ? 'Ouvindo… o texto aparece aqui'
-                            : 'Escreva sua mensagem...',
-                        hintStyle: TextStyle(
-                          color: GamaColors.textMuted,
-                          fontSize: 14.5,
+                CallbackShortcuts(
+                  bindings: <ShortcutActivator, VoidCallback>{
+                    if (_usesDesktopEnterShortcut && onPasteImage != null)
+                      const SingleActivator(
+                        LogicalKeyboardKey.keyV,
+                        control: true,
+                      ): onPasteImage!,
+                  },
+                  child: Shortcuts(
+                    shortcuts: shortcuts,
+                    child: Actions(
+                      actions: <Type, Action<Intent>>{
+                        _SendMessageIntent: CallbackAction<_SendMessageIntent>(
+                          onInvoke: (_) {
+                            _submitIfPossible();
+                            return null;
+                          },
                         ),
-                        // Remove qualquer fundo/caixa do tema global.
-                        filled: false,
-                        fillColor: Colors.transparent,
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        disabledBorder: InputBorder.none,
-                        errorBorder: InputBorder.none,
-                        focusedErrorBorder: InputBorder.none,
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 2,
-                          vertical: 6,
+                      },
+                      child: TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        style: TextStyle(
+                          color: GamaColors.textPrimary,
+                          fontSize: 15.5,
+                          height: 1.35,
+                          letterSpacing: 0.1,
                         ),
+                        maxLines: 5,
+                        minLines: 1,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: InputDecoration(
+                          hintText: isListening
+                              ? 'Ouvindo… o texto aparece aqui'
+                              : 'Escreva sua mensagem...',
+                          hintStyle: TextStyle(
+                            color: GamaColors.textMuted,
+                            fontSize: 14.5,
+                          ),
+                          // Remove qualquer fundo/caixa do tema global.
+                          filled: false,
+                          fillColor: Colors.transparent,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
+                          errorBorder: InputBorder.none,
+                          focusedErrorBorder: InputBorder.none,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 2,
+                            vertical: 6,
+                          ),
+                        ),
+                        onSubmitted: (_) => _submitIfPossible(),
                       ),
-                      onSubmitted: (_) => _submitIfPossible(),
                     ),
                   ),
                 ),
@@ -210,13 +208,20 @@ class ChatComposer extends StatelessWidget {
                     ),
                     IconButton(
                       onPressed: isLoading ? null : onSpeakSend,
-                      tooltip: 'Enviar e ouvir a resposta',
+                      tooltip: isListening
+                          ? 'Encerrar conversa por voz'
+                          : 'Iniciar conversa por voz',
                       style: IconButton.styleFrom(
                         foregroundColor: GamaColors.textSecondary,
                         disabledForegroundColor: GamaColors.textHint,
                         visualDensity: VisualDensity.compact,
                       ),
-                      icon: const Icon(Icons.graphic_eq_rounded, size: 20),
+                      icon: Icon(
+                        isListening
+                            ? Icons.headset_mic_rounded
+                            : Icons.headset_rounded,
+                        size: 20,
+                      ),
                     ),
                     const SizedBox(width: 4),
                     Material(
@@ -309,12 +314,6 @@ class _ModeChip extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.1,
                 ),
-              ),
-              const SizedBox(width: 2),
-              Icon(
-                Icons.keyboard_arrow_down_rounded,
-                size: 16,
-                color: selected ? GamaColors.accent : GamaColors.textMuted,
               ),
             ],
           ),

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -25,7 +26,11 @@ class GeneratedImageData {
   final String mime;
   final String base64;
   final String? filePath;
-  const GeneratedImageData({required this.mime, this.base64 = '', this.filePath});
+  const GeneratedImageData({
+    required this.mime,
+    this.base64 = '',
+    this.filePath,
+  });
 }
 
 class AttachmentPreview {
@@ -42,7 +47,6 @@ class AttachmentPreview {
   });
 }
 
-
 final _gamaImageAnyRe = RegExp(
   r'\[gama_image_file\]\s*mime:([^\n]+)\s*path:([^\n]+)\s*\[/gama_image_file\]'
   r'|\[gama_image\]\s*mime:([^\n]+)\s*data:([A-Za-z0-9+/=\s]+)\s*\[/gama_image\]',
@@ -53,15 +57,19 @@ final _gamaImageAnyRe = RegExp(
   final images = <GeneratedImageData>[];
   final text = content.replaceAllMapped(_gamaImageAnyRe, (m) {
     if (m.group(1) != null) {
-      images.add(GeneratedImageData(
-        mime: m.group(1)!.trim(),
-        filePath: m.group(2)!.trim(),
-      ));
+      images.add(
+        GeneratedImageData(
+          mime: m.group(1)!.trim(),
+          filePath: m.group(2)!.trim(),
+        ),
+      );
     } else {
-      images.add(GeneratedImageData(
-        mime: m.group(3)!.trim(),
-        base64: m.group(4)!.replaceAll(RegExp(r'\s'), ''),
-      ));
+      images.add(
+        GeneratedImageData(
+          mime: m.group(3)!.trim(),
+          base64: m.group(4)!.replaceAll(RegExp(r'\s'), ''),
+        ),
+      );
     }
     return '';
   });
@@ -208,15 +216,23 @@ class MessageContentView extends StatelessWidget {
         if (images.isNotEmpty) ...[
           ...images.map((img) {
             final filePath = img.filePath;
-            final fileExists = filePath != null && filePath.isNotEmpty && File(filePath).existsSync();
+            final fileExists =
+                filePath != null &&
+                filePath.isNotEmpty &&
+                File(filePath).existsSync();
             if (!fileExists && img.base64.isEmpty) {
-              return  Padding(
+              return Padding(
                 padding: EdgeInsets.only(bottom: 10),
-                child: Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
+                child: Text(
+                  '[imagem indisponível]',
+                  style: TextStyle(color: GamaColors.textMuted),
+                ),
               );
             }
             try {
-              final memoryBytes = img.base64.isEmpty ? null : base64Decode(img.base64);
+              final memoryBytes = img.base64.isEmpty
+                  ? null
+                  : base64Decode(img.base64);
               return Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Column(
@@ -229,13 +245,19 @@ class MessageContentView extends StatelessWidget {
                               File(filePath!),
                               fit: BoxFit.cover,
                               gaplessPlayback: true,
-                              errorBuilder: (_, __, ___) =>  Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
+                              errorBuilder: (_, __, ___) => Text(
+                                '[imagem indisponível]',
+                                style: TextStyle(color: GamaColors.textMuted),
+                              ),
                             )
                           : Image.memory(
                               memoryBytes!,
                               fit: BoxFit.cover,
                               gaplessPlayback: true,
-                              errorBuilder: (_, __, ___) =>  Text('[imagem indisponível]', style: TextStyle(color: GamaColors.textMuted)),
+                              errorBuilder: (_, __, ___) => Text(
+                                '[imagem indisponível]',
+                                style: TextStyle(color: GamaColors.textMuted),
+                              ),
                             ),
                     ),
                     const SizedBox(height: 6),
@@ -251,7 +273,11 @@ class MessageContentView extends StatelessWidget {
                           try {
                             final path = fileExists
                                 ? filePath!
-                                : await DownloadService.instance.saveBase64Image(img.base64, mime: img.mime);
+                                : await DownloadService.instance
+                                      .saveBase64Image(
+                                        img.base64,
+                                        mime: img.mime,
+                                      );
                             await DownloadService.instance.openPath(path);
                           } catch (_) {}
                         },
@@ -324,15 +350,16 @@ class _MemoizedMessageContentViewState
   late Widget _cachedContent = _createContent();
 
   Widget _createContent() => MessageContentView(
-        content: widget.content,
-        isUser: widget.isUser,
-        onTapLink: widget.onTapLink,
-      );
+    content: widget.content,
+    isUser: widget.isUser,
+    onTapLink: widget.onTapLink,
+  );
 
   @override
   void didUpdateWidget(covariant MemoizedMessageContentView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.content != widget.content || oldWidget.isUser != widget.isUser) {
+    if (oldWidget.content != widget.content ||
+        oldWidget.isUser != widget.isUser) {
       _cachedContent = _createContent();
     }
   }
@@ -440,7 +467,9 @@ class _MarkdownMessage extends StatelessWidget {
       ),
       blockquotePadding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       blockquoteDecoration: BoxDecoration(
-        color: isUser ? Colors.black.withValues(alpha: 0.18) : GamaColors.surfaceCard,
+        color: isUser
+            ? Colors.black.withValues(alpha: 0.18)
+            : GamaColors.surfaceCard,
         borderRadius: BorderRadius.circular(10),
         border: Border(
           left: BorderSide(
@@ -458,7 +487,9 @@ class _MarkdownMessage extends StatelessWidget {
       tableHead: textStyle.copyWith(fontWeight: FontWeight.w700),
       tableBody: textStyle.copyWith(fontSize: 13),
       tableBorder: TableBorder.all(
-        color: isUser ? Colors.white.withValues(alpha: 0.25) : GamaColors.border,
+        color: isUser
+            ? Colors.white.withValues(alpha: 0.25)
+            : GamaColors.border,
         width: 1,
       ),
       tableCellsPadding: const EdgeInsets.symmetric(
@@ -501,10 +532,7 @@ List<_CodePart> _splitCodeBlocks(String text) {
     // markdown antes do fence
     if (openStart > cursor) {
       parts.add(
-        _CodePart(
-          isCode: false,
-          content: src.substring(cursor, openStart),
-        ),
+        _CodePart(isCode: false, content: src.substring(cursor, openStart)),
       );
     }
 
@@ -535,9 +563,7 @@ List<_CodePart> _splitCodeBlocks(String text) {
       if (code.endsWith('\n')) {
         code = code.substring(0, code.length - 1);
       }
-      parts.add(
-        _CodePart(isCode: true, content: code, language: language),
-      );
+      parts.add(_CodePart(isCode: true, content: code, language: language));
       cursor = src.length;
       break;
     }
@@ -548,17 +574,13 @@ List<_CodePart> _splitCodeBlocks(String text) {
     } else if (code.endsWith('\n')) {
       code = code.substring(0, code.length - 1);
     }
-    parts.add(
-      _CodePart(isCode: true, content: code, language: language),
-    );
+    parts.add(_CodePart(isCode: true, content: code, language: language));
     cursor = closeEnd;
     i = closeEnd;
   }
 
   if (cursor < src.length) {
-    parts.add(
-      _CodePart(isCode: false, content: src.substring(cursor)),
-    );
+    parts.add(_CodePart(isCode: false, content: src.substring(cursor)));
   }
 
   if (parts.isEmpty) {
@@ -741,7 +763,9 @@ class _HScrollTableBuilder extends MarkdownElementBuilder {
       child: Table(
         defaultColumnWidth: const IntrinsicColumnWidth(),
         border: TableBorder.all(
-          color: isUser ? Colors.white.withValues(alpha: 0.25) : GamaColors.border,
+          color: isUser
+              ? Colors.white.withValues(alpha: 0.25)
+              : GamaColors.border,
           width: 1,
         ),
         children: rows,

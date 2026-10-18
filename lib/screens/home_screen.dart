@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../core/gama_colors.dart';
@@ -96,43 +97,46 @@ class _HomeScreenState extends State<HomeScreen> {
         listenable: _service,
         builder: (context, _) {
           final currentId = _service.currentConversationId;
+          final desktopSidebar =
+              defaultTargetPlatform == TargetPlatform.windows &&
+              MediaQuery.sizeOf(context).width >= 900;
+          final appDrawer = AppDrawer(
+            persistent: desktopSidebar,
+            onNewChat: () async {
+              await _service.createConversationIfNeeded();
+              if (mounted && !desktopSidebar) Navigator.pop(context);
+            },
+            onSelectConversation: (id) async {
+              await _service.selectConversation(id);
+              if (mounted && !desktopSidebar) Navigator.pop(context);
+            },
+            onOpenImages: () {
+              if (!desktopSidebar) Navigator.pop(context);
+              _push(const ImagesScreen());
+            },
+            onOpenLibrary: () {
+              if (!desktopSidebar) Navigator.pop(context);
+              _push(const LibraryScreen());
+            },
+            onOpenProjects: () {
+              if (!desktopSidebar) Navigator.pop(context);
+              _push(const ProjectsScreen());
+            },
+            onOpenScheduled: () {
+              if (!desktopSidebar) Navigator.pop(context);
+              _push(const ScheduledScreen());
+            },
+            onOpenPlugins: () {
+              if (!desktopSidebar) Navigator.pop(context);
+              _push(const PluginsScreen());
+            },
+          );
 
           return Scaffold(
             backgroundColor: GamaColors.background,
-            drawer: AppDrawer(
-              onNewChat: () async {
-                // Só cria de fato se a conversa atual já tiver mensagem.
-                // Caso contrário reutiliza o rascunho vazio (não salva outra vazia).
-                await _service.createConversationIfNeeded();
-                if (mounted) Navigator.pop(context);
-              },
-              onSelectConversation: (id) async {
-                await _service.selectConversation(id);
-                if (mounted) Navigator.pop(context);
-              },
-              onOpenImages: () {
-                Navigator.pop(context);
-                _push(const ImagesScreen());
-              },
-              onOpenLibrary: () {
-                Navigator.pop(context);
-                _push(const LibraryScreen());
-              },
-              onOpenProjects: () {
-                Navigator.pop(context);
-                _push(const ProjectsScreen());
-              },
-              onOpenScheduled: () {
-                Navigator.pop(context);
-                _push(const ScheduledScreen());
-              },
-              onOpenPlugins: () {
-                Navigator.pop(context);
-                _push(const PluginsScreen());
-              },
-            ),
+            drawer: desktopSidebar ? null : appDrawer,
             body: currentId == null
-                ?  Center(
+                ? Center(
                     child: SizedBox(
                       width: 28,
                       height: 28,
@@ -141,6 +145,24 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: GamaColors.accent,
                       ),
                     ),
+                  )
+                : desktopSidebar
+                ? Row(
+                    children: [
+                      SizedBox(width: 280, child: appDrawer),
+                      VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        color: GamaColors.divider,
+                      ),
+                      Expanded(
+                        child: ChatScreen(
+                          key: ValueKey(currentId),
+                          conversationId: currentId,
+                          persistentSidebar: true,
+                        ),
+                      ),
+                    ],
                   )
                 : ChatScreen(
                     key: ValueKey(currentId),
@@ -152,4 +174,3 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
-  
