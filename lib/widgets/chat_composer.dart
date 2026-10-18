@@ -208,20 +208,13 @@ class ChatComposer extends StatelessWidget {
                     ),
                     IconButton(
                       onPressed: isLoading ? null : onSpeakSend,
-                      tooltip: isListening
-                          ? 'Encerrar conversa por voz'
-                          : 'Iniciar conversa por voz',
+                      tooltip: 'Enviar e ouvir resposta',
                       style: IconButton.styleFrom(
-                        foregroundColor: context.gama.textSecondary,
+                        foregroundColor: context.gama.accent,
                         disabledForegroundColor: context.gama.textHint,
                         visualDensity: VisualDensity.compact,
                       ),
-                      icon: Icon(
-                        isListening
-                            ? Icons.headset_mic_rounded
-                            : Icons.headset_rounded,
-                        size: 20,
-                      ),
+                      icon: const Icon(Icons.graphic_eq_rounded, size: 22),
                     ),
                     const SizedBox(width: 4),
                     Material(

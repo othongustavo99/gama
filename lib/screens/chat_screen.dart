@@ -64,6 +64,10 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _scrollCallbackScheduled = false;
   bool _showScrollToBottom = false;
   final ValueNotifier<String> _streamingText = ValueNotifier<String>('');
+  final ValueNotifier<String> _voiceReplyDisplayedText = ValueNotifier<String>(
+    '',
+  );
+  String? _voiceReplyDisplayMessageId;
   final Queue<int> _streamRevealQueue = Queue<int>();
   final Map<String, GlobalKey> _messageKeys = <String, GlobalKey>{};
   Timer? _streamRevealTimer;
@@ -448,6 +452,12 @@ class _ChatScreenState extends State<ChatScreen> {
         'Não foi possível iniciar a conversa por voz. Verifique a permissão e a disponibilidade do microfone.',
       );
     }
+  }
+
+  Future<void> _sendMessageWithVoiceReply() async {
+    if (_controller.text.trim().isEmpty && _attachments.isEmpty) return;
+    _speakNextReply = true;
+    await _sendMessage();
   }
 
   Future<void> _resumeVoiceConversation() async {
@@ -1871,7 +1881,14 @@ class _ChatScreenState extends State<ChatScreen> {
     final want =
         ttsEnabled && (_speakNextReply || SettingsService.instance.ttsAuto);
     _speakNextReply = false;
-    if (!want) return;
+    if (!want) {
+      if (revealWhileSpeaking && mounted) {
+        _voiceReplyDisplayMessageId = null;
+        _voiceReplyDisplayedText.value = '';
+        setState(() {});
+      }
+      return;
+    }
 
     final t = text.trim();
     if (t.isEmpty || !mounted) return;
@@ -1900,16 +1917,16 @@ class _ChatScreenState extends State<ChatScreen> {
         t,
         onChunkPlaybackStart: (chunk) async {
           if (!mounted) return;
-          setState(() {
-            if (_messages.isNotEmpty && _messages.last.isAssistant) {
-              _messages.last.content +=
-                  (_messages.last.content.isEmpty ? '' : ' ') + chunk;
-            }
-          });
+          _voiceReplyDisplayedText.value =
+              '${_voiceReplyDisplayedText.value}${_voiceReplyDisplayedText.value.isEmpty ? '' : ' '}$chunk';
           _scrollToBottom();
         },
       );
     } finally {
+      if (revealWhileSpeaking && mounted) {
+        _voiceReplyDisplayMessageId = null;
+        _voiceReplyDisplayedText.value = '';
+      }
       if (mounted) {
         setState(() => _isSpeaking = false);
       }
@@ -2399,7 +2416,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? _voiceResponseBuffer
                 : _messages.last.content;
             final assistantToSave = _messages.last;
-            if (isVoiceReply) assistantToSave.content = responseText;
+            if (isVoiceReply) {
+              assistantToSave.content = responseText;
+              _voiceReplyDisplayMessageId = assistantToSave.id;
+              _voiceReplyDisplayedText.value = '';
+            }
             try {
               final pendingWrite = _assistantPersistence;
               if (pendingWrite != null) await pendingWrite;
@@ -2668,6 +2689,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _composerFocusNode.dispose();
     _scrollController.dispose();
     _streamingText.dispose();
+    _voiceReplyDisplayedText.dispose();
     super.dispose();
   }
 
@@ -3174,6 +3196,28 @@ class _ChatScreenState extends State<ChatScreen> {
                                                             ],
                                                           ),
                                                     )
+                                                  else if (!isUser &&
+                                                      msg.id ==
+                                                          _voiceReplyDisplayMessageId)
+                                                    ValueListenableBuilder<
+                                                      String
+                                                    >(
+                                                      valueListenable:
+                                                          _voiceReplyDisplayedText,
+                                                      builder:
+                                                          (
+                                                            context,
+                                                            content,
+                                                            _,
+                                                          ) => MessageContentView(
+                                                            content: _citationMarkdown(
+                                                              msg.id,
+                                                              content,
+                                                            ),
+                                                            isUser: false,
+                                                            onTapLink: _openLink,
+                                                          ),
+                                                    )
                                                   else
                                                     MemoizedMessageContentView(
                                                       content:
@@ -3531,7 +3575,7 @@ class _ChatScreenState extends State<ChatScreen> {
             onAttach: _showAttachMenu,
             onToggleListen: _toggleListen,
             onSend: _sendMessage,
-            onSpeakSend: _toggleVoiceConversation,
+            onSpeakSend: _sendMessageWithVoiceReply,
             onPasteImage: _pasteClipboardContent,
             onStop: _stopGeneration,
             onModeChanged: (m) async {
