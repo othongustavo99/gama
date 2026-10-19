@@ -981,6 +981,28 @@ class _ChatScreenState extends State<ChatScreen> {
         : message.content.substring(0, marker).trim();
   }
 
+  List<GeneratedImageData> _messageImageAttachments(Message message) {
+    if (!message.isUser) return const [];
+    final attachments = _readAttachmentMetadata(message)?['attachments'];
+    if (attachments is! List) return const [];
+    return attachments
+        .whereType<Map>()
+        .map((raw) {
+          final item = Map<String, dynamic>.from(raw);
+          if (item['kind']?.toString() != AttachmentKind.image.name)
+            return null;
+          final path = (item['libraryPath'] ?? item['sourcePath'] ?? '')
+              .toString();
+          if (path.isEmpty) return null;
+          return GeneratedImageData(
+            mime: (item['mimeType'] ?? 'image/jpeg').toString(),
+            filePath: path,
+          );
+        })
+        .whereType<GeneratedImageData>()
+        .toList(growable: false);
+  }
+
   String _encodeAttachmentMetadata(
     String rawText,
     List<ProcessedAttachment> attachments,
@@ -998,6 +1020,7 @@ class _ChatScreenState extends State<ChatScreen> {
         'label': a.label,
         'bytes': a.bytes,
         'sourcePath': a.sourcePath,
+        'libraryPath': a.libraryPath,
         'mimeType': a.mimeType,
       };
     }).toList();
@@ -1018,7 +1041,11 @@ class _ChatScreenState extends State<ChatScreen> {
       final data = Map<String, dynamic>.from(item);
       final name = (data['name'] ?? 'anexo').toString();
       final ext = (data['ext'] ?? '').toString();
-      final path = (data['sourcePath'] ?? '').toString();
+      final sourcePath = (data['sourcePath'] ?? '').toString();
+      final libraryPath = (data['libraryPath'] ?? '').toString();
+      final path = sourcePath.isNotEmpty && File(sourcePath).existsSync()
+          ? sourcePath
+          : libraryPath;
       final label = (data['label'] ?? name).toString();
       final bytes = int.tryParse((data['bytes'] ?? 0).toString()) ?? 0;
       final mime = data['mimeType']?.toString();
@@ -1045,13 +1072,15 @@ class _ChatScreenState extends State<ChatScreen> {
             bytes: bytes,
             sourcePath: path.isEmpty ? null : path,
             mimeType: mime,
-          ),
+          )..libraryPath = libraryPath.isEmpty ? null : libraryPath,
         );
         continue;
       }
 
       if (path.isNotEmpty && await File(path).exists()) {
-        restored.add(await _attachmentService.processFile(path));
+        final attachment = await _attachmentService.processFile(path);
+        attachment.libraryPath = libraryPath.isEmpty ? null : libraryPath;
+        restored.add(attachment);
         continue;
       }
       throw StateError(
@@ -1761,15 +1790,15 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final processed = await _attachmentService.processFile(path);
       if (!mounted) return;
-      setState(() {
-        _attachments.add(processed);
-      });
-      await LibraryScreen.addEntry(
+      processed.libraryPath = await LibraryScreen.addEntry(
         name: processed.name,
         kind: processed.kind.name,
         bytes: processed.bytes,
         sourcePath: path,
       );
+      setState(() {
+        _attachments.add(processed);
+      });
     } catch (e) {
       _attachmentProcessingFailed = true;
       if (!mounted) return;
@@ -3055,12 +3084,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                               margin: EdgeInsets.only(
                                                 bottom: isUser ? 16 : 4,
                                               ),
-                                              padding: isUser
-                                                  ? const EdgeInsets.symmetric(
-                                                      horizontal: 16,
-                                                      vertical: 12,
-                                                    )
-                                                  : EdgeInsets.zero,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 16,
+                                                    vertical: 12,
+                                                  ),
                                               decoration: isUser
                                                   ? BoxDecoration(
                                                       gradient: LinearGradient(
@@ -3105,7 +3133,38 @@ class _ChatScreenState extends State<ChatScreen> {
                                                             ),
                                                       ),
                                                     )
-                                                  : null,
+                                                  : BoxDecoration(
+                                                      color: context
+                                                          .gama
+                                                          .surfaceCard,
+                                                      borderRadius:
+                                                          const BorderRadius.only(
+                                                            topLeft:
+                                                                Radius.circular(
+                                                                  7,
+                                                                ),
+                                                            topRight:
+                                                                Radius.circular(
+                                                                  22,
+                                                                ),
+                                                            bottomLeft:
+                                                                Radius.circular(
+                                                                  22,
+                                                                ),
+                                                            bottomRight:
+                                                                Radius.circular(
+                                                                  22,
+                                                                ),
+                                                          ),
+                                                      border: Border.all(
+                                                        color: context
+                                                            .gama
+                                                            .border
+                                                            .withValues(
+                                                              alpha: 0.45,
+                                                            ),
+                                                      ),
+                                                    ),
                                               child: Column(
                                                 crossAxisAlignment:
                                                     CrossAxisAlignment.start,
@@ -3210,12 +3269,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                                             content,
                                                             _,
                                                           ) => MessageContentView(
-                                                            content: _citationMarkdown(
-                                                              msg.id,
-                                                              content,
-                                                            ),
+                                                            content:
+                                                                _citationMarkdown(
+                                                                  msg.id,
+                                                                  content,
+                                                                ),
                                                             isUser: false,
-                                                            onTapLink: _openLink,
+                                                            onTapLink:
+                                                                _openLink,
                                                           ),
                                                     )
                                                   else
@@ -3227,6 +3288,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                                           ),
                                                       isUser: isUser,
                                                       onTapLink: _openLink,
+                                                      additionalImages:
+                                                          _messageImageAttachments(
+                                                            msg,
+                                                          ),
                                                     ),
                                                   if (!isUser &&
                                                       (_artifactsByMessageId[msg

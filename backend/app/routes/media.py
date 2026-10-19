@@ -4,15 +4,43 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
-from ..core.document_builder.store import load_artifact
+from ..core.document_builder.store import ArtifactStorageLimitError, load_artifact, save_artifact
 from ..core.identity import current_user_id
 from ..core.media_links import create_media_reference_url, validate_media_reference
+from ._upload import read_upload_limited
 
 router = APIRouter(prefix="/media", tags=["media"])
 public_router = APIRouter(tags=["media-public"])
+
+
+@router.post("/videos")
+async def upload_video(
+    file: UploadFile = File(...),
+    user_id: str = Depends(current_user_id),
+):
+    """Guarda vídeo anexado para análise/edição e devolve o ID usado pelo chat."""
+    filename = Path(file.filename or "video.mp4").name
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".mp4", ".m4v", ".mov", ".webm", ".mkv"}:
+        raise HTTPException(415, "Formato de vídeo não suportado. Use MP4, MOV, WebM ou MKV.")
+    try:
+        data = await read_upload_limited(file, limit=50 * 1024 * 1024)
+    finally:
+        await file.close()
+    if len(data) < 128:
+        raise HTTPException(400, "O arquivo de vídeo está vazio ou incompleto.")
+    mime = file.content_type or mimetypes.guess_type(filename)[0] or "video/mp4"
+    try:
+        saved = save_artifact(
+            kind="video", filename=filename, data=data, user_id=user_id,
+            meta={"mime": mime},
+        )
+    except ArtifactStorageLimitError as exc:
+        raise HTTPException(413, str(exc)) from exc
+    return {"ok": True, "artifact_id": saved["artifact_id"], "filename": saved["filename"], "size": saved["size"], "mime": mime}
 
 
 def _is_reference_media(info: dict) -> bool:

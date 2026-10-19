@@ -27,6 +27,7 @@ class ProcessedAttachment {
   final String? imageBase64;
   final String? mimeType;
   final String? sourcePath;
+  String? libraryPath;
 
   ProcessedAttachment({
     required this.name,

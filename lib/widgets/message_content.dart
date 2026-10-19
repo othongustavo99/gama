@@ -373,12 +373,14 @@ class MessageContentView extends StatelessWidget {
   final String content;
   final bool isUser;
   final void Function(String? href)? onTapLink;
+  final List<GeneratedImageData> additionalImages;
 
   const MessageContentView({
     super.key,
     required this.content,
     required this.isUser,
     this.onTapLink,
+    this.additionalImages = const [],
   });
 
   @override
@@ -391,7 +393,10 @@ class MessageContentView extends StatelessWidget {
             attachments: const [],
             images: extracted.$2,
           );
-    final images = isUser ? extracted.$2 : parsed.images;
+    final images = [
+      ...(isUser ? extracted.$2 : parsed.images),
+      ...additionalImages,
+    ];
 
     final textStyle = TextStyle(
       color: isUser ? Colors.white : context.gama.textPrimary,
@@ -568,12 +573,14 @@ class MemoizedMessageContentView extends StatefulWidget {
   final String content;
   final bool isUser;
   final void Function(String? href)? onTapLink;
+  final List<GeneratedImageData> additionalImages;
 
   const MemoizedMessageContentView({
     super.key,
     required this.content,
     required this.isUser,
     this.onTapLink,
+    this.additionalImages = const [],
   });
 
   @override
@@ -589,6 +596,7 @@ class _MemoizedMessageContentViewState
     content: widget.content,
     isUser: widget.isUser,
     onTapLink: widget.onTapLink,
+    additionalImages: widget.additionalImages,
   );
 
   @override

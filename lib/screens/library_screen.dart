@@ -43,12 +43,10 @@ class LibraryScreen extends StatefulWidget {
           if (await src.exists()) {
             await src.copy(dest);
             savedPath = dest;
-          } else {
-            savedPath = sourcePath;
           }
         }
       } catch (_) {
-        savedPath = sourceBytes == null ? sourcePath : null;
+        savedPath = null;
       }
     }
 

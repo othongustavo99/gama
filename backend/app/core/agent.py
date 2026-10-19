@@ -85,21 +85,21 @@ def build_tools(
     if image_enabled:
         tools.append(fn(
             "generate_image",
-            "Gera ou edita uma imagem quando o usuário pedir explicitamente uma imagem. Para analisar uma imagem anexada, responda normalmente sem usar esta ferramenta.",
-            {"prompt": {"type": "string"}, "aspect_ratio": {"type": "string", "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"]}},
+            "Ferramenta de criação/edição de imagem. Use quando o pedido, inclusive um briefing longo, solicitar criar, desenhar, gerar, editar, alterar, substituir, remover, adicionar ou melhorar uma imagem/foto/anexo. Preserve todos os detalhes visuais, texto, estilo e restrições fornecidos; passe o briefing completo em prompt, sem resumir. Se o usuário só pedir análise, explicação, ideias ou instruções, não gere imagem.",
+            {"prompt": {"type": "string", "description": "Briefing visual completo do usuário, mantendo todos os detalhes e restrições."}, "operation": {"type": "string", "enum": ["create", "edit", "improve"]}, "aspect_ratio": {"type": "string", "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"]}},
             ["prompt"],
         ))
     if video_enabled:
         tools.append(fn(
             "generate_video",
-            "Gera um vídeo somente quando o usuário pedir explicitamente para criar ou animar um vídeo. Use a ferramenta de imagem para imagens estáticas.",
-            {"prompt": {"type": "string"}, "duration": {"type": "integer"}, "resolution": {"type": "string"}, "aspect_ratio": {"type": "string"}, "generate_audio": {"type": "boolean"}},
+            "Ferramenta de criação e edição de vídeo. Use quando a pessoa pedir para criar/gerar/produzir um vídeo, clipe ou cena, animar uma imagem, ou editar/melhorar/alterar um vídeo anexado. Entenda briefings longos: mantenha no prompt todos os sujeitos, cenário, ações, câmera, ritmo, estética, iluminação, áudio, duração e restrições; não resuma nem invente mudança de intenção. Para análise, crítica, ideias ou tutorial, responda sem gerar. Se houver vídeo anexado e pedido de edição, use-o como referência.",
+            {"prompt": {"type": "string", "description": "Briefing audiovisual completo; preserve instruções e detalhes do usuário."}, "operation": {"type": "string", "enum": ["create", "animate", "edit", "improve"]}, "duration": {"type": "integer", "description": "Duração pedida, em segundos, se especificada."}, "resolution": {"type": "string"}, "aspect_ratio": {"type": "string"}, "generate_audio": {"type": "boolean"}},
             ["prompt"],
         ))
     if file_enabled:
         tools.append(fn(
             "create_file",
-            "Cria um arquivo para download quando o usuário pedir um arquivo ou exportação. Use format=zip para arquivos de projeto/código e format=pdf para documento legível. Não use para responder com código inline.",
+            "Ferramenta para entregar arquivos reais. Use quando a pessoa pedir criar, montar, editar ou melhorar um projeto/arquivo para baixar, incluindo ZIP de código/projeto e PDF. Preserve requisitos longos e completos em instructions; preencha files com os arquivos integrais quando possível. Use ZIP para projetos/código/pacotes e PDF para documentos paginados. Se pedirem apenas uma resposta, explicação ou código no chat, não crie arquivo.",
             {"format": {"type": "string", "enum": ["zip", "pdf"]}, "filename": {"type": "string"}, "title": {"type": "string"}, "content": {"type": "string"}, "instructions": {"type": "string"}, "files": {"type": "object", "additionalProperties": {"type": "string"}}},
             ["format"],
         ))
@@ -279,6 +279,14 @@ async def run_agent(
     """
     tools = build_tools(web_enabled, image_enabled=image_enabled, video_enabled=video_enabled, file_enabled=file_enabled)
     msgs = llm.prepare_messages(messages)
+    media_guidance = (
+        "Interprete a intenção de entrega antes de responder. Se o pedido atual for uma ação explícita de criar, gerar, editar, melhorar ou alterar mídia/arquivo, use a ferramenta correspondente e preserve o briefing completo; pedidos de análise, opinião, explicação ou tutorial não autorizam geração. "
+        "Não descarte detalhes de prompts longos: mantenha cena, sujeitos, sequência, câmera, estilo, paleta, enquadramento, duração, áudio, formato, conteúdo e restrições. Em pedidos de editar vídeo anexado, use a referência anexada; em imagem anexada, use-a como referência para edição/animação."
+    )
+    if msgs and msgs[0].get("role") == "system":
+        msgs[0] = {**msgs[0], "content": f"{msgs[0].get('content', '')}\n\n{media_guidance}"}
+    else:
+        msgs.insert(0, {"role": "system", "content": media_guidance})
     if web_enabled:
         citation_instruction = (
             "Ao usar resultados da web, cite cada afirmação factual com links Markdown numerados "

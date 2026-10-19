@@ -40,7 +40,8 @@ from ..core.video_gen import (
     generate_video_events,
     parse_video_options,
 )
-from ..core.document_builder.store import save_artifact
+from ..core.document_builder.store import load_artifact, save_artifact
+from ..core.media_links import create_media_reference_url
 from ..core.code_analyzer.index_store import load_meta
 
 logger = logging.getLogger(__name__)
@@ -1066,7 +1067,14 @@ async def chat(
                     if not getattr(app_settings, "IMAGE_GEN_ENABLED", True):
                         yield {"type": "result", "content": "A geração de imagens está desativada no servidor."}
                         return
-                    prompt = str(args.get("prompt") or "").strip()
+                    has_image_refs = bool(getattr(request, "images", None))
+                    image_request = detect_image_intent(last_user, has_image_refs)
+                    if image_request.intent not in {ImageIntent.GENERATE, ImageIntent.EDIT, ImageIntent.IMPROVE}:
+                        yield {"type": "result", "content": "Não identifiquei um pedido explícito de criar ou editar imagem. Peça essa ação diretamente para iniciar a geração."}
+                        return
+                    # O texto original é a fonte completa do briefing; args.prompt pode
+                    # ser resumido pelo modelo ao preparar tool calls.
+                    prompt = build_image_prompt(last_user, image_request.intent)[:8000]
                     if not prompt:
                         yield {"type": "result", "content": "Descreva a imagem a gerar."}
                         return
@@ -1105,7 +1113,19 @@ async def chat(
                     if not getattr(app_settings, "VIDEO_GEN_ENABLED", True):
                         yield {"type": "result", "content": "A geração de vídeos está desativada no servidor."}
                         return
-                    prompt = str(args.get("prompt") or "").strip()
+                    has_image_refs = bool(getattr(request, "images", None))
+                    video_request = detect_video_intent(
+                        last_user,
+                        has_attached_video="[video_artifact_id:" in last_user.lower(),
+                        has_attached_images=has_image_refs,
+                    )
+                    if video_request.intent not in {
+                        VideoIntent.CREATE, VideoIntent.ANIMATE,
+                        VideoIntent.EDIT, VideoIntent.IMPROVE,
+                    }:
+                        yield {"type": "result", "content": "Não identifiquei um pedido explícito de criar ou editar vídeo. Posso analisar o anexo ou explicar como fazer, sem iniciar uma geração."}
+                        return
+                    prompt = build_video_prompt(last_user, video_request.intent)[:8000]
                     if not prompt:
                         yield {"type": "result", "content": "Descreva o vídeo a gerar."}
                         return
@@ -1119,17 +1139,32 @@ async def chat(
                         for image in (request.images or [])
                         if image.data
                     ]
+                    reference_video_url = None
+                    video_match = re.search(r"\[video_artifact_id:([a-f0-9]{16})\]", last_user, re.I)
+                    if video_match and video_request.intent in {VideoIntent.EDIT, VideoIntent.IMPROVE}:
+                        video_id = video_match.group(1).lower()
+                        stored_video = load_artifact(video_id, user_id=user_id)
+                        if not stored_video or str(stored_video.get("kind", "")).lower() != "video":
+                            yield {"type": "result", "content": "O vídeo anexado não está mais disponível para edição. Anexe-o novamente e tente outra vez."}
+                            return
+                        try:
+                            reference_video_url = create_media_reference_url(video_id, user_id)
+                        except RuntimeError as exc:
+                            yield {"type": "result", "content": str(exc)}
+                            return
+                    options = parse_video_options(last_user)
                     stored_artifact = None
                     error = None
                     yield {"type": "phase", "phase": "video_queued"}
                     try:
                         async for event in generate_video_events(
                             prompt,
-                            duration=args.get("duration"),
-                            resolution=str(args.get("resolution") or "480p"),
-                            aspect_ratio=str(args.get("aspect_ratio") or "16:9"),
+                            duration=args.get("duration") or options["duration"],
+                            resolution=str(args.get("resolution") or options["resolution"]),
+                            aspect_ratio=str(args.get("aspect_ratio") or options["aspect_ratio"]),
                             reference_images=refs or None,
-                            generate_audio=bool(args.get("generate_audio", True)),
+                            reference_video_url=reference_video_url,
+                            generate_audio=bool(args.get("generate_audio", options["generate_audio"])),
                         ):
                             if event.get("type") == "phase":
                                 yield {"type": "phase", "phase": event.get("phase") or "video_generating"}

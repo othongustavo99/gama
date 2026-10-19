@@ -163,7 +163,7 @@ def build_video_prompt(user_text: str, intent: VideoIntent) -> str:
         VideoIntent.IMPROVE: "Use the supplied video as a reference and create a polished improved version, preserving its main subject and intent.",
     }
     directive = directives.get(intent, "Create a coherent short video.")
-    return f"{directive}\nUser direction: {text[:3000]}\nPrioritize stable subjects, physically plausible movement, temporal consistency, clean transitions, and no unintended text or logos."
+    return f"{directive}\nUser direction (preserve every requested detail): {text[:7500]}\nPrioritize stable subjects, physically plausible movement, temporal consistency, clean transitions, and no unintended text or logos."
 
 
 async def generate_video_events(
@@ -219,7 +219,7 @@ async def generate_video_events(
 
     payload: dict[str, Any] = {
         "model": model_id,
-        "prompt": prompt[:4000],
+        "prompt": prompt[:8000],
         "duration": seconds,
         "resolution": res,
         "aspect_ratio": ratio,

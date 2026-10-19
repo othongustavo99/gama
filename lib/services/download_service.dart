@@ -160,8 +160,8 @@ class DownloadService {
   }
 
   /// Opens a generated file through the platform's file-opening flow.
-  /// Android shows the system "Open with" chooser; Windows opens Explorer
-  /// with the file selected. Other platforms use their default file handler.
+  /// Android shows the system "Open with" chooser; desktop opens the file
+  /// with its default application.
   Future<void> openGeneratedFile(String path) async {
     if (kIsWeb) {
       await OpenFilex.open(path);
@@ -179,10 +179,15 @@ class DownloadService {
       if (!await file.exists()) {
         throw FileSystemException('Arquivo não encontrado', path);
       }
-      await Process.start('explorer.exe', [
-        '/select,',
-        p.normalize(file.absolute.path),
-      ], mode: ProcessStartMode.detached);
+      final result = await OpenFilex.open(p.normalize(file.absolute.path));
+      if (result.type != ResultType.done) {
+        throw FileSystemException(
+          result.message.isEmpty
+              ? 'Não foi possível abrir o arquivo'
+              : result.message,
+          path,
+        );
+      }
       return;
     }
 

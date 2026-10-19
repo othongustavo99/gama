@@ -69,6 +69,12 @@ _EDIT = re.compile(
     r")",
 )
 
+_ATTACHED_IMAGE_EDIT = re.compile(
+    r"(?i)\b(edite|edita|modifique|modifica|altere|altera|mude|muda|troque|troca|"
+    r"substitua|substitui|remova|remove|retire|retira|adicione|adiciona|inclua|inclui|"
+    r"recorte|corte|apague|apaga|limpe|limpa|recolor(?:ir|a)|deixe|deixa)\b"
+)
+
 _IMPROVE = re.compile(
     r"(?i)("
     r"\b(melhora|melhore|melhorar|aprimora|aprimore|aprimorar|"
@@ -175,6 +181,15 @@ def detect_image_intent(
             intent=ImageIntent.IMPROVE,
             prompt=_clean_prompt(text, mode="improve"),
             confidence=conf,
+        )
+
+    # Com imagem anexada, instruções imperativas costumam omitir "na imagem"
+    # (por exemplo, "remova o fundo"). Perguntas conceituais já foram filtradas.
+    if has_attached_images and _ATTACHED_IMAGE_EDIT.search(text) and not _CODE_TASK.search(text):
+        return ImageRequest(
+            intent=ImageIntent.EDIT,
+            prompt=_clean_prompt(text, mode="edit"),
+            confidence=0.82,
         )
 
     # 3. Editar
