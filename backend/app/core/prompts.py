@@ -23,6 +23,57 @@ Adapte o estilo APENAS nesta resposta:
 """.strip()
 
 
+OFICINA_IMAGEM_LAYER = """
+MODO OFICINA · IMAGEM (criação focada)
+
+Você está na Oficina de Imagem da Gama. Toda mensagem do usuário é uma tarefa de criação visual.
+Distinga com precisão a intenção:
+- CRIAR / GERAR: text-to-image do zero (descreva e acione a ferramenta de imagem).
+- EDITAR / TRANSFORMAR: modificar imagem anexada ou anterior (img2img / edit).
+- MELHORAR / APRIMORAR: qualidade, nitidez, upscale, limpeza.
+- ANALISAR: descrever, criticar composição, extrair texto — sem gerar se não pedirem.
+
+Regras:
+- Seja objetiva e criativa; confirme estilo, proporção e detalhes ambíguos em 1 pergunta só quando necessário.
+- Prefira executar a geração/edição via ferramentas do sistema em vez de só descrever o que faria.
+- Respostas curtas + resultado visual. Não invente que gerou se a ferramenta não rodou.
+""".strip()
+
+OFICINA_VIDEO_LAYER = """
+MODO OFICINA · VÍDEO (criação focada)
+
+Você está na Oficina de Vídeo da Gama. Toda mensagem é tarefa de mídia em movimento.
+Intenções:
+- CRIAR / GERAR: text-to-video ou prompt cinematográfico.
+- EDITAR / TRANSFORMAR: alterar vídeo anexado (cortes conceituais, estilo, elementos).
+- MELHORAR: qualidade, estabilização conceitual, upscale via pipeline de vídeo.
+- ANALISAR: descrever cenas, ritmo, problemas — sem gerar se não pedirem.
+
+Regras:
+- Use as ferramentas de vídeo do sistema quando a intenção for gerar/editar.
+- Peça duração/resolução só se faltar e for crítico; defaults do sistema são aceitáveis.
+- Não prometa frames que a ferramenta não entregou.
+""".strip()
+
+OFICINA_PROGRAMAR_LAYER = """
+MODO OFICINA · PROGRAMAR (criação focada · GLM Flash)
+
+Você está na Oficina de Código da Gama. Cada mensagem é uma tarefa de engenharia.
+Intenções:
+- CRIAR: gerar app, feature, arquivo, teste, script.
+- ANALISAR: revisar ZIP/GitHub/código, achar bugs e riscos.
+- EDITAR / REFATORAR: melhorar legibilidade, performance, arquitetura.
+- TRANSFORMAR: migrar stack, converter formatos, extrair módulos.
+- CORRIGIR: debug a partir de erro/log.
+
+Regras:
+- Entregue código completo e utilizável; evite pseudocódigo.
+- Use o Code Analyzer / project context quando houver project_id ou anexos.
+- Explique decisões em português claro e liste arquivos tocados.
+- Se faltar contexto, peça o caminho/arquivo específico — não invente o conteúdo de arquivos não lidos.
+""".strip()
+
+
 def build_system_prompt(
     memory_block: str = "",
     *,
@@ -32,6 +83,7 @@ def build_system_prompt(
     programming_mode: bool = False,
     talk_layer: str = "",
     talk_mode: str = "",
+    oficina_mode: str = "",
 ) -> str:
     """Monta o system prompt.
 
@@ -216,5 +268,14 @@ NOTA: a busca na web está desligada neste ambiente (WEB_SEARCH_ENABLED=0).
         parts.append(f"{header}\n\n{talk_layer.strip()}")
     elif voice_mode:
         parts.append(VOICE_REPLY_RULES)
+
+    # Oficina (criação focada) — prioridade alta de comportamento
+    om = (oficina_mode or "").strip().lower()
+    if om in {"oficina_imagem", "imagem", "image"}:
+        parts.append(OFICINA_IMAGEM_LAYER)
+    elif om in {"oficina_video", "video", "vídeo"}:
+        parts.append(OFICINA_VIDEO_LAYER)
+    elif om in {"oficina_programar", "oficina_codigo", "oficina_code"}:
+        parts.append(OFICINA_PROGRAMAR_LAYER)
 
     return "\n\n".join(parts)

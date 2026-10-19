@@ -725,6 +725,12 @@ async def chat(
         for message in messages
     ]
     model = llm.resolve_model(request.model)
+    # Oficina · Programar: força o modelo GLM Flash (configurável via OFICINA_CODING_MODEL).
+    chat_mode_raw = (getattr(request, "chat_mode", None) or "").strip().lower()
+    if chat_mode_raw in {"oficina_programar", "oficina_codigo", "oficina_code"}:
+        oficina_model = (getattr(app_settings, "OFICINA_CODING_MODEL", None) or "").strip()
+        if oficina_model:
+            model = llm.resolve_model(oficina_model)
 
     last_user = ""
     if messages and messages[-1].get("role") == "user":

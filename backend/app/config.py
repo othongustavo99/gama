@@ -56,6 +56,11 @@ class Settings:
 
     CONVERSATION_MODEL = os.getenv("CONVERSATION_MODEL", _DEFAULT_MODEL).strip()
     CODING_MODEL = os.getenv("CODING_MODEL", _DEFAULT_MODEL).strip()
+    # Oficina · Programar (GLM Flash no OpenRouter). Sobrescreva via env se o slug mudar.
+    OFICINA_CODING_MODEL = os.getenv(
+        "OFICINA_CODING_MODEL",
+        "z-ai/glm-4.5-flash",
+    ).strip()
 
     # ── Ollama (opcional / legado / local) ────────────────────────────
     OLLAMA_URL = os.getenv(
@@ -171,6 +176,7 @@ class Settings:
             for extra in (
                 self.CONVERSATION_MODEL,
                 self.CODING_MODEL,
+                self.OFICINA_CODING_MODEL,
                 self.VISION_MODEL,
             ):
                 if extra and extra not in models:

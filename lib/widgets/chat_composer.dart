@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/gama_colors.dart';
+import '../screens/oficina_screen.dart';
 import '../services/settings_service.dart';
 
 /// Barra de envio no estilo da home:
 /// - Caixa arredondada única
 /// - Campo de texto SEM fundo/caixa própria (só o placeholder)
-/// - Linha de ferramentas: modo · + · mic · ondas · enviar
+/// - Linha de ferramentas: Oficina · + · mic · ondas · enviar
 class ChatComposer extends StatelessWidget {
   final TextEditingController controller;
   final bool isLoading;
@@ -159,20 +160,18 @@ class ChatComposer extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    // Chip de modo (Programar / Conversar).
+                    // Botão único "Oficina" (substitui o toggle Programar/Conversar).
+                    // Visual: fundo escuro + traços brancos. Abre a tela Oficina.
                     _ModeChip(
-                      label: mode == GamaMode.programar
-                          ? 'Programar'
-                          : 'Conversar',
-                      icon: mode == GamaMode.programar
-                          ? Icons.code_rounded
-                          : Icons.chat_bubble_outline_rounded,
+                      label: 'Oficina',
+                      icon: Icons.handyman_rounded,
                       selected: true,
                       onTap: () {
-                        final next = mode == GamaMode.programar
-                            ? GamaMode.conversar
-                            : GamaMode.programar;
-                        onModeChanged(next);
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const OficinaScreen(),
+                          ),
+                        );
                       },
                     ),
                     const Spacer(),
@@ -270,22 +269,26 @@ class _ModeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Estilo fixo: fundo escuro geral + traços/ícone/texto brancos.
+    const whiteStroke = Color(0xE6FFFFFF); // branco ~90%
+    final darkBg = context.gama.surfaceCard;
+
     return Material(
-      color: selected ? context.gama.accentSoft : context.gama.surfaceCard,
+      color: darkBg,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
+        splashColor: Colors.white.withValues(alpha: 0.08),
+        highlightColor: Colors.white.withValues(alpha: 0.04),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: selected
-                  ? context.gama.accent.withValues(alpha: 0.55)
-                  : context.gama.border,
-              width: selected ? 1.1 : 1,
+              color: whiteStroke,
+              width: 1.15,
             ),
           ),
           child: Row(
@@ -294,15 +297,13 @@ class _ModeChip extends StatelessWidget {
               Icon(
                 icon,
                 size: 14,
-                color: selected ? context.gama.accent : context.gama.textMuted,
+                color: whiteStroke,
               ),
               const SizedBox(width: 5),
               Text(
                 label,
-                style: TextStyle(
-                  color: selected
-                      ? context.gama.accentBright
-                      : context.gama.textSecondary,
+                style: const TextStyle(
+                  color: whiteStroke,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.1,

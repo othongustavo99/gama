@@ -158,12 +158,18 @@ class GamaCore:
             memory_block, relevant_block = "", ""
 
         mode = (chat_mode or "").strip().lower()
+        oficina_mode = mode if mode.startswith("oficina_") else ""
         conversational_mode = mode in {"conversar", "conversation", "conversational"} or (
-            "20b" in (model or "").lower() and mode != "programar"
+            "20b" in (model or "").lower() and mode not in {"programar", "oficina_programar"}
+            and not oficina_mode
         )
-        programming_mode = mode in {"programar", "coding", "code"} or (
-            not conversational_mode and not voice_mode
+        programming_mode = mode in {"programar", "coding", "code", "oficina_programar"} or (
+            not conversational_mode and not voice_mode and not oficina_mode
         )
+        # Oficina imagem/vídeo: não forçar programming_mode
+        if oficina_mode in {"oficina_imagem", "oficina_video"}:
+            programming_mode = False
+            conversational_mode = False
 
         # Sinais para a Talk Skill (antes de montar o system prompt)
         has_project = bool(
@@ -189,11 +195,12 @@ class GamaCore:
         system_prompt = build_system_prompt(
             memory_block=memory_block,
             web_enabled=web_on,
-            voice_mode=voice_mode,
+            voice_mode=voice_mode and not oficina_mode,
             conversational_mode=conversational_mode,
             programming_mode=programming_mode and not conversational_mode,
-            talk_layer=talk_layer,
-            talk_mode=talk_mode,
+            talk_layer=talk_layer if not oficina_mode else "",
+            talk_mode=talk_mode if not oficina_mode else "",
+            oficina_mode=oficina_mode,
         )
 
         # Resumo persistente da conversa (atualizado em background após cada resposta longa).

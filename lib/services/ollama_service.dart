@@ -281,7 +281,7 @@ class OllamaService {
     List<Map<String, String>>? images,
     bool voiceMode = false,
 
-    /// 'conversar' | 'programar' — estilo da resposta no backend.
+    /// 'conversar' | 'programar' | 'oficina_imagem' | 'oficina_video' | 'oficina_programar'
     String? chatMode,
 
     /// ID da conversa no app — mantém project_id/ZIP entre mensagens.
@@ -290,6 +290,7 @@ class OllamaService {
     final selectedModel = model ?? SettingsService.instance.model;
     final dio = _client();
     final pluginFlags = await PluginSettingsService.instance.load();
+    final isOficina = (chatMode ?? '').startsWith('oficina_');
 
     try {
       // Sanitiza histórico: tira base64 de imagens e dumps grandes de ZIP
@@ -300,9 +301,9 @@ class OllamaService {
             .toList(),
       );
 
-      // Em modo fala / conversar: reforça no pedido para a resposta ser
-      // apenas frases naturais, sem listas, código, tabelas ou símbolos.
-      if (voiceMode) {
+      // Em modo fala / conversar: reforça estilo oral no cliente.
+      // Na Oficina o backend injeta o system prompt completo — não sobrescrever.
+      if (voiceMode && !isOficina) {
         requestMessages.insert(0, {
           'role': 'system',
           'content':

@@ -1,0 +1,32 @@
+GAMMA — OFICINA + MODOS CONVERSAR/TRABALHAR (GLM-5.3-Flash)
+==========================================================
+
+O ZIP contém:
+- lib/screens/oficina_screen.dart: tela provisória da Oficina.
+- patch_gamma_oficina_modes.py: patcher cuidadoso para os arquivos existentes; sincroniza ChatScreen, compositor, Configurações, constantes Flutter e backend.
+
+COMO APLICAR
+1. Faça um commit ou backup da versão atual.
+2. Extraia o conteúdo do ZIP diretamente na RAIZ do repositório gama (a pasta onde estão pubspec.yaml e docker-compose.yml), mantendo as pastas.
+3. Execute no terminal, dentro da raiz do projeto:
+     python patch_gamma_oficina_modes.py
+4. Se concluir, rode:
+     flutter pub get
+     flutter analyze
+     flutter test
+5. Publique também as alterações do backend na branch usada pelo Railway e confira os logs após o redeploy.
+
+COMPORTAMENTO ESPERADO
+- Conversar -> openai/gpt-5.4-mini
+- Trabalhar -> z-ai/glm-5.3-flash
+- O chip do compositor mantém o desenho e passa a abrir a tela Oficina.
+- O seletor no topo passa a escolher Conversar/Trabalhar e sincroniza o modelo efetivo.
+- A tela Oficina é apenas uma tela provisória; ainda não contém as funções criativas futuras.
+- O backend libera os dois modelos mesmo se OPENROUTER_MODELS estiver definido com uma lista anterior.
+- A chave OpenRouter permanece no backend/Railway; não é necessária chave no Flutter.
+
+COMPATIBILIDADE COM A VERSÃO ANTERIOR
+Se o patch anterior (com Claude Sonnet 5) já tiver sido aplicado integralmente, o script detecta essa combinação e faz somente a migração do Claude para GLM, sem reaplicar as alterações de interface.
+
+VALIDAÇÃO
+O script verifica os trechos esperados e interrompe se a estrutura divergir. Ele restaura os arquivos que já tiver alterado quando uma substituição do patch principal falha. Ainda assim, rode os comandos de análise e testes na sua cópia real.

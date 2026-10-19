@@ -33,15 +33,20 @@ import '../services/download_service.dart';
 import '../utils/message_sanitize.dart';
 import '../services/tts_service.dart';
 import '../services/plugin_settings_service.dart';
+import 'oficina_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
   final bool persistentSidebar;
 
+  /// Quando definido, a conversa opera em modo Oficina (criação focada).
+  final OficinaKind? oficinaKind;
+
   const ChatScreen({
     super.key,
     required this.conversationId,
     this.persistentSidebar = false,
+    this.oficinaKind,
   });
 
   @override
@@ -2265,11 +2270,19 @@ class _ChatScreenState extends State<ChatScreen> {
       final willSpeak =
           (pluginFlags['tts'] ?? true) &&
           (voiceRequested || SettingsService.instance.ttsAuto);
+      final oficina = widget.oficinaKind;
+      final resolvedChatMode = oficina != null
+          ? oficina.chatMode
+          : (_mode == GamaMode.conversar ? 'conversar' : 'programar');
+      final resolvedModel = oficina == OficinaKind.programar
+          ? AppConstants.modelOficinaProgramar
+          : null;
       final stream = _ollama.chatStream(
         messages: apiMessages,
+        model: resolvedModel,
         images: imagePayload.isEmpty ? null : imagePayload,
-        voiceMode: willSpeak,
-        chatMode: _mode == GamaMode.conversar ? 'conversar' : 'programar',
+        voiceMode: willSpeak && oficina == null,
+        chatMode: resolvedChatMode,
         conversationId: widget.conversationId,
       );
 
@@ -3025,7 +3038,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 Positioned.fill(
                   child: _messages.isEmpty
                       ? _EmptyState(
+                          oficinaKind: widget.oficinaKind,
                           onSuggestion: (text) {
+                            if (widget.oficinaKind != null) {
+                              _controller.text = text;
+                              _composerFocusNode.requestFocus();
+                              return;
+                            }
                             if (text == 'Revisar meu projeto (ZIP/GitHub)') {
                               _controller.text = 'Revise meu projeto e destaque problemas e melhorias.';
                               _showAttachMenu();
@@ -3920,8 +3939,9 @@ class _ArtifactStatusList extends StatelessWidget {
 
 class _EmptyState extends StatelessWidget {
   final ValueChanged<String> onSuggestion;
+  final OficinaKind? oficinaKind;
 
-  const _EmptyState({required this.onSuggestion});
+  const _EmptyState({required this.onSuggestion, this.oficinaKind});
 
   static const _suggestions = [
     'Revisar meu projeto (ZIP/GitHub)',
@@ -3943,6 +3963,121 @@ class _EmptyState extends StatelessWidget {
     Icons.lightbulb_outline_rounded,
     Icons.psychology_alt_outlined,
   ];
+
+  List<String> get _activeSuggestions {
+    switch (oficinaKind) {
+      case OficinaKind.imagem:
+        return [
+          'Crie uma imagem de: ',
+          'Melhore esta imagem anexada',
+          'Analise esta imagem e descreva o que vê',
+        ];
+      case OficinaKind.video:
+        return [
+          'Gere um vídeo de: ',
+          'Edite o vídeo anexado: ',
+          'Melhore a qualidade deste vídeo',
+        ];
+      case OficinaKind.programar:
+        return [
+          'Crie um app Flutter que: ',
+          'Analise este projeto (anexe ZIP)',
+          'Refatore e melhore este código: ',
+        ];
+      case null:
+        return _suggestions;
+    }
+  }
+
+  List<String> get _activeTitles {
+    switch (oficinaKind) {
+      case OficinaKind.imagem:
+        return ['Criar imagem', 'Editar / melhorar', 'Analisar imagem'];
+      case OficinaKind.video:
+        return ['Gerar vídeo', 'Editar vídeo', 'Melhorar vídeo'];
+      case OficinaKind.programar:
+        return ['Criar projeto', 'Analisar código', 'Refatorar'];
+      case null:
+        return _suggestionTitles;
+    }
+  }
+
+  List<String> get _activeDescriptions {
+    switch (oficinaKind) {
+      case OficinaKind.imagem:
+        return [
+          'Descreva a cena, estilo e detalhes.',
+          'Anexe a imagem e diga o que mudar.',
+          'Anexe a imagem para análise visual.',
+        ];
+      case OficinaKind.video:
+        return [
+          'Descreva o vídeo, duração e estilo.',
+          'Anexe o vídeo e diga a transformação.',
+          'Anexe o vídeo para upscale ou limpeza.',
+        ];
+      case OficinaKind.programar:
+        return [
+          'Descreva a feature ou o app desejado.',
+          'Anexe ZIP ou cole o link do GitHub.',
+          'Cole o trecho ou anexe os arquivos.',
+        ];
+      case null:
+        return _suggestionDescriptions;
+    }
+  }
+
+  List<IconData> get _activeIcons {
+    switch (oficinaKind) {
+      case OficinaKind.imagem:
+        return [Icons.image_outlined, Icons.auto_fix_high_outlined, Icons.visibility_outlined];
+      case OficinaKind.video:
+        return [Icons.videocam_outlined, Icons.content_cut_rounded, Icons.high_quality_outlined];
+      case OficinaKind.programar:
+        return [Icons.code_rounded, Icons.folder_zip_outlined, Icons.auto_awesome_outlined];
+      case null:
+        return _suggestionIcons;
+    }
+  }
+
+  String get _headline {
+    switch (oficinaKind) {
+      case OficinaKind.imagem:
+        return 'Oficina · Imagem';
+      case OficinaKind.video:
+        return 'Oficina · Vídeo';
+      case OficinaKind.programar:
+        return 'Oficina · Programar';
+      case null:
+        return 'O que vamos criar hoje?';
+    }
+  }
+
+  String get _subtitle {
+    switch (oficinaKind) {
+      case OficinaKind.imagem:
+        return 'Crie, edite, transforme ou analise imagens.\nA Gama entende a intenção de cada pedido.';
+      case OficinaKind.video:
+        return 'Gere, edite e melhore vídeos.\nDescreva o que quer e anexe referências se precisar.';
+      case OficinaKind.programar:
+        return 'Código, análise e arquivos com GLM Flash.\nCada mensagem é tratada como tarefa de criação.';
+      case null:
+        return 'Converse, programe ou explore uma ideia.\nA Gama ajuda você a dar o próximo passo.';
+    }
+  }
+
+  String get _badge {
+    switch (oficinaKind) {
+      case OficinaKind.imagem:
+        return 'MODO CRIAÇÃO · IMAGEM';
+      case OficinaKind.video:
+        return 'MODO CRIAÇÃO · VÍDEO';
+      case OficinaKind.programar:
+        return 'MODO CRIAÇÃO · CÓDIGO';
+      case null:
+        return _badge;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3999,7 +4134,7 @@ class _EmptyState extends StatelessWidget {
                     Icon(Icons.circle, color: context.gama.success, size: 7),
                     SizedBox(width: 7),
                     Text(
-                      'SEU ESPAÇO DE TRABALHO',
+                      _badge,
                       style: TextStyle(
                         color: context.gama.textSecondary,
                         fontSize: 12,
@@ -4012,7 +4147,7 @@ class _EmptyState extends StatelessWidget {
               ),
               const SizedBox(height: 15),
               Text(
-                'O que vamos criar hoje?',
+                _headline,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: context.gama.textPrimary,
@@ -4033,7 +4168,7 @@ class _EmptyState extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 27),
-              ..._suggestions.asMap().entries.map((entry) {
+              ..._activeSuggestions.asMap().entries.map((entry) {
                 final index = entry.key;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 10),
@@ -4060,7 +4195,7 @@ class _EmptyState extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(13),
                               ),
                               child: Icon(
-                                _suggestionIcons[index],
+                                _activeIcons[index],
                                 color: context.gama.accentBright,
                                 size: 20,
                               ),
@@ -4071,7 +4206,7 @@ class _EmptyState extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    _suggestionTitles[index],
+                                    _activeTitles[index],
                                     style: TextStyle(
                                       color: context.gama.textPrimary,
                                       fontSize: 13.5,
@@ -4080,7 +4215,7 @@ class _EmptyState extends StatelessWidget {
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    _suggestionDescriptions[index],
+                                    _activeDescriptions[index],
                                     style: TextStyle(
                                       color: context.gama.textMuted,
                                       fontSize: 12,
