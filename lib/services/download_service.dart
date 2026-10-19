@@ -205,3 +205,4 @@ class DownloadService {
     await Clipboard.setData(ClipboardData(text: text));
   }
 }
+  
