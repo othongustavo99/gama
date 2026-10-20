@@ -17,6 +17,7 @@ class AppDrawer extends StatelessWidget {
   final VoidCallback? onOpenProjects;
   final VoidCallback? onOpenScheduled;
   final VoidCallback? onOpenPlugins;
+  final VoidCallback? onOpenOficina;
   final bool persistent;
 
   const AppDrawer({
@@ -28,6 +29,7 @@ class AppDrawer extends StatelessWidget {
     this.onOpenProjects,
     this.onOpenScheduled,
     this.onOpenPlugins,
+    this.onOpenOficina,
     this.persistent = false,
   });
 
@@ -166,6 +168,56 @@ class AppDrawer extends StatelessWidget {
 
             const SizedBox(height: 4),
 
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Material(
+                color: context.gama.surfaceCard,
+                borderRadius: BorderRadius.circular(16),
+                child: InkWell(
+                  onTap: onOpenOficina ?? () => _comingSoon(context),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF191F29),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.62),
+                        width: 1.2,
+                      ),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(
+                          Icons.handyman_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        SizedBox(width: 10),
+                        Text(
+                          'Oficina',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Spacer(),
+                        Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          color: Colors.white70,
+                          size: 13,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
             // ===== MENU PRINCIPAL =====
             _DrawerItem(
               icon: Icons.image_outlined,
@@ -197,7 +249,9 @@ class AppDrawer extends StatelessWidget {
               label: 'Memória',
               onTap: () {
                 _close(context);
-                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MemoryScreen()));
+                Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => const MemoryScreen()));
               },
             ),
 
@@ -297,7 +351,11 @@ class AppDrawer extends StatelessWidget {
                                       ...pinned.map(
                                         (c) => _ConversationTile(
                                           conversation: c,
-                                          searchSnippet: _conversationSnippet(service, c, query),
+                                          searchSnippet: _conversationSnippet(
+                                            service,
+                                            c,
+                                            query,
+                                          ),
                                           isSelected:
                                               c.id ==
                                               service.currentConversationId,
@@ -317,7 +375,11 @@ class AppDrawer extends StatelessWidget {
                                         ...entry.value.map(
                                           (c) => _ConversationTile(
                                             conversation: c,
-                                            searchSnippet: _conversationSnippet(service, c, query),
+                                            searchSnippet: _conversationSnippet(
+                                              service,
+                                              c,
+                                              query,
+                                            ),
                                             isSelected:
                                                 c.id ==
                                                 service.currentConversationId,
@@ -542,13 +604,23 @@ bool _matchesConversation(
   return false;
 }
 
-String? _conversationSnippet(ConversationService service, Conversation conversation, String query) {
+String? _conversationSnippet(
+  ConversationService service,
+  Conversation conversation,
+  String query,
+) {
   if (query.isEmpty) return null;
   final titleAt = conversation.title.toLowerCase().indexOf(query);
   if (titleAt >= 0) return 'Título: ${conversation.title}';
-  final hiddenImage = RegExp(r'\[gama_image\][\s\S]*?\[/gama_image\]|\[gama_image_file\][\s\S]*?\[/gama_image_file\]', caseSensitive: false);
+  final hiddenImage = RegExp(
+    r'\[gama_image\][\s\S]*?\[/gama_image\]|\[gama_image_file\][\s\S]*?\[/gama_image_file\]',
+    caseSensitive: false,
+  );
   for (final message in service.getMessages(conversation.id).reversed) {
-    final text = message.content.replaceAll(hiddenImage, ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    final text = message.content
+        .replaceAll(hiddenImage, ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
     final at = text.toLowerCase().indexOf(query);
     if (at < 0) continue;
     final start = (at - 35).clamp(0, text.length).toInt();
@@ -696,7 +768,17 @@ class _ConversationTile extends StatelessWidget {
                   fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
                 ),
               ),
-              subtitle: searchSnippet == null ? null : Text(searchSnippet!, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: context.gama.textMuted, fontSize: 11)),
+              subtitle: searchSnippet == null
+                  ? null
+                  : Text(
+                      searchSnippet!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: context.gama.textMuted,
+                        fontSize: 11,
+                      ),
+                    ),
               dense: true,
               contentPadding: const EdgeInsets.only(left: 10, right: 4),
               visualDensity: VisualDensity.compact,

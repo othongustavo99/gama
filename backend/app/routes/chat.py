@@ -371,6 +371,15 @@ def _try_build_zip_from_assistant(
     validation = result.get("validation") or {}
     if not validation.get("ok"):
         raise ValueError("O ZIP gerado não passou na validação")
+    result["generated_files"] = [
+        {
+            "name": path,
+            "size": len(content.encode("utf-8")),
+            "language": path.rsplit(".", 1)[-1] if "." in path else "texto",
+            "preview": content[:12000],
+        }
+        for path, content in files.items()
+    ]
     return result
 
 

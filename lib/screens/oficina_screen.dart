@@ -1,45 +1,48 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
 import '../services/conversation_service.dart';
 import 'chat_screen.dart';
+import '../widgets/app_drawer.dart';
+import 'images_screen.dart';
+import 'library_screen.dart';
+import 'plugins_screen.dart';
+import 'projects_screen.dart';
+import 'scheduled_screen.dart';
 
 /// Tipos de criação da Oficina.
-enum OficinaKind {
-  imagem,
-  video,
-  programar,
-}
+enum OficinaKind { imagem, video, programar }
 
 extension OficinaKindX on OficinaKind {
   String get label => switch (this) {
-        OficinaKind.imagem => 'Imagem',
-        OficinaKind.video => 'Vídeo',
-        OficinaKind.programar => 'Programar',
-      };
+    OficinaKind.imagem => 'Imagem',
+    OficinaKind.video => 'Vídeo',
+    OficinaKind.programar => 'Programar',
+  };
 
   String get chatMode => switch (this) {
-        OficinaKind.imagem => 'oficina_imagem',
-        OficinaKind.video => 'oficina_video',
-        OficinaKind.programar => 'oficina_programar',
-      };
+    OficinaKind.imagem => 'oficina_imagem',
+    OficinaKind.video => 'oficina_video',
+    OficinaKind.programar => 'oficina_programar',
+  };
 
   String get conversationTitle => 'Oficina · $label';
 
   IconData get icon => switch (this) {
-        OficinaKind.imagem => Icons.image_outlined,
-        OficinaKind.video => Icons.videocam_outlined,
-        OficinaKind.programar => Icons.code_rounded,
-      };
+    OficinaKind.imagem => Icons.image_outlined,
+    OficinaKind.video => Icons.videocam_outlined,
+    OficinaKind.programar => Icons.code_rounded,
+  };
 
   String get subtitle => switch (this) {
-        OficinaKind.imagem =>
-          'Criar, editar, melhorar e analisar imagens com a skill de imagem.',
-        OficinaKind.video =>
-          'Gerar, editar e transformar vídeos com a skill de vídeo.',
-        OficinaKind.programar =>
-          'Código, análise, refatoração e arquivos — modelo GLM Flash.',
-      };
+    OficinaKind.imagem =>
+      'Criar, editar, melhorar e analisar imagens com a skill de imagem.',
+    OficinaKind.video =>
+      'Gerar, editar e transformar vídeos com a skill de vídeo.',
+    OficinaKind.programar =>
+      'Código, análise, refatoração e arquivos — modelo GLM Flash.',
+  };
 }
 
 /// Hub da Oficina: visual alinhado à chat screen, com 3 caminhos de criação.
@@ -53,9 +56,12 @@ class OficinaScreen extends StatelessWidget {
     if (!context.mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => ChatScreen(
-          conversationId: conv.id,
-          oficinaKind: kind,
+        builder: (_) => _OficinaScaffold(
+          child: ChatScreen(
+            conversationId: conv.id,
+            oficinaKind: kind,
+            persistentSidebar: defaultTargetPlatform == TargetPlatform.windows,
+          ),
         ),
       ),
     );
@@ -65,32 +71,10 @@ class OficinaScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final g = context.gama;
 
-    return Scaffold(
-      backgroundColor: g.background,
-      appBar: AppBar(
-        backgroundColor: g.surface,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back_rounded, color: g.textPrimary),
-          onPressed: () => Navigator.of(context).pop(),
-          tooltip: 'Voltar',
-        ),
-        title: Text(
-          'Oficina',
-          style: TextStyle(
-            color: g.textPrimary,
-            fontWeight: FontWeight.w700,
-            fontSize: 18,
-            letterSpacing: 0.2,
-          ),
-        ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: g.borderSoft),
-        ),
-      ),
-      body: SafeArea(
+    return _OficinaScaffold(
+      title: 'Oficina',
+      child: ColoredBox(
+        color: g.background,
         child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
@@ -129,8 +113,7 @@ class OficinaScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Escolha o que você quer criar.\n'
-                    'A Gama entra em foco total naquela skill.',
+                    'Escolha o que você quer criar.\nA Gama entra em foco total naquela skill.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: g.textMuted,
@@ -155,6 +138,102 @@ class OficinaScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Usa o mesmo AppDrawer do chat. No Windows ele fica fixo à esquerda em todas
+/// as telas da Oficina; nas demais plataformas abre como drawer móvel.
+class _OficinaScaffold extends StatelessWidget {
+  final Widget child;
+  final String? title;
+
+  const _OficinaScaffold({required this.child, this.title});
+
+  bool get _desktop => defaultTargetPlatform == TargetPlatform.windows;
+
+  @override
+  Widget build(BuildContext context) {
+    final desktop = _desktop;
+    final service = ConversationService.instance;
+    final drawer = AppDrawer(
+      persistent: desktop,
+      onNewChat: () async {
+        await service.createConversationIfNeeded();
+        if (context.mounted && !desktop) Navigator.pop(context);
+        if (context.mounted) Navigator.pop(context);
+      },
+      onSelectConversation: (id) async {
+        await service.selectConversation(id);
+        if (context.mounted && !desktop) Navigator.pop(context);
+        if (context.mounted) Navigator.pop(context);
+      },
+      onOpenImages: () => _open(context, const ImagesScreen(), desktop),
+      onOpenLibrary: () => _open(context, const LibraryScreen(), desktop),
+      onOpenProjects: () => _open(context, const ProjectsScreen(), desktop),
+      onOpenScheduled: () => _open(context, const ScheduledScreen(), desktop),
+      onOpenPlugins: () => _open(context, const PluginsScreen(), desktop),
+      onOpenOficina: () {
+        if (title != null) {
+          if (!desktop) Navigator.pop(context);
+          return;
+        }
+        _open(context, const OficinaScreen(), desktop);
+      },
+    );
+
+    final content = title == null
+        ? child
+        : Scaffold(
+            backgroundColor: context.gama.background,
+            appBar: AppBar(
+              backgroundColor: context.gama.surface,
+              elevation: 0,
+              surfaceTintColor: Colors.transparent,
+              leading: Builder(
+                builder: (ctx) => IconButton(
+                  tooltip: 'Abrir conversas',
+                  icon: Icon(
+                    desktop ? Icons.arrow_back_rounded : Icons.menu_rounded,
+                    color: context.gama.textPrimary,
+                  ),
+                  onPressed: () => desktop
+                      ? Navigator.of(context).pop()
+                      : Scaffold.of(ctx).openDrawer(),
+                ),
+              ),
+              title: Text(
+                title!,
+                style: TextStyle(
+                  color: context.gama.textPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            body: child,
+          );
+
+    return Scaffold(
+      backgroundColor: context.gama.background,
+      drawer: desktop ? null : drawer,
+      body: desktop
+          ? Row(
+              children: [
+                SizedBox(width: 280, child: drawer),
+                VerticalDivider(
+                  width: 1,
+                  thickness: 1,
+                  color: context.gama.divider,
+                ),
+                Expanded(child: content),
+              ],
+            )
+          : content,
+    );
+  }
+
+  void _open(BuildContext context, Widget screen, bool desktop) {
+    if (!desktop) Navigator.pop(context);
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
   }
 }
 
@@ -198,7 +277,11 @@ class _OficinaCard extends StatelessWidget {
                     color: Colors.white.withValues(alpha: 0.12),
                   ),
                 ),
-                child: Icon(kind.icon, color: Colors.white.withValues(alpha: 0.9), size: 22),
+                child: Icon(
+                  kind.icon,
+                  color: Colors.white.withValues(alpha: 0.9),
+                  size: 22,
+                ),
               ),
               const SizedBox(width: 14),
               Expanded(

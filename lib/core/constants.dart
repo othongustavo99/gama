@@ -31,10 +31,7 @@ class AppConstants {
   // Modelos padrão usados apenas como fallback quando o servidor está offline.
   // A lista real vem do endpoint /models; não repetimos dois modos como se
   // fossem modelos diferentes.
-  static const List<String> availableModels = [
-    modelProgramar,
-    modelOficinaProgramar,
-  ];
+  static const List<String> availableModels = [defaultModel];
 
   static const Map<String, String> modelLabels = {
     'openai/gpt-5.4-mini': 'GPT-5.4 Mini',

@@ -12,6 +12,7 @@ import 'library_screen.dart';
 import 'plugins_screen.dart';
 import 'projects_screen.dart';
 import 'scheduled_screen.dart';
+import 'oficina_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -98,8 +99,7 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (context, _) {
           final currentId = _service.currentConversationId;
           final desktopSidebar =
-              defaultTargetPlatform == TargetPlatform.windows &&
-              MediaQuery.sizeOf(context).width >= 900;
+              defaultTargetPlatform == TargetPlatform.windows;
           final appDrawer = AppDrawer(
             persistent: desktopSidebar,
             onNewChat: () async {
@@ -129,6 +129,10 @@ class _HomeScreenState extends State<HomeScreen> {
             onOpenPlugins: () {
               if (!desktopSidebar) Navigator.pop(context);
               _push(const PluginsScreen());
+            },
+            onOpenOficina: () {
+              if (!desktopSidebar) Navigator.pop(context);
+              _push(const OficinaScreen());
             },
           );
 

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../core/constants.dart';
 import '../core/gama_colors.dart';
 import '../services/memory_service.dart';
 import '../services/ollama_service.dart';
@@ -20,10 +19,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool _resettingMemory = false;
 
-  List<String> _models = [];
-  String? _selectedModel;
   GamaMode _mode = GamaMode.programar;
-  bool _loadingModels = false;
   bool _testing = false;
   String? _statusMessage;
   bool? _statusOk;
@@ -36,60 +32,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _urlController.text = SettingsService.instance.baseUrl;
-    _selectedModel = SettingsService.instance.model;
     _mode = SettingsService.instance.mode;
     _ttsAuto = SettingsService.instance.ttsAuto;
     _themeMode = SettingsService.instance.themeMode;
     _fontScale = SettingsService.instance.fontScale;
     _developerMode = SettingsService.instance.developerMode;
-    _loadModels();
   }
 
   @override
   void dispose() {
     _urlController.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadModels() async {
-    setState(() {
-      _loadingModels = true;
-      _statusMessage = null;
-    });
-
-    try {
-      final models = await _api.listModels();
-      if (!mounted) return;
-
-      final previousModel = SettingsService.instance.model;
-      String? replacementModel;
-      setState(() {
-        _models = models;
-        // Mantém o modelo atual se ainda estiver na lista; senão pega o primeiro
-        if (_selectedModel != null && models.contains(_selectedModel)) {
-          // ok
-        } else if (models.isNotEmpty) {
-          _selectedModel = models.first;
-          replacementModel = _selectedModel;
-        }
-        _loadingModels = false;
-      });
-      if (replacementModel != null && replacementModel != previousModel) {
-        await SettingsService.instance.setModel(replacementModel!);
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loadingModels = false;
-        // Fallback: mostra os modelos locais das constantes
-        if (_models.isEmpty) {
-          _models = List.from(AppConstants.availableModels);
-          _selectedModel ??= AppConstants.defaultModel;
-        }
-        _statusMessage = 'Não foi possível listar modelos do servidor.\n$e';
-        _statusOk = false;
-      });
-    }
   }
 
   Future<void> _testConnection() async {
@@ -115,8 +68,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ? 'API online. Modelos e chat disponíveis.'
           : 'Falha ao conectar. Verifique a URL e se o backend está no ar.';
     });
-
-    if (ok) await _loadModels();
   }
 
   Future<void> _resetMemory() async {
@@ -165,9 +116,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     await SettingsService.instance.setBaseUrl(_urlController.text);
     await SettingsService.instance.setMode(_mode);
-    if (_selectedModel != null && _selectedModel!.isNotEmpty) {
-      await SettingsService.instance.setModel(_selectedModel!);
-    }
     await SettingsService.instance.setTtsAuto(_ttsAuto);
     await SettingsService.instance.setThemeMode(_themeMode);
     await SettingsService.instance.setFontScale(_fontScale);
@@ -310,85 +258,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 28),
-          Row(
-            children: [
-              const Expanded(child: _SectionTitle('Modelo')),
-              if (_loadingModels)
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: context.gama.accent,
-                  ),
-                )
-              else
-                IconButton(
-                  tooltip: 'Atualizar lista do servidor',
-                  onPressed: _loadModels,
-                  icon: Icon(
-                    Icons.refresh_rounded,
-                    size: 20,
-                    color: context.gama.textMuted,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: context.gama.surfaceInput,
+          const _SectionTitle('Modelo padrão'),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: context.gama.border),
             ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                isExpanded: true,
-                value: _models.contains(_selectedModel) ? _selectedModel : null,
-                hint: Text(
-                  _loadingModels
-                      ? 'Carregando modelos…'
-                      : (_models.isEmpty
-                            ? 'Nenhum modelo disponível'
-                            : 'Selecione um modelo'),
-                  style: TextStyle(color: context.gama.textMuted),
-                ),
-                dropdownColor: context.gama.surfaceCard,
-                style: TextStyle(color: context.gama.textPrimary, fontSize: 15),
-                items: _models
-                    .map(
-                      (model) => DropdownMenuItem(
-                        value: model,
-                        child: Text(AppConstants.labelFor(model)),
-                      ),
-                    )
-                    .toList(),
-                onChanged: _models.isEmpty
-                    ? null
-                    : (value) {
-                        setState(() => _selectedModel = value);
-                      },
-              ),
+            tileColor: context.gama.surfaceInput,
+            leading: Icon(
+              Icons.auto_awesome_rounded,
+              color: context.gama.accent,
+            ),
+            title: Text(
+              'GPT-5.4 Mini',
+              style: TextStyle(color: context.gama.textPrimary),
+            ),
+            subtitle: Text(
+              'O GLM é usado automaticamente ao abrir Oficina › Programar.',
+              style: TextStyle(color: context.gama.textMuted, fontSize: 12),
             ),
           ),
-          if (_models.isEmpty && !_loadingModels)
-            Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text(
-                'Nenhum modelo retornado pelo backend. Teste a conexão ou '
-                'verifique OPENROUTER_MODELS / OLLAMA_MODELS no servidor.',
-                style: TextStyle(color: context.gama.textMuted, fontSize: 12),
-              ),
-            )
-          else if (_selectedModel != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                'ID: $_selectedModel',
-                style: TextStyle(color: context.gama.textHint, fontSize: 12),
-              ),
-            ),
           const SizedBox(height: 28),
           const _SectionTitle('Voz'),
           const SizedBox(height: 6),

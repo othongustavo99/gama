@@ -44,11 +44,9 @@ class SettingsService extends ChangeNotifier {
   /// senão deriva do modo.
   String get model {
     _ensureInitialized();
-    final saved = _prefs.getString(_keyModel)?.trim();
-    if (saved != null && saved.isNotEmpty) return saved;
-    return mode == GamaMode.conversar
-        ? AppConstants.modelConversar
-        : AppConstants.modelProgramar;
+    // O modelo comum é fixo; a Oficina Programar passa seu GLM diretamente
+    // na chamada, sem gravá-lo como modelo padrão da conta.
+    return AppConstants.defaultModel;
   }
 
   GamaMode get mode {
@@ -98,9 +96,8 @@ class SettingsService extends ChangeNotifier {
 
   Future<void> setModel(String model) async {
     _ensureInitialized();
-    final m = model.trim();
-    if (m.isEmpty) return;
-    await _prefs.setString(_keyModel, m);
+    if (model.trim() != AppConstants.defaultModel) return;
+    await _prefs.setString(_keyModel, AppConstants.defaultModel);
     notifyListeners();
   }
 

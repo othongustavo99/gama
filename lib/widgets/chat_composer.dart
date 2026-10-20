@@ -23,6 +23,9 @@ class ChatComposer extends StatelessWidget {
   final ValueChanged<GamaMode> onModeChanged;
   final VoidCallback? onPasteImage;
   final FocusNode? focusNode;
+  final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSlashCommandSelected;
+  final bool showSlashMenu;
 
   const ChatComposer({
     super.key,
@@ -38,6 +41,9 @@ class ChatComposer extends StatelessWidget {
     required this.onModeChanged,
     this.onPasteImage,
     this.focusNode,
+    this.onChanged,
+    this.onSlashCommandSelected,
+    this.showSlashMenu = false,
   });
 
   bool get _usesDesktopEnterShortcut =>
@@ -60,6 +66,21 @@ class ChatComposer extends StatelessWidget {
             const _SendMessageIntent(),
     };
 
+    final slashCommands =
+        <(String, String)>[
+              ('/memoria', 'Consultar fatos salvos'),
+              ('/memoria limpar', 'Apagar fatos salvos'),
+              ('/memoria ', 'Salvar um fato na memória'),
+              ('/limpar', 'Limpar esta conversa'),
+              ('/modo programar', 'Mudar para Programar'),
+              ('/modo conversar', 'Mudar para Conversar'),
+            ]
+            .where(
+              (entry) =>
+                  entry.$1.startsWith(controller.text.trimRight()) ||
+                  controller.text == '/',
+            )
+            .toList();
     return Container(
       color: context.gama.surface,
       child: SafeArea(
@@ -93,6 +114,35 @@ class ChatComposer extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (showSlashMenu && slashCommands.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    constraints: const BoxConstraints(maxHeight: 190),
+                    decoration: BoxDecoration(
+                      color: context.gama.surfaceCard,
+                      border: Border.all(color: context.gama.border),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final command in slashCommands)
+                          ListTile(
+                            dense: true,
+                            title: Text(
+                              command.$1,
+                              style: TextStyle(color: context.gama.textPrimary),
+                            ),
+                            subtitle: Text(
+                              command.$2,
+                              style: TextStyle(color: context.gama.textMuted),
+                            ),
+                            onTap: () =>
+                                onSlashCommandSelected?.call(command.$1),
+                          ),
+                      ],
+                    ),
+                  ),
                 // Campo de texto — SEM caixa de fundo por trás do placeholder.
                 // No desktop, Enter envia e Shift+Enter continua inserindo
                 // uma quebra de linha (o atalho não é registrado com Shift).
@@ -151,6 +201,7 @@ class ChatComposer extends StatelessWidget {
                           ),
                         ),
                         onSubmitted: (_) => _submitIfPossible(),
+                        onChanged: onChanged,
                       ),
                     ),
                   ),
@@ -286,19 +337,12 @@ class _ModeChip extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: whiteStroke,
-              width: 1.15,
-            ),
+            border: Border.all(color: whiteStroke, width: 1.15),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                icon,
-                size: 14,
-                color: whiteStroke,
-              ),
+              Icon(icon, size: 14, color: whiteStroke),
               const SizedBox(width: 5),
               Text(
                 label,
