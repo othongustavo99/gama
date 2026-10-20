@@ -98,12 +98,18 @@ class _HomeScreenState extends State<HomeScreen> {
         listenable: _service,
         builder: (context, _) {
           final currentId = _service.currentConversationId;
+          final currentConversation = currentId == null
+              ? null
+              : _service.conversationById(currentId);
+          final oficinaKind = _oficinaKindForTitle(currentConversation?.title);
           final desktopSidebar =
               defaultTargetPlatform == TargetPlatform.windows;
           final appDrawer = AppDrawer(
             persistent: desktopSidebar,
             onNewChat: () async {
-              await _service.createConversationIfNeeded();
+              // “Nova conversa” sempre começa no chat geral, inclusive quando
+              // a ação veio do drawer da Oficina.
+              await _service.openFreshConversation();
               if (mounted && !desktopSidebar) Navigator.pop(context);
             },
             onSelectConversation: (id) async {
@@ -163,6 +169,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: ChatScreen(
                           key: ValueKey(currentId),
                           conversationId: currentId,
+                          oficinaKind: oficinaKind,
                           persistentSidebar: true,
                         ),
                       ),
@@ -171,10 +178,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 : ChatScreen(
                     key: ValueKey(currentId),
                     conversationId: currentId,
+                    oficinaKind: oficinaKind,
                   ),
           );
         },
       ),
     );
+  }
+
+  OficinaKind? _oficinaKindForTitle(String? title) {
+    if (title == null) return null;
+    for (final kind in OficinaKind.values) {
+      if (title.startsWith(kind.conversationTitle)) return kind;
+    }
+    return null;
   }
 }

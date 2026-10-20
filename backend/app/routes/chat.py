@@ -49,6 +49,70 @@ router = APIRouter()
 gama = GamaCore()
 _background_memory_tasks: set[asyncio.Task] = set()
 
+_OFFICE_NON_CREATION_RE = re.compile(
+    r"(?i)^\s*(?:como\b|por que\b|porque\b|o que (?:e|é|s[aã]o|acontece)\b|"
+    r"qual(?:is)?\b|explique\b|me ensine\b|tutorial\b|analise\b|an[aá]lise\b|"
+    r"descreva\b|critique\b|avalie\b|compare\b|sugira\b|ideias?\b|"
+    r"quais ideias\b|me d[eê] ideias\b|oi\b|ol[aá]\b|bom dia\b|boa tarde\b|"
+    r"boa noite\b|obrigad[oa]s?\b|valeu\b|tudo bem\b|tudo certo\b|"
+    r"voc[eê] est[aá] a[ií]\b|quem [eé] voc[eê]\b)"
+)
+_OFFICE_EDIT_ACTION_RE = re.compile(
+    r"(?i)\b(edite?|modifique?|altere?|mude?|troque?|substitua?|remova?|"
+    r"adicione?|transforme?|corte?|recorte?|anime?|estabilize?|remonte?)\b"
+)
+_OFFICE_IMPROVE_ACTION_RE = re.compile(
+    r"(?i)\b(melhore?|aprimore?|refine?|estabilize?|upscale|aumente?\s+(?:a\s+)?qualidade)\b"
+)
+
+
+def _office_media_action(
+    mode: str, text: str, *, has_images: bool, has_video: bool
+) -> str | None:
+    """Returns a deterministic media operation for executable Oficina requests."""
+    cleaned = (text or "").strip()
+    if not cleaned or _OFFICE_NON_CREATION_RE.match(cleaned):
+        return None
+
+    if mode == "oficina_imagem":
+        detected = detect_image_intent(cleaned, has_attached_images=has_images)
+        if detected.intent in {ImageIntent.GENERATE, ImageIntent.EDIT, ImageIntent.IMPROVE}:
+            return detected.intent.value
+        if detected.intent == ImageIntent.ANALYZE:
+            return None
+        if _OFFICE_IMPROVE_ACTION_RE.search(cleaned):
+            return "improve" if has_images else None
+        if _OFFICE_EDIT_ACTION_RE.search(cleaned):
+            return "edit" if has_images else None
+        # Oficina Imagem é criação: até um briefing nominal curto é text-to-image.
+        return "generate"
+
+    if mode == "oficina_video":
+        detected = detect_video_intent(
+            cleaned,
+            has_attached_video=has_video,
+            has_attached_images=has_images,
+        )
+        if has_video:
+            if _OFFICE_IMPROVE_ACTION_RE.search(cleaned):
+                return "improve"
+            if _OFFICE_EDIT_ACTION_RE.search(cleaned):
+                return "edit"
+            if detected.intent in {VideoIntent.EDIT, VideoIntent.IMPROVE}:
+                return detected.intent.value
+            return None  # Vídeo anexado sem ação explícita: não altere por conta própria.
+        if _OFFICE_IMPROVE_ACTION_RE.search(cleaned) or _OFFICE_EDIT_ACTION_RE.search(cleaned):
+            # Uma transformação de vídeo exige a referência; com imagem, anime-a.
+            if has_images and (detected.intent == VideoIntent.ANIMATE or re.search(r"(?i)\b(anime?|movimento|animar)\b", cleaned)):
+                return "animate"
+            return None
+        if has_images:
+            return "animate"
+        if detected.intent == VideoIntent.ANALYZE or _OFFICE_NON_CREATION_RE.match(cleaned):
+            return None
+        return "create"
+    return None
+
 
 async def _extract_memory_after_turn(
     *, user_id: str, user_text: str, assistant_text: str, model: str
@@ -1084,12 +1148,21 @@ async def chat(
                         return
                     has_image_refs = bool(getattr(request, "images", None))
                     image_request = detect_image_intent(last_user, has_image_refs)
-                    if image_request.intent not in {ImageIntent.GENERATE, ImageIntent.EDIT, ImageIntent.IMPROVE}:
+                    forced_intent = str(args.get("_office_intent") or "")
+                    image_intent = (
+                        ImageIntent(forced_intent)
+                        if forced_intent in {"generate", "edit", "improve"}
+                        else image_request.intent
+                    )
+                    if image_intent not in {ImageIntent.GENERATE, ImageIntent.EDIT, ImageIntent.IMPROVE}:
                         yield {"type": "result", "content": "Não identifiquei um pedido explícito de criar ou editar imagem. Peça essa ação diretamente para iniciar a geração."}
+                        return
+                    if image_intent in {ImageIntent.EDIT, ImageIntent.IMPROVE} and not has_image_refs:
+                        yield {"type": "result", "content": "Para editar ou melhorar, anexe a imagem de referência e envie o pedido novamente."}
                         return
                     # O texto original é a fonte completa do briefing; args.prompt pode
                     # ser resumido pelo modelo ao preparar tool calls.
-                    prompt = build_image_prompt(last_user, image_request.intent)[:8000]
+                    prompt = build_image_prompt(last_user, image_intent)[:8000]
                     if not prompt:
                         yield {"type": "result", "content": "Descreva a imagem a gerar."}
                         return
@@ -1129,18 +1202,28 @@ async def chat(
                         yield {"type": "result", "content": "A geração de vídeos está desativada no servidor."}
                         return
                     has_image_refs = bool(getattr(request, "images", None))
+                    has_attached_video = "[video_artifact_id:" in last_user.lower()
                     video_request = detect_video_intent(
                         last_user,
-                        has_attached_video="[video_artifact_id:" in last_user.lower(),
+                        has_attached_video=has_attached_video,
                         has_attached_images=has_image_refs,
                     )
-                    if video_request.intent not in {
+                    forced_intent = str(args.get("_office_intent") or "")
+                    video_intent = (
+                        VideoIntent(forced_intent)
+                        if forced_intent in {"create", "animate", "edit", "improve"}
+                        else video_request.intent
+                    )
+                    if video_intent not in {
                         VideoIntent.CREATE, VideoIntent.ANIMATE,
                         VideoIntent.EDIT, VideoIntent.IMPROVE,
                     }:
                         yield {"type": "result", "content": "Não identifiquei um pedido explícito de criar ou editar vídeo. Posso analisar o anexo ou explicar como fazer, sem iniciar uma geração."}
                         return
-                    prompt = build_video_prompt(last_user, video_request.intent)[:8000]
+                    if video_intent in {VideoIntent.EDIT, VideoIntent.IMPROVE} and not has_attached_video:
+                        yield {"type": "result", "content": "Para editar ou melhorar um vídeo, anexe o vídeo de referência e envie o pedido novamente."}
+                        return
+                    prompt = build_video_prompt(last_user, video_intent)[:8000]
                     if not prompt:
                         yield {"type": "result", "content": "Descreva o vídeo a gerar."}
                         return
@@ -1156,7 +1239,7 @@ async def chat(
                     ]
                     reference_video_url = None
                     video_match = re.search(r"\[video_artifact_id:([a-f0-9]{16})\]", last_user, re.I)
-                    if video_match and video_request.intent in {VideoIntent.EDIT, VideoIntent.IMPROVE}:
+                    if video_match and video_intent in {VideoIntent.EDIT, VideoIntent.IMPROVE}:
                         video_id = video_match.group(1).lower()
                         stored_video = load_artifact(video_id, user_id=user_id)
                         if not stored_video or str(stored_video.get("kind", "")).lower() != "video":
@@ -1269,7 +1352,62 @@ async def chat(
                         yield {"type": "result", "content": f"Não consegui criar o arquivo: {str(exc)[:300]}"}
                     return
 
-            if use_agent:
+            # Nos modos criativos, não dependemos de o LLM decidir se chama a
+            # ferramenta: briefings curtos também iniciam a mídia do modo atual.
+            # Perguntas/análises explícitas continuam no fluxo conversacional.
+            has_office_images = bool(getattr(request, "images", None))
+            has_office_video = "[video_artifact_id:" in last_user.lower()
+            office_intent = _office_media_action(
+                chat_mode_raw,
+                last_user,
+                has_images=has_office_images,
+                has_video=has_office_video,
+            )
+            office_tool = {
+                "oficina_imagem": "generate_image",
+                "oficina_video": "generate_video",
+            }.get(chat_mode_raw)
+            office_tool_enabled = (
+                bool(plugin_flags.get("image_gen", True))
+                and bool(getattr(app_settings, "IMAGE_GEN_ENABLED", True))
+                if office_tool == "generate_image"
+                else bool(plugin_flags.get("video_gen", True))
+                and bool(getattr(app_settings, "VIDEO_GEN_ENABLED", True))
+                if office_tool == "generate_video"
+                else False
+            )
+            if office_tool and office_intent and office_tool_enabled:
+                agent_done = True
+                async for media_event in agent_media_or_file_tool({
+                    "_tool_name": office_tool,
+                    "_office_intent": office_intent,
+                }):
+                    event_type = media_event.get("type")
+                    if event_type == "phase":
+                        yield json.dumps(
+                            {"gama_meta": {"phase": media_event.get("phase") or "thinking"}},
+                            ensure_ascii=False,
+                        ) + "\n"
+                    elif event_type == "image":
+                        yield json.dumps(
+                            {"gama_meta": {"phase": "image_ready", "image": media_event.get("image")}},
+                            ensure_ascii=False,
+                        ) + "\n"
+                    elif event_type == "artifact":
+                        artifact = media_event.get("artifact") or {}
+                        if artifact.get("kind") in {"zip", "pdf"}:
+                            agent_file_created = True
+                        yield json.dumps(
+                            {"gama_meta": {"phase": "artifact_ready", "artifact": artifact}},
+                            ensure_ascii=False,
+                        ) + "\n"
+                    elif event_type == "result":
+                        result_text = str(media_event.get("content") or "").strip()
+                        if result_text:
+                            assistant_acc.append(result_text)
+                            yield _tok(result_text)
+
+            if use_agent and not agent_done:
                 _typing_sent = False
                 _uid_agent = user_id
                 try:

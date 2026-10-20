@@ -158,14 +158,12 @@ class _OficinaScaffold extends StatelessWidget {
     final drawer = AppDrawer(
       persistent: desktop,
       onNewChat: () async {
-        await service.createConversationIfNeeded();
-        if (context.mounted && !desktop) Navigator.pop(context);
-        if (context.mounted) Navigator.pop(context);
+        await service.openFreshConversation();
+        if (context.mounted) _returnToHome(context, desktop);
       },
       onSelectConversation: (id) async {
         await service.selectConversation(id);
-        if (context.mounted && !desktop) Navigator.pop(context);
-        if (context.mounted) Navigator.pop(context);
+        if (context.mounted) _returnToHome(context, desktop);
       },
       onOpenImages: () => _open(context, const ImagesScreen(), desktop),
       onOpenLibrary: () => _open(context, const LibraryScreen(), desktop),
@@ -234,6 +232,13 @@ class _OficinaScaffold extends StatelessWidget {
   void _open(BuildContext context, Widget screen, bool desktop) {
     if (!desktop) Navigator.pop(context);
     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
+  }
+
+  /// Sai das rotas temporárias da Oficina para o chat principal. Com isso, a
+  /// seleção da conversa atualizada pelo ConversationService aparece no Home.
+  void _returnToHome(BuildContext context, bool desktop) {
+    if (!desktop) Navigator.of(context).pop(); // fecha o drawer
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 }
 
