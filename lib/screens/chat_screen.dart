@@ -3112,7 +3112,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: _messages.isEmpty
                         ? _EmptyState(
                             oficinaKind: widget.oficinaKind,
-                            userName: IdentityService.instance.displayName,
                             attachmentKinds: _attachments
                                 .map((attachment) => attachment.kind)
                                 .toList(growable: false),
@@ -4208,9 +4207,16 @@ class _ArtifactStatusList extends StatelessWidget {
                     alignment: Alignment.centerRight,
                     child: TextButton.icon(
                       onPressed: () => onDownload(artifact),
-                      icon: const Icon(Icons.download_rounded, size: 16),
+                      icon: Icon(
+                        isVideo ? Icons.play_arrow_rounded : Icons.download_rounded,
+                        size: 18,
+                      ),
                       label: Text(
-                        isZip ? 'Baixar tudo em ZIP' : 'Baixar arquivo',
+                        isVideo
+                            ? 'Reproduzir vídeo'
+                            : isZip
+                            ? 'Baixar tudo em ZIP'
+                            : 'Baixar arquivo',
                       ),
                     ),
                   ),
@@ -4408,17 +4414,14 @@ enum _EmptySuggestionAction {
 class _EmptyState extends StatelessWidget {
   final void Function(_EmptySuggestionAction action, String text) onSuggestion;
   final OficinaKind? oficinaKind;
-  final String userName;
   final List<AttachmentKind> attachmentKinds;
 
   const _EmptyState({
     required this.onSuggestion,
-    required this.userName,
     required this.attachmentKinds,
     this.oficinaKind,
   });
 
-  String get _firstName => userName.trim().split(RegExp(r'\s+')).first;
   AttachmentKind? get _attachmentKind =>
       attachmentKinds.isEmpty ? null : attachmentKinds.first;
 
@@ -4643,7 +4646,7 @@ class _EmptyState extends StatelessWidget {
       case OficinaKind.programar:
         return 'Oficina · Programar';
       case null:
-        return 'Olá, $_firstName. O que vamos fazer?';
+        return 'Sua assistente virtual';
     }
   }
 

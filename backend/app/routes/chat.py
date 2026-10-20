@@ -852,10 +852,19 @@ async def chat(
     # correspondência de palavras-chave no pedido.
     simple_flutter_download_files = None
 
+    # Links GitHub são indexados pelo Code Analyzer e precisam seguir para o
+    # modelo com o contexto dos arquivos. Evita uma chamada com ferramentas que
+    # alguns provedores/modelos recusam neste fluxo.
+    has_current_github_link = bool(parse_github_url(last_user))
+
     # Agente: o modelo decide quando pesquisar (tool calling). Só com OpenRouter.
     # Pedidos de arquivo usam o fluxo normal para que possamos validar o artefato
     # antes de exibir uma resposta final ao usuário.
-    use_agent = bool(app_settings.AGENT_TOOLS_ENABLED and llm.provider == "openrouter")
+    use_agent = bool(
+        app_settings.AGENT_TOOLS_ENABLED
+        and llm.provider == "openrouter"
+        and not has_current_github_link
+    )
     will_search = bool(
         web_search_enabled and last_user and not use_agent and should_search(last_user)
     )
@@ -865,7 +874,6 @@ async def chat(
     # A URL GitHub in the turno atual pode criar/indexar o project_id dentro
     # de GamaCore.build_messages. Não exija uma sessão já existente antes de
     # ativar a revisão profunda solicitada junto do link/ZIP.
-    has_current_github_link = bool(parse_github_url(last_user))
     deep_project_review = bool(
         code_analyzer_enabled
         and (project_id or has_current_github_link)

@@ -179,7 +179,10 @@ class _OficinaScaffold extends StatelessWidget {
       },
     );
 
-    final content = title == null
+    final content = Builder(
+      // O drawer móvel pertence ao Scaffold externo; o AppBar usa um Scaffold
+      // interno. Este contexto alcança o drawer correto.
+      builder: (drawerContext) => title == null
         ? child
         : Scaffold(
             backgroundColor: context.gama.background,
@@ -196,7 +199,7 @@ class _OficinaScaffold extends StatelessWidget {
                   ),
                   onPressed: () => desktop
                       ? Navigator.of(context).pop()
-                      : Scaffold.of(ctx).openDrawer(),
+                      : Scaffold.of(drawerContext).openDrawer(),
                 ),
               ),
               title: Text(
@@ -208,7 +211,8 @@ class _OficinaScaffold extends StatelessWidget {
               ),
             ),
             body: child,
-          );
+          ),
+    );
 
     return Scaffold(
       backgroundColor: context.gama.background,
