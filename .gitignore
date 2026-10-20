@@ -1,0 +1,69 @@
+# Flutter
+.dart_tool/
+.packages
+.pub/
+.pub-cache/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+
+# Android
+.gradle/
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+lib/services/auth_secrets.dart
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/ephemeral/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+backend/venv/
+**/.venv/
+**/venv/
+env/
+ENV/
+
+# Python tooling
+.pytest_cache/
+**/.pytest-packages/
+**/.pytest-tmp/
+.mypy_cache/
+.ruff_cache/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dados locais do backend (memória pessoal)
+backend/data/
+
+# Logs
+*.log
+
+# Local patch backups and one-off migration scripts
+**/*.bak_video_*
+/aplicar_correcao_video.py

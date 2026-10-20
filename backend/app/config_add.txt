@@ -1,0 +1,9 @@
+Adicione em Settings (config.py):
+
+    VISION_MODEL = os.getenv("VISION_MODEL", "qwen2-vl")
+
+Railway / local env:
+    VISION_MODEL=qwen2-vl
+
+Ollama:
+    ollama pull qwen2-vl

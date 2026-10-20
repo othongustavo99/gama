@@ -1,0 +1,22 @@
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-por tesseract-ocr-eng ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DATA_DIR=/data
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+
+RUN mkdir -p /data
+
+EXPOSE 8000
+
+CMD ["sh", "-c", "export DATA_DIR=\"${RAILWAY_VOLUME_MOUNT_PATH:-${DATA_DIR:-/data}}\"; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

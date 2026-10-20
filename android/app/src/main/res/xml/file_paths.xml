@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Diretório usado por getApplicationDocumentsDirectory()/arquivos da Biblioteca. -->
+    <files-path name="app_files" path="." />
+
+    <!-- Arquivos no armazenamento específico externo do aplicativo. -->
+    <external-files-path name="app_external_files" path="." />
+
+    <!-- Arquivos temporários, quando o fluxo de geração usa cache. -->
+    <cache-path name="app_cache" path="." />
+    <external-cache-path name="app_external_cache" path="." />
+</paths>

@@ -1,0 +1,90 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  model-init:
+    image: ollama/ollama:latest
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_DEFAULT_MODEL: ${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}
+    entrypoint: ["/bin/sh", "-c"]
+    command: >-
+      "ollama pull $${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}"
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    environment:
+      # Preserve o modo local por padrão; defina LLM_PROVIDER=openrouter para
+      # habilitar chamadas OpenRouter, clima via ferramentas do agente e vídeo.
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_HTTP_REFERER: ${OPENROUTER_HTTP_REFERER:-https://gama.app}
+      OPENROUTER_APP_TITLE: ${OPENROUTER_APP_TITLE:-Frequencia40-Gamma}
+      OPENROUTER_DEFAULT_MODEL: ${OPENROUTER_DEFAULT_MODEL:-openai/gpt-5.4-mini}
+      OPENROUTER_MODELS: ${OPENROUTER_MODELS:-openai/gpt-5.4-mini}
+      VIDEO_GEN_ENABLED: ${VIDEO_GEN_ENABLED:-1}
+      VIDEO_GEN_MODEL: ${VIDEO_GEN_MODEL:-bytedance/seedance-2.0-mini}
+      VIDEO_GEN_DEFAULT_DURATION: ${VIDEO_GEN_DEFAULT_DURATION:-5}
+      VIDEO_GEN_MAX_DURATION: ${VIDEO_GEN_MAX_DURATION:-10}
+      VIDEO_GEN_DEFAULT_RESOLUTION: ${VIDEO_GEN_DEFAULT_RESOLUTION:-480p}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_DEFAULT_MODEL: ${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}
+      OLLAMA_MODELS: ${OLLAMA_DEFAULT_MODEL:-qwen2.5:1.5b}
+      DATA_DIR: /data
+      GAMA_API_KEY: ${GAMA_API_KEY:-}
+      GAMA_REQUIRE_API_KEY: ${GAMA_REQUIRE_API_KEY:-0}
+      GAMA_REQUIRE_AUTH: ${GAMA_REQUIRE_AUTH:-1}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+      MAX_BODY_MB: ${MAX_BODY_MB:-105}
+      APP_NAME: Frequencia40-Gamma
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      WEB_SEARCH_ENABLED: ${WEB_SEARCH_ENABLED:-1}
+      WEB_SEARCH_TIMEOUT: ${WEB_SEARCH_TIMEOUT:-12}
+      WEB_SEARCH_MODE: ${WEB_SEARCH_MODE:-balanced}
+      GAMA_LLM_MAX_MESSAGE_CHARS: ${GAMA_LLM_MAX_MESSAGE_CHARS:-12000}
+      GAMA_LLM_MAX_LAST_USER_CHARS: ${GAMA_LLM_MAX_LAST_USER_CHARS:-100000}
+      GAMA_LLM_MAX_TOTAL_INPUT_CHARS: ${GAMA_LLM_MAX_TOTAL_INPUT_CHARS:-280000}
+      GAMA_CONTEXT_MAX_MESSAGES: ${GAMA_CONTEXT_MAX_MESSAGES:-48}
+      GAMA_CONTEXT_KEEP_RECENT: ${GAMA_CONTEXT_KEEP_RECENT:-24}
+      GAMA_CONTEXT_SUMMARY_MAX_CHARS: ${GAMA_CONTEXT_SUMMARY_MAX_CHARS:-2500}
+      GAMA_CONTEXT_MAX_CURRENT_USER_CHARS: ${GAMA_CONTEXT_MAX_CURRENT_USER_CHARS:-12000}
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - gama_data:/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()\""]
+      interval: 15s
+      timeout: 8s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  ollama_data:
+  gama_data:

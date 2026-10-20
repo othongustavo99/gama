@@ -1,0 +1,4 @@
+# O deployment completo usa docker-compose.yml, pois o Ollama precisa rodar
+# junto ao backend e manter o modelo em disco/memória.
+# Este arquivo não é usado pela arquitetura de produção atual.
+services: []
