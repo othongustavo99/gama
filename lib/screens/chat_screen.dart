@@ -62,6 +62,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final MemoryService _memory = MemoryService();
 
   List<Message> _messages = [];
+  String? _newMessageAnimationId;
   bool _isLoading = false;
   String _streamPhase = '';
   final Map<String, List<Map<String, dynamic>>> _artifactsByMessageId = {};
@@ -2214,6 +2215,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!isRegeneration) {
       setState(() {
         _messages.add(userMessage);
+        _newMessageAnimationId = userMessage.id;
         _isLoading = true;
         _streamPhase = 'thinking';
       });
@@ -2245,7 +2247,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _sourcesByMessageId.remove(assistantMessage.id);
 
     setState(() {
-      if (!isRegeneration) _messages.add(assistantMessage);
+      if (!isRegeneration) {
+        _messages.add(assistantMessage);
+        _newMessageAnimationId = assistantMessage.id;
+      }
       _voiceResponsePending = voiceRequested;
       _voiceResponseBuffer = '';
     });
@@ -2688,9 +2693,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (confirm == true) {
       final messages = _service.getMessages(widget.conversationId);
-      for (final msg in messages) {
-        await msg.delete();
-      }
+      await _service.deleteMessages(messages);
       setState(() => _messages.clear());
     }
   }
@@ -3041,18 +3044,18 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: _messages.isEmpty
                       ? _EmptyState(
                           oficinaKind: widget.oficinaKind,
-                          onSuggestion: (text) {
+                          onSuggestion: (action, text) {
                             if (widget.oficinaKind != null) {
                               _controller.text = text;
                               _composerFocusNode.requestFocus();
                               return;
                             }
-                            if (text == 'Revisar meu projeto (ZIP/GitHub)') {
+                            if (action == _EmptySuggestionAction.reviewProject) {
                               _controller.text = 'Revise meu projeto e destaque problemas e melhorias.';
                               _showAttachMenu();
                               return;
                             }
-                            if (text == 'Explicar este erro') {
+                            if (action == _EmptySuggestionAction.explainError) {
                               _controller.text = 'Explique este erro:\n';
                               _composerFocusNode.requestFocus();
                               return;
@@ -3075,9 +3078,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
                               return TweenAnimationBuilder<double>(
                                 key: ValueKey('message-enter-${msg.id}'),
-                                tween: Tween(begin: 0, end: 1),
-                                duration: const Duration(milliseconds: 180),
+                                tween: Tween(
+                                  begin: msg.id == _newMessageAnimationId ? 0.0 : 1.0,
+                                  end: 1.0,
+                                ),
+                                duration: msg.id == _newMessageAnimationId
+                                    ? const Duration(milliseconds: 180)
+                                    : Duration.zero,
                                 curve: Curves.easeOutCubic,
+                                onEnd: () {
+                                  if (mounted && _newMessageAnimationId == msg.id) {
+                                    setState(() => _newMessageAnimationId = null);
+                                  }
+                                },
                                 child: RepaintBoundary(
                                   key: _messageKeys.putIfAbsent(
                                     msg.id,
@@ -3940,8 +3953,10 @@ class _ArtifactStatusList extends StatelessWidget {
   }
 }
 
+enum _EmptySuggestionAction { reviewProject, explainError, generateWidget }
+
 class _EmptyState extends StatelessWidget {
-  final ValueChanged<String> onSuggestion;
+  final void Function(_EmptySuggestionAction action, String text) onSuggestion;
   final OficinaKind? oficinaKind;
 
   const _EmptyState({required this.onSuggestion, this.oficinaKind});
@@ -4179,7 +4194,10 @@ class _EmptyState extends StatelessWidget {
                     color: context.gama.surfaceCard,
                     borderRadius: BorderRadius.circular(18),
                     child: InkWell(
-                      onTap: () => onSuggestion(entry.value),
+                      onTap: () => onSuggestion(
+                        _EmptySuggestionAction.values[index],
+                        entry.value,
+                      ),
                       borderRadius: BorderRadius.circular(18),
                       child: Container(
                         width: double.infinity,

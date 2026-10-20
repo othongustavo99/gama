@@ -14,17 +14,6 @@ import 'services/identity_service.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Colors.black,
-      systemNavigationBarIconBrightness: Brightness.light,
-      systemNavigationBarDividerColor: Colors.black,
-      systemNavigationBarContrastEnforced: false,
-    ),
-  );
-
   await Hive.initFlutter();
 
   Hive.registerAdapter(MessageAdapter());
@@ -223,34 +212,32 @@ class GamaApp extends StatelessWidget {
           ],
           builder: (context, child) {
             final media = MediaQuery.of(context);
-            final useLight =
-                mode == ThemeMode.light ||
-                (mode == ThemeMode.system &&
-                    media.platformBrightness == Brightness.light);
-            SystemChrome.setSystemUIOverlayStyle(
-              SystemUiOverlayStyle(
+            final isLight = Theme.of(context).brightness == Brightness.light;
+            final overlayStyle = SystemUiOverlayStyle(
                 statusBarColor: Colors.transparent,
-                statusBarIconBrightness: useLight
+                statusBarIconBrightness: isLight
                     ? Brightness.dark
                     : Brightness.light,
-                systemNavigationBarColor: useLight
+                systemNavigationBarColor: isLight
                     ? const Color(0xFFF6F7F9)
                     : Colors.black,
-                systemNavigationBarIconBrightness: useLight
+                systemNavigationBarIconBrightness: isLight
                     ? Brightness.dark
                     : Brightness.light,
-                systemNavigationBarDividerColor: useLight
+                systemNavigationBarDividerColor: isLight
                     ? const Color(0xFFD9DEE5)
                     : Colors.black,
                 systemNavigationBarContrastEnforced: false,
-              ),
             );
             final systemScale = media.textScaler.scale(1.0);
-            return MediaQuery(
-              data: media.copyWith(
-                textScaler: TextScaler.linear(systemScale * scale),
+            return AnnotatedRegion<SystemUiOverlayStyle>(
+              value: overlayStyle,
+              child: MediaQuery(
+                data: media.copyWith(
+                  textScaler: TextScaler.linear(systemScale * scale),
+                ),
+                child: child ?? const SizedBox.shrink(),
               ),
-              child: child ?? const SizedBox.shrink(),
             );
           },
           home: const SplashScreen(),

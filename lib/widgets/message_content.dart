@@ -405,7 +405,8 @@ class MessageContentView extends StatelessWidget {
       letterSpacing: 0.1,
     );
 
-    return Column(
+    return SelectionArea(
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (images.isNotEmpty) ...[
@@ -653,7 +654,6 @@ class _MarkdownMessage extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 2),
               child: MarkdownBody(
                 data: MessageContentView._linkifyBareUrls(part.content),
-                selectable: true,
                 inlineSyntaxes: [_TexMathInlineSyntax()],
                 onTapLink: (linkText, href, title) {
                   if (onTapLink != null) {
