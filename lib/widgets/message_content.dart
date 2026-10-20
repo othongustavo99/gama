@@ -407,151 +407,157 @@ class MessageContentView extends StatelessWidget {
 
     return SelectionArea(
       child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (images.isNotEmpty) ...[
-          ...images.map((img) {
-            final filePath = img.filePath;
-            final fileExists =
-                filePath != null &&
-                filePath.isNotEmpty &&
-                File(filePath).existsSync();
-            if (!fileExists && img.base64.isEmpty) {
-              return Padding(
-                padding: EdgeInsets.only(bottom: 10),
-                child: Text(
-                  '[imagem indisponível]',
-                  style: TextStyle(color: context.gama.textMuted),
-                ),
-              );
-            }
-            try {
-              final memoryBytes = img.base64.isEmpty
-                  ? null
-                  : base64Decode(img.base64);
-              final imageWidget = fileExists
-                  ? Image.file(
-                      File(filePath!),
-                      fit: BoxFit.contain,
-                      gaplessPlayback: true,
-                      errorBuilder: (_, __, ___) => Text(
-                        '[imagem indisponível]',
-                        style: TextStyle(color: context.gama.textMuted),
-                      ),
-                    )
-                  : Image.memory(
-                      memoryBytes!,
-                      fit: BoxFit.contain,
-                      gaplessPlayback: true,
-                      errorBuilder: (_, __, ___) => Text(
-                        '[imagem indisponível]',
-                        style: TextStyle(color: context.gama.textMuted),
-                      ),
-                    );
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Semantics(
-                      button: true,
-                      label: 'Abrir imagem em tela cheia',
-                      child: GestureDetector(
-                        onTap: () => showDialog<void>(
-                          context: context,
-                          barrierColor: Colors.black87,
-                          builder: (_) => _FullscreenImageDialog(
-                            image: fileExists
-                                ? Image.file(
-                                    File(filePath!),
-                                    fit: BoxFit.contain,
-                                  )
-                                : Image.memory(
-                                    memoryBytes!,
-                                    fit: BoxFit.contain,
-                                  ),
-                            sourcePath: fileExists ? filePath : null,
-                            base64Data: img.base64,
-                            mime: img.mime,
-                          ),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (images.isNotEmpty) ...[
+            ...images.map((img) {
+              final filePath = img.filePath;
+              final fileExists =
+                  filePath != null &&
+                  filePath.isNotEmpty &&
+                  File(filePath).existsSync();
+              if (!fileExists && img.base64.isEmpty) {
+                return Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    '[imagem indisponível]',
+                    style: TextStyle(color: context.gama.textMuted),
+                  ),
+                );
+              }
+              try {
+                final memoryBytes = img.base64.isEmpty
+                    ? null
+                    : base64Decode(img.base64);
+                final imageWidget = fileExists
+                    ? Image.file(
+                        File(filePath!),
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                        errorBuilder: (_, __, ___) => Text(
+                          '[imagem indisponível]',
+                          style: TextStyle(color: context.gama.textMuted),
                         ),
-                        child: MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(14),
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxHeight: 480),
-                              child: imageWidget,
-                            ),
-                          ),
+                      )
+                    : Image.memory(
+                        memoryBytes!,
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                        errorBuilder: (_, __, ___) => Text(
+                          '[imagem indisponível]',
+                          style: TextStyle(color: context.gama.textMuted),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Wrap(
-                        spacing: 4,
-                        children: [
-                          TextButton.icon(
-                            style: TextButton.styleFrom(
-                              foregroundColor: context.gama.accent,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                              ),
-                              visualDensity: VisualDensity.compact,
-                            ),
-                            onPressed: () async {
-                              try {
-                                final path = await _saveImageFile(
-                                  sourcePath: fileExists ? filePath : null,
-                                  base64Data: img.base64,
-                                  mime: img.mime,
-                                );
-                                await DownloadService.instance.openPath(path);
-                              } catch (_) {}
-                            },
-                            icon: const Icon(Icons.download_rounded, size: 18),
-                            label: const Text('Salvar imagem'),
-                          ),
-                          TextButton.icon(
-                            onPressed: () => _shareImageFile(
-                              context,
+                      );
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Semantics(
+                        button: true,
+                        label: 'Abrir imagem em tela cheia',
+                        child: GestureDetector(
+                          onTap: () => showDialog<void>(
+                            context: context,
+                            barrierColor: Colors.black87,
+                            builder: (_) => _FullscreenImageDialog(
+                              image: fileExists
+                                  ? Image.file(
+                                      File(filePath!),
+                                      fit: BoxFit.contain,
+                                    )
+                                  : Image.memory(
+                                      memoryBytes!,
+                                      fit: BoxFit.contain,
+                                    ),
                               sourcePath: fileExists ? filePath : null,
                               base64Data: img.base64,
                               mime: img.mime,
                             ),
-                            icon: const Icon(Icons.share_outlined, size: 17),
-                            label: const Text('Compartilhar'),
                           ),
-                        ],
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxHeight: 480,
+                                ),
+                                child: imageWidget,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              );
-            } catch (_) {
-              return const SizedBox.shrink();
-            }
-          }),
-        ],
-        if (parsed.text.isNotEmpty)
-          _MarkdownMessage(
-            text: parsed.text,
-            isUser: isUser,
-            textStyle: textStyle,
-            onTapLink: onTapLink,
-          ),
-        if (parsed.attachments.isNotEmpty) ...[
-          if (parsed.text.isNotEmpty) const SizedBox(height: 10),
-          ...parsed.attachments.map(
-            (a) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: _AttachmentChip(preview: a, isUser: isUser),
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Wrap(
+                          spacing: 4,
+                          children: [
+                            TextButton.icon(
+                              style: TextButton.styleFrom(
+                                foregroundColor: context.gama.accent,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              onPressed: () async {
+                                try {
+                                  final path = await _saveImageFile(
+                                    sourcePath: fileExists ? filePath : null,
+                                    base64Data: img.base64,
+                                    mime: img.mime,
+                                  );
+                                  await DownloadService.instance.openPath(path);
+                                } catch (_) {}
+                              },
+                              icon: const Icon(
+                                Icons.download_rounded,
+                                size: 18,
+                              ),
+                              label: const Text('Salvar imagem'),
+                            ),
+                            TextButton.icon(
+                              onPressed: () => _shareImageFile(
+                                context,
+                                sourcePath: fileExists ? filePath : null,
+                                base64Data: img.base64,
+                                mime: img.mime,
+                              ),
+                              icon: const Icon(Icons.share_outlined, size: 17),
+                              label: const Text('Compartilhar'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              } catch (_) {
+                return const SizedBox.shrink();
+              }
+            }),
+          ],
+          if (parsed.text.isNotEmpty)
+            _MarkdownMessage(
+              text: parsed.text,
+              isUser: isUser,
+              textStyle: textStyle,
+              onTapLink: onTapLink,
             ),
-          ),
+          if (parsed.attachments.isNotEmpty) ...[
+            if (parsed.text.isNotEmpty) const SizedBox(height: 10),
+            ...parsed.attachments.map(
+              (a) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: _AttachmentChip(preview: a, isUser: isUser),
+              ),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
