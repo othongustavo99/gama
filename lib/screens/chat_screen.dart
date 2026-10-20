@@ -33,6 +33,7 @@ import '../services/download_service.dart';
 import '../utils/message_sanitize.dart';
 import '../services/tts_service.dart';
 import '../services/plugin_settings_service.dart';
+import '../services/identity_service.dart';
 import 'oficina_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -63,6 +64,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   List<Message> _messages = [];
   String? _newMessageAnimationId;
+  String? _hoveredMessageId;
+  String? _expandedMessageActionsId;
+  Timer? _clearMessagesTimer;
   bool _isLoading = false;
   String _streamPhase = '';
   final Map<String, List<Map<String, dynamic>>> _artifactsByMessageId = {};
@@ -88,6 +92,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _titleGenerationInProgress = false;
   List<String> _chatModels = List<String>.from(AppConstants.availableModels);
   final Map<String, List<Map<String, dynamic>>> _sourcesByMessageId = {};
+  final Map<String, List<String>> _activityByMessageId = {};
   final Set<String> _truncatedMessageIds = <String>{};
   final Map<String, int> _feedbackByMessageId = {};
   StreamSubscription<ChatStreamEvent>? _streamSubscription;
@@ -293,6 +298,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (notification is ScrollStartNotification &&
         notification.dragDetails != null) {
       _followStream = false;
+      if (!_showScrollToBottom && mounted) {
+        setState(() => _showScrollToBottom = true);
+      }
     }
     return false;
   }
@@ -300,7 +308,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _queueStreamText(String text) {
     _streamRawText.write(text);
     _streamRevealQueue.addAll(text.runes);
-    _streamRevealTimer ??= Timer.periodic(const Duration(milliseconds: 30), (
+    _streamRevealTimer ??= Timer.periodic(const Duration(milliseconds: 60), (
       _,
     ) {
       if (!mounted) return;
@@ -310,7 +318,9 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
       final next = StringBuffer();
-      for (var i = 0; i < 6 && _streamRevealQueue.isNotEmpty; i++) {
+      final queued = _streamRevealQueue.length;
+      final batchSize = queued < 60 ? 12 : queued < 240 ? 36 : 120;
+      for (var i = 0; i < batchSize && _streamRevealQueue.isNotEmpty; i++) {
         next.writeCharCode(_streamRevealQueue.removeFirst());
       }
       _streamingText.value = '${_streamingText.value}${next.toString()}';
@@ -920,6 +930,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages = _service.getMessages(widget.conversationId);
       _artifactsByMessageId.clear();
       _sourcesByMessageId.clear();
+      _activityByMessageId.clear();
       _truncatedMessageIds
         ..clear()
         ..addAll(
@@ -929,6 +940,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final savedSources = message.sources;
         if (savedSources.isNotEmpty) {
           _sourcesByMessageId[message.id] = savedSources;
+          _activityByMessageId[message.id] = ['Pesquisou na web'];
         }
       }
       _messageKeys.clear();
@@ -1125,6 +1137,33 @@ class _ChatScreenState extends State<ChatScreen> {
       default:
         return 'Gama está respondendo…';
     }
+  }
+
+  void _recordActivity(String phase, {String? query}) {
+    if (_messages.isEmpty || !_messages.last.isAssistant) return;
+    final messageId = _messages.last.id;
+    final label = switch (phase) {
+      'searching' => query == null || query.isEmpty
+          ? 'Pesquisou na web'
+          : 'Pesquisou: $query',
+      'project_analyzing' => 'Leu arquivos do projeto',
+      'generating_image' || 'image_analyzing' => 'Trabalhou com uma imagem',
+      'video_queued' || 'video_generating' || 'video_downloading' =>
+        'Gerou um vídeo',
+      'video_analyzing' => 'Analisou o vídeo',
+      'video_editing' => 'Editou o vídeo',
+      'video_improving' => 'Aprimorou o vídeo',
+      _ => null,
+    };
+    if (label == null) return;
+    final steps = _activityByMessageId.putIfAbsent(messageId, () => <String>[]);
+    if (query != null &&
+        steps.isNotEmpty &&
+        steps.last == 'Pesquisou na web') {
+      steps[steps.length - 1] = label;
+      return;
+    }
+    if (steps.isEmpty || steps.last != label) steps.add(label);
   }
 
   Future<void> _selectResponseVariant(Message message, int index) async {
@@ -1406,6 +1445,35 @@ class _ChatScreenState extends State<ChatScreen> {
     _snack('Mensagem copiada');
   }
 
+  void _showMessageContextMenu(Message message, int index) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.copy_rounded),
+              title: const Text('Copiar'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _copyMessage(message);
+              },
+            ),
+            if (message.isUser && !_isLoading && _canReusePrompt(message))
+              ListTile(
+                leading: const Icon(Icons.edit_rounded),
+                title: const Text('Editar e reenviar'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _editAndResend(message, index);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _messageActions(Message message, int index, bool isLastAssistant) {
     final isUser = message.isUser;
     final canRegenerate =
@@ -1446,7 +1514,18 @@ class _ChatScreenState extends State<ChatScreen> {
       ],
     );
 
+    if (isUser) {
+      if (_hoveredMessageId != message.id) return const SizedBox.shrink();
+      return Align(
+        alignment: Alignment.centerRight,
+        child: SizedBox(height: 38, child: moreButton),
+      );
+    }
+
     if (!isLastAssistant) {
+      if (_expandedMessageActionsId != message.id) {
+        return const SizedBox.shrink();
+      }
       return Align(
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
         child: Transform.translate(
@@ -2245,6 +2324,7 @@ class _ChatScreenState extends State<ChatScreen> {
     assistantMessage.sources = const <Map<String, dynamic>>[];
     _truncatedMessageIds.remove(assistantMessage.id);
     _sourcesByMessageId.remove(assistantMessage.id);
+    _activityByMessageId.remove(assistantMessage.id);
 
     setState(() {
       if (!isRegeneration) {
@@ -2323,11 +2403,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
           if (event.phase != null) {
             setState(() => _streamPhase = event.phase!);
+            _recordActivity(event.phase!);
           }
           if (event.webSearchQuery != null &&
               event.webSearchQuery!.trim().isNotEmpty) {
             _streamSearchQuery = event.webSearchQuery!.trim();
             _streamPhase = 'searching';
+            _recordActivity('searching', query: _streamSearchQuery);
             if (mounted) setState(() {});
           }
           if (event.memorySaved != null &&
@@ -2337,6 +2419,7 @@ class _ChatScreenState extends State<ChatScreen> {
           if (event.sources != null &&
               _messages.isNotEmpty &&
               _messages.last.isAssistant) {
+            _recordActivity('searching', query: _streamSearchQuery);
             final sourceMessage = _messages.last;
             final sources = List<Map<String, dynamic>>.from(event.sources!);
             sourceMessage.sources = sources;
@@ -2663,39 +2746,52 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _clearCurrentConversation() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: context.gama.surfaceCard,
-        title: Text(
-          'Limpar esta conversa?',
-          style: TextStyle(color: context.gama.textPrimary),
+    final removed = List<Message>.from(_messages);
+    if (removed.isEmpty) return;
+    _clearMessagesTimer?.cancel();
+    setState(() => _messages.clear());
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Conversa limpa'),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'Desfazer',
+          onPressed: () {
+            _clearMessagesTimer?.cancel();
+            if (mounted) {
+              setState(() {
+                _messages = [...removed, ..._messages]
+                  ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+              });
+            }
+          },
         ),
-        content: Text(
-          'Isso apaga todas as mensagens desta conversa.',
-          style: TextStyle(color: context.gama.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(
-              'Cancelar',
-              style: TextStyle(color: context.gama.textSecondary),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text('Apagar', style: TextStyle(color: context.gama.error)),
-          ),
-        ],
       ),
     );
+    _clearMessagesTimer = Timer(const Duration(seconds: 5), () {
+      _clearMessagesTimer = null;
+      // ignore: unawaited_futures
+      _service.deleteMessages(removed);
+    });
+  }
 
-    if (confirm == true) {
-      final messages = _service.getMessages(widget.conversationId);
-      await _service.deleteMessages(messages);
-      setState(() => _messages.clear());
-    }
+  String _attachmentPrompt(String action) {
+    final kind = _attachments.isEmpty
+        ? AttachmentKind.other
+        : _attachments.first.kind;
+    final subject = switch (kind) {
+      AttachmentKind.image => 'imagem',
+      AttachmentKind.video => 'vídeo',
+      AttachmentKind.audio => 'áudio',
+      AttachmentKind.zip => 'projeto compactado',
+      AttachmentKind.pdf => 'PDF',
+      _ => 'arquivo',
+    };
+    return switch (action) {
+      'Resuma' => 'Resuma o conteúdo do $subject que enviei.',
+      'Analise' => 'Analise o $subject que enviei e destaque o que importa.',
+      _ => 'Extraia os pontos principais e os próximos passos do $subject.',
+    };
   }
 
   @override
@@ -3044,6 +3140,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: _messages.isEmpty
                       ? _EmptyState(
                           oficinaKind: widget.oficinaKind,
+                          userName: IdentityService.instance.displayName,
+                          attachmentKinds: _attachments
+                              .map((attachment) => attachment.kind)
+                              .toList(growable: false),
                           onSuggestion: (action, text) {
                             if (widget.oficinaKind != null) {
                               _controller.text = text;
@@ -3060,7 +3160,23 @@ class _ChatScreenState extends State<ChatScreen> {
                               _composerFocusNode.requestFocus();
                               return;
                             }
-                            _controller.text = 'Gere um widget Flutter para: ';
+                            _controller.text = switch (action) {
+                              _EmptySuggestionAction.write =>
+                                'Ajude-me a escrever: ',
+                              _EmptySuggestionAction.explain =>
+                                'Explique este assunto de forma simples: ',
+                              _EmptySuggestionAction.brainstorm =>
+                                'Ajude-me a pensar em ideias para: ',
+                              _EmptySuggestionAction.summarizeAttachment =>
+                                _attachmentPrompt('Resuma'),
+                              _EmptySuggestionAction.analyzeAttachment =>
+                                _attachmentPrompt('Analise'),
+                              _EmptySuggestionAction.extractTasks =>
+                                _attachmentPrompt('Extraia os pontos principais e as tarefas de'),
+                              _EmptySuggestionAction.editAttachment =>
+                                'Sugira alterações para a imagem anexada.',
+                              _ => 'Ajude-me com: ',
+                            };
                             _composerFocusNode.requestFocus();
                           },
                         )
@@ -3091,7 +3207,31 @@ class _ChatScreenState extends State<ChatScreen> {
                                     setState(() => _newMessageAnimationId = null);
                                   }
                                 },
-                                child: RepaintBoundary(
+                                child: MouseRegion(
+                                  onEnter: (_) {
+                                    if (_hoveredMessageId != msg.id) {
+                                      setState(() => _hoveredMessageId = msg.id);
+                                    }
+                                  },
+                                  onExit: (_) {
+                                    if (_hoveredMessageId == msg.id) {
+                                      setState(() => _hoveredMessageId = null);
+                                    }
+                                  },
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.translucent,
+                                    onLongPress: isUser
+                                        ? () => _showMessageContextMenu(msg, index)
+                                        : null,
+                                    onTap: !isUser && !isLastAssistant
+                                        ? () => setState(() {
+                                            _expandedMessageActionsId =
+                                                _expandedMessageActionsId == msg.id
+                                                ? null
+                                                : msg.id;
+                                          })
+                                        : null,
+                                    child: RepaintBoundary(
                                   key: _messageKeys.putIfAbsent(
                                     msg.id,
                                     () => GlobalKey(),
@@ -3356,11 +3496,26 @@ class _ChatScreenState extends State<ChatScreen> {
                                                     ),
                                                   ],
                                                   if (!isUser &&
-                                                      (_sourcesByMessageId[msg
-                                                                  .id]
-                                                              ?.isNotEmpty ??
-                                                          false))
-                                                    _sourceChips(msg.id),
+                                                      ((_activityByMessageId[msg.id]
+                                                                  ?.isNotEmpty ??
+                                                              false) ||
+                                                          (_sourcesByMessageId[msg.id]
+                                                                  ?.isNotEmpty ??
+                                                              false)))
+                                                    _ActivityTimeline(
+                                                      key: ValueKey(
+                                                        'activity-${msg.id}',
+                                                      ),
+                                                      steps:
+                                                          _activityByMessageId[msg.id] ??
+                                                          const [],
+                                                      sources:
+                                                          _sourcesByMessageId[msg.id] ??
+                                                          const [],
+                                                      isRunning:
+                                                          _isLoading &&
+                                                          isLastAssistant,
+                                                    ),
                                                   if (!isUser &&
                                                       !_isLoading &&
                                                       _truncatedMessageIds
@@ -3470,6 +3625,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ),
                                     ),
                                   ),
+                                    ),
+                                  ),
                                 ),
                                 builder: (context, value, child) => Opacity(
                                   opacity: value,
@@ -3483,12 +3640,12 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                 ),
-                if (_showScrollToBottom)
+                if (_showScrollToBottom || (_isLoading && !_followStream))
                   Positioned(
                     right: 16,
                     bottom: 14,
                     child: AnimatedOpacity(
-                      opacity: _showScrollToBottom ? 1 : 0,
+                      opacity: 1,
                       duration: const Duration(milliseconds: 150),
                       child: FloatingActionButton.small(
                         heroTag: 'gama_scroll_to_bottom',
@@ -3953,35 +4110,165 @@ class _ArtifactStatusList extends StatelessWidget {
   }
 }
 
-enum _EmptySuggestionAction { reviewProject, explainError, generateWidget }
+class _ActivityTimeline extends StatelessWidget {
+  final List<String> steps;
+  final List<Map<String, dynamic>> sources;
+  final bool isRunning;
+
+  const _ActivityTimeline({
+    super.key,
+    required this.steps,
+    required this.sources,
+    required this.isRunning,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final title = sources.isNotEmpty
+        ? 'Pesquisou na web · ${sources.length} fontes'
+        : steps.isNotEmpty
+        ? steps.last
+        : 'Etapas da resposta';
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      decoration: BoxDecoration(
+        color: context.gama.surfaceCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: context.gama.borderSoft),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: isRunning,
+          dense: true,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 10),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          leading: Icon(
+            isRunning ? Icons.pending_outlined : Icons.task_alt_outlined,
+            size: 18,
+            color: context.gama.accent,
+          ),
+          title: Text(
+            title,
+            style: TextStyle(
+              color: context.gama.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          children: [
+            for (final step in steps)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text(
+                    '•  $step',
+                    style: TextStyle(
+                      color: context.gama.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            for (var index = 0; index < sources.length; index++)
+              Builder(
+                builder: (context) {
+                  final source = sources[index];
+                  final title = (source['title'] ?? source['url'] ?? 'Fonte ${index + 1}')
+                      .toString();
+                  final url = (source['url'] ?? source['link'] ?? '').toString();
+                  return Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: url.isEmpty
+                          ? null
+                          : () => launchUrl(
+                              Uri.parse(url),
+                              mode: LaunchMode.externalApplication,
+                            ),
+                      icon: const Icon(Icons.open_in_new_rounded, size: 14),
+                      label: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _EmptySuggestionAction {
+  write,
+  explain,
+  brainstorm,
+  summarizeAttachment,
+  analyzeAttachment,
+  extractTasks,
+  editAttachment,
+  reviewProject,
+  explainError,
+  generateWidget,
+}
 
 class _EmptyState extends StatelessWidget {
   final void Function(_EmptySuggestionAction action, String text) onSuggestion;
   final OficinaKind? oficinaKind;
+  final String userName;
+  final List<AttachmentKind> attachmentKinds;
 
-  const _EmptyState({required this.onSuggestion, this.oficinaKind});
+  const _EmptyState({
+    required this.onSuggestion,
+    required this.userName,
+    required this.attachmentKinds,
+    this.oficinaKind,
+  });
 
-  static const _suggestions = [
-    'Revisar meu projeto (ZIP/GitHub)',
-    'Explicar este erro',
-    'Gerar um widget Flutter',
-  ];
-  static const _suggestionTitles = [
-    'Revisar meu projeto',
-    'Explicar este erro',
-    'Gerar um widget Flutter',
-  ];
-  static const _suggestionDescriptions = [
-    'Anexe um ZIP ou cole um link do GitHub.',
-    'Cole uma mensagem de erro para entender o que ocorreu.',
-    'Descreva o componente que você quer construir.',
-  ];
-  static const _suggestionIcons = [
-    Icons.code_rounded,
-    Icons.lightbulb_outline_rounded,
-    Icons.psychology_alt_outlined,
-  ];
+  String get _firstName => userName.trim().split(RegExp(r'\s+')).first;
+  AttachmentKind? get _attachmentKind =>
+      attachmentKinds.isEmpty ? null : attachmentKinds.first;
 
+  List<_EmptySuggestionAction> get _activeActions {
+    switch (oficinaKind) {
+      case OficinaKind.imagem:
+      case OficinaKind.video:
+      case OficinaKind.programar:
+        return const [
+          _EmptySuggestionAction.generateWidget,
+          _EmptySuggestionAction.explainError,
+          _EmptySuggestionAction.reviewProject,
+        ];
+      case null:
+        return switch (_attachmentKind) {
+          AttachmentKind.image => const [
+            _EmptySuggestionAction.analyzeAttachment,
+            _EmptySuggestionAction.analyzeAttachment,
+            _EmptySuggestionAction.editAttachment,
+          ],
+          AttachmentKind.video || AttachmentKind.audio => const [
+            _EmptySuggestionAction.summarizeAttachment,
+            _EmptySuggestionAction.analyzeAttachment,
+            _EmptySuggestionAction.extractTasks,
+          ],
+          _ when _attachmentKind != null => const [
+            _EmptySuggestionAction.summarizeAttachment,
+            _EmptySuggestionAction.analyzeAttachment,
+            _EmptySuggestionAction.extractTasks,
+          ],
+          _ => const [
+            _EmptySuggestionAction.write,
+            _EmptySuggestionAction.explain,
+            _EmptySuggestionAction.brainstorm,
+          ],
+        };
+    }
+  }
   List<String> get _activeSuggestions {
     switch (oficinaKind) {
       case OficinaKind.imagem:
@@ -4003,7 +4290,29 @@ class _EmptyState extends StatelessWidget {
           'Refatore e melhore este código: ',
         ];
       case null:
-        return _suggestions;
+        return switch (_attachmentKind) {
+          AttachmentKind.image => [
+            'Descrever a imagem',
+            'Analisar os elementos',
+            'Sugerir uma edição',
+          ],
+          AttachmentKind.video => [
+            'Resumir o vídeo',
+            'Analisar uma cena',
+            'Listar os momentos principais',
+          ],
+          AttachmentKind.audio => [
+            'Resumir o áudio',
+            'Identificar os temas',
+            'Extrair decisões e tarefas',
+          ],
+          _ when _attachmentKind != null => [
+            'Resumir o arquivo',
+            'Analisar o conteúdo',
+            'Extrair pontos e tarefas',
+          ],
+          _ => ['Escrever um texto', 'Aprender algo novo', 'Pensar em ideias'],
+        };
     }
   }
 
@@ -4016,7 +4325,17 @@ class _EmptyState extends StatelessWidget {
       case OficinaKind.programar:
         return ['Criar projeto', 'Analisar código', 'Refatorar'];
       case null:
-        return _suggestionTitles;
+        return switch (_attachmentKind) {
+          AttachmentKind.image => ['Descrever', 'Analisar', 'Editar'],
+          AttachmentKind.video => ['Resumir', 'Analisar cena', 'Momentos-chave'],
+          AttachmentKind.audio => ['Resumir', 'Temas', 'Decisões e tarefas'],
+          _ when _attachmentKind != null => [
+            'Resumir arquivo',
+            'Analisar conteúdo',
+            'Extrair tarefas',
+          ],
+          _ => ['Escrever', 'Explicar', 'Criar ideias'],
+        };
     }
   }
 
@@ -4041,7 +4360,33 @@ class _EmptyState extends StatelessWidget {
           'Cole o trecho ou anexe os arquivos.',
         ];
       case null:
-        return _suggestionDescriptions;
+        return switch (_attachmentKind) {
+          AttachmentKind.image => [
+            'Descreva o que aparece ou peça detalhes visuais.',
+            'Identifique elementos e relações na imagem.',
+            'Diga como gostaria de transformar a imagem.',
+          ],
+          AttachmentKind.video => [
+            'Receba um resumo do conteúdo enviado.',
+            'Peça uma análise de uma cena específica.',
+            'Encontre os principais momentos do vídeo.',
+          ],
+          AttachmentKind.audio => [
+            'Receba um resumo do conteúdo falado.',
+            'Entenda os assuntos discutidos.',
+            'Liste decisões e ações mencionadas.',
+          ],
+          _ when _attachmentKind != null => [
+            'Faça um resumo claro do arquivo enviado.',
+            'Entenda o conteúdo e seus pontos importantes.',
+            'Liste decisões, tópicos e próximos passos.',
+          ],
+          _ => [
+            'Rascunhe uma mensagem, e-mail ou publicação.',
+            'Peça uma explicação passo a passo.',
+            'Explore possibilidades para um desafio.',
+          ],
+        };
     }
   }
 
@@ -4054,7 +4399,33 @@ class _EmptyState extends StatelessWidget {
       case OficinaKind.programar:
         return [Icons.code_rounded, Icons.folder_zip_outlined, Icons.auto_awesome_outlined];
       case null:
-        return _suggestionIcons;
+        return switch (_attachmentKind) {
+          AttachmentKind.image => [
+            Icons.image_outlined,
+            Icons.search_rounded,
+            Icons.auto_fix_high_outlined,
+          ],
+          AttachmentKind.video => [
+            Icons.movie_outlined,
+            Icons.search_rounded,
+            Icons.video_library_outlined,
+          ],
+          AttachmentKind.audio => [
+            Icons.summarize_outlined,
+            Icons.graphic_eq_rounded,
+            Icons.checklist_rounded,
+          ],
+          _ when _attachmentKind != null => [
+            Icons.summarize_outlined,
+            Icons.manage_search,
+            Icons.checklist_rounded,
+          ],
+          _ => [
+            Icons.edit_note_rounded,
+            Icons.lightbulb_outline_rounded,
+            Icons.auto_awesome_rounded,
+          ],
+        };
     }
   }
 
@@ -4067,7 +4438,7 @@ class _EmptyState extends StatelessWidget {
       case OficinaKind.programar:
         return 'Oficina · Programar';
       case null:
-        return 'O que vamos criar hoje?';
+        return 'Olá, $_firstName. O que vamos fazer?';
     }
   }
 
@@ -4080,7 +4451,9 @@ class _EmptyState extends StatelessWidget {
       case OficinaKind.programar:
         return 'Código, análise e arquivos com GLM Flash.\nCada mensagem é tratada como tarefa de criação.';
       case null:
-        return 'Converse, programe ou explore uma ideia.\nA Gama ajuda você a dar o próximo passo.';
+        return _attachmentKind != null
+            ? 'Seu anexo está pronto. Escolha uma sugestão ou escreva seu pedido.'
+            : 'Escolha um começo ou escreva o que você tem em mente.';
     }
   }
 
@@ -4195,7 +4568,7 @@ class _EmptyState extends StatelessWidget {
                     borderRadius: BorderRadius.circular(18),
                     child: InkWell(
                       onTap: () => onSuggestion(
-                        _EmptySuggestionAction.values[index],
+                        _activeActions[index],
                         entry.value,
                       ),
                       borderRadius: BorderRadius.circular(18),

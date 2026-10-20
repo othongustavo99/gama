@@ -445,38 +445,19 @@ class AppDrawer extends StatelessWidget {
         .showSnackBar(const SnackBar(content: Text('Em breve')));
   }
 
-  Future<void> _confirmDelete(BuildContext context, Conversation c) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: context.gama.surfaceCard,
-        title: Text(
-          'Apagar conversa?',
-          style: TextStyle(color: context.gama.textPrimary),
+  void _confirmDelete(BuildContext context, Conversation c) {
+    final service = ConversationService.instance;
+    service.stageDeleteConversation(c.id);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Conversa “${c.title}” apagada'),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'Desfazer',
+          onPressed: () => service.undoDeleteConversation(c.id),
         ),
-        content: Text(
-          '“${c.title}” será apagada permanentemente.',
-          style: TextStyle(color: context.gama.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(
-              'Cancelar',
-              style: TextStyle(color: context.gama.textSecondary),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Apagar', style: TextStyle(color: context.gama.error)),
-          ),
-        ],
       ),
     );
-
-    if (confirm == true) {
-      await ConversationService.instance.deleteConversation(c.id);
-    }
   }
 
   Future<void> _renameDialog(BuildContext context, Conversation c) async {

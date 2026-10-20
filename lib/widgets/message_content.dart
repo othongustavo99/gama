@@ -407,156 +407,151 @@ class MessageContentView extends StatelessWidget {
 
     return SelectionArea(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (images.isNotEmpty) ...[
-            ...images.map((img) {
-              final filePath = img.filePath;
-              final fileExists =
-                  filePath != null &&
-                  filePath.isNotEmpty &&
-                  File(filePath).existsSync();
-              if (!fileExists && img.base64.isEmpty) {
-                return Padding(
-                  padding: EdgeInsets.only(bottom: 10),
-                  child: Text(
-                    '[imagem indisponível]',
-                    style: TextStyle(color: context.gama.textMuted),
-                  ),
-                );
-              }
-              try {
-                final memoryBytes = img.base64.isEmpty
-                    ? null
-                    : base64Decode(img.base64);
-                final imageWidget = fileExists
-                    ? Image.file(
-                        File(filePath!),
-                        fit: BoxFit.contain,
-                        gaplessPlayback: true,
-                        errorBuilder: (_, __, ___) => Text(
-                          '[imagem indisponível]',
-                          style: TextStyle(color: context.gama.textMuted),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (images.isNotEmpty) ...[
+          ...images.map((img) {
+            final filePath = img.filePath;
+            final fileExists =
+                filePath != null &&
+                filePath.isNotEmpty &&
+                File(filePath).existsSync();
+            if (!fileExists && img.base64.isEmpty) {
+              return Padding(
+                padding: EdgeInsets.only(bottom: 10),
+                child: Text(
+                  '[imagem indisponível]',
+                  style: TextStyle(color: context.gama.textMuted),
+                ),
+              );
+            }
+            try {
+              final memoryBytes = img.base64.isEmpty
+                  ? null
+                  : base64Decode(img.base64);
+              final imageWidget = fileExists
+                  ? Image.file(
+                      File(filePath!),
+                      fit: BoxFit.contain,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, __, ___) => Text(
+                        '[imagem indisponível]',
+                        style: TextStyle(color: context.gama.textMuted),
+                      ),
+                    )
+                  : Image.memory(
+                      memoryBytes!,
+                      fit: BoxFit.contain,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, __, ___) => Text(
+                        '[imagem indisponível]',
+                        style: TextStyle(color: context.gama.textMuted),
+                      ),
+                    );
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Semantics(
+                      button: true,
+                      label: 'Abrir imagem em tela cheia',
+                      child: GestureDetector(
+                        onTap: () => showDialog<void>(
+                          context: context,
+                          barrierColor: Colors.black87,
+                          builder: (_) => _FullscreenImageDialog(
+                            image: fileExists
+                                ? Image.file(
+                                    File(filePath!),
+                                    fit: BoxFit.contain,
+                                  )
+                                : Image.memory(
+                                    memoryBytes!,
+                                    fit: BoxFit.contain,
+                                  ),
+                            sourcePath: fileExists ? filePath : null,
+                            base64Data: img.base64,
+                            mime: img.mime,
+                          ),
                         ),
-                      )
-                    : Image.memory(
-                        memoryBytes!,
-                        fit: BoxFit.contain,
-                        gaplessPlayback: true,
-                        errorBuilder: (_, __, ___) => Text(
-                          '[imagem indisponível]',
-                          style: TextStyle(color: context.gama.textMuted),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 480),
+                              child: imageWidget,
+                            ),
+                          ),
                         ),
-                      );
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Semantics(
-                        button: true,
-                        label: 'Abrir imagem em tela cheia',
-                        child: GestureDetector(
-                          onTap: () => showDialog<void>(
-                            context: context,
-                            barrierColor: Colors.black87,
-                            builder: (_) => _FullscreenImageDialog(
-                              image: fileExists
-                                  ? Image.file(
-                                      File(filePath!),
-                                      fit: BoxFit.contain,
-                                    )
-                                  : Image.memory(
-                                      memoryBytes!,
-                                      fit: BoxFit.contain,
-                                    ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Wrap(
+                        spacing: 4,
+                        children: [
+                          TextButton.icon(
+                            style: TextButton.styleFrom(
+                              foregroundColor: context.gama.accent,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            onPressed: () async {
+                              try {
+                                final path = await _saveImageFile(
+                                  sourcePath: fileExists ? filePath : null,
+                                  base64Data: img.base64,
+                                  mime: img.mime,
+                                );
+                                await DownloadService.instance.openPath(path);
+                              } catch (_) {}
+                            },
+                            icon: const Icon(Icons.download_rounded, size: 18),
+                            label: const Text('Salvar imagem'),
+                          ),
+                          TextButton.icon(
+                            onPressed: () => _shareImageFile(
+                              context,
                               sourcePath: fileExists ? filePath : null,
                               base64Data: img.base64,
                               mime: img.mime,
                             ),
+                            icon: const Icon(Icons.share_outlined, size: 17),
+                            label: const Text('Compartilhar'),
                           ),
-                          child: MouseRegion(
-                            cursor: SystemMouseCursors.click,
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(14),
-                              child: ConstrainedBox(
-                                constraints: const BoxConstraints(
-                                  maxHeight: 480,
-                                ),
-                                child: imageWidget,
-                              ),
-                            ),
-                          ),
-                        ),
+                        ],
                       ),
-                      const SizedBox(height: 6),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Wrap(
-                          spacing: 4,
-                          children: [
-                            TextButton.icon(
-                              style: TextButton.styleFrom(
-                                foregroundColor: context.gama.accent,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                ),
-                                visualDensity: VisualDensity.compact,
-                              ),
-                              onPressed: () async {
-                                try {
-                                  final path = await _saveImageFile(
-                                    sourcePath: fileExists ? filePath : null,
-                                    base64Data: img.base64,
-                                    mime: img.mime,
-                                  );
-                                  await DownloadService.instance.openPath(path);
-                                } catch (_) {}
-                              },
-                              icon: const Icon(
-                                Icons.download_rounded,
-                                size: 18,
-                              ),
-                              label: const Text('Salvar imagem'),
-                            ),
-                            TextButton.icon(
-                              onPressed: () => _shareImageFile(
-                                context,
-                                sourcePath: fileExists ? filePath : null,
-                                base64Data: img.base64,
-                                mime: img.mime,
-                              ),
-                              icon: const Icon(Icons.share_outlined, size: 17),
-                              label: const Text('Compartilhar'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              } catch (_) {
-                return const SizedBox.shrink();
-              }
-            }),
-          ],
-          if (parsed.text.isNotEmpty)
-            _MarkdownMessage(
-              text: parsed.text,
-              isUser: isUser,
-              textStyle: textStyle,
-              onTapLink: onTapLink,
-            ),
-          if (parsed.attachments.isNotEmpty) ...[
-            if (parsed.text.isNotEmpty) const SizedBox(height: 10),
-            ...parsed.attachments.map(
-              (a) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: _AttachmentChip(preview: a, isUser: isUser),
-              ),
-            ),
-          ],
+                    ),
+                  ],
+                ),
+              );
+            } catch (_) {
+              return const SizedBox.shrink();
+            }
+          }),
         ],
+        if (parsed.text.isNotEmpty)
+          _MarkdownMessage(
+            text: parsed.text,
+            isUser: isUser,
+            textStyle: textStyle,
+            onTapLink: onTapLink,
+          ),
+        if (parsed.attachments.isNotEmpty) ...[
+          if (parsed.text.isNotEmpty) const SizedBox(height: 10),
+          ...parsed.attachments.map(
+            (a) => Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _AttachmentChip(preview: a, isUser: isUser),
+            ),
+          ),
+        ],
+      ],
       ),
     );
   }
@@ -642,49 +637,16 @@ class _MarkdownMessage extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final part in parts)
-          if (part.isCode)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: RepaintBoundary(
-                child: _CopyableCodeBlock(
-                  code: part.content,
-                  language: part.language,
-                  isUser: isUser,
-                  textStyle: textStyle,
-                ),
-              ),
-            )
-          else if (part.content.trim().isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: MarkdownBody(
-                data: MessageContentView._linkifyBareUrls(part.content),
-                inlineSyntaxes: [_TexMathInlineSyntax()],
-                onTapLink: (linkText, href, title) {
-                  if (onTapLink != null) {
-                    onTapLink!(href);
-                  } else if (href != null) {
-                    launchUrl(
-                      Uri.parse(href),
-                      mode: LaunchMode.externalApplication,
-                    );
-                  }
-                },
-                builders: {
-                  'math': _TexMathBuilder(textStyle),
-                  'table': _HScrollTableBuilder(
-                    isUser: isUser,
-                    onTapLink: onTapLink,
-                  ),
-                },
-                styleSheet: _markdownStyleSheet(
-                  isUser,
-                  textStyle,
-                  context.gama,
-                ),
-              ),
+        for (var index = 0; index < parts.length; index++)
+          _MarkdownPartView(
+            key: ValueKey(
+              'message-part-$index-${parts[index].isCode}-${parts[index].isOpenCode}',
             ),
+            part: parts[index],
+            isUser: isUser,
+            textStyle: textStyle,
+            onTapLink: onTapLink,
+          ),
       ],
     );
   }
@@ -759,13 +721,110 @@ class _MarkdownMessage extends StatelessWidget {
   }
 }
 
+class _MarkdownPartView extends StatefulWidget {
+  final _CodePart part;
+  final bool isUser;
+  final TextStyle textStyle;
+  final void Function(String? href)? onTapLink;
+
+  const _MarkdownPartView({
+    super.key,
+    required this.part,
+    required this.isUser,
+    required this.textStyle,
+    required this.onTapLink,
+  });
+
+  @override
+  State<_MarkdownPartView> createState() => _MarkdownPartViewState();
+}
+
+class _MarkdownPartViewState extends State<_MarkdownPartView> {
+  late Widget _cachedChild = _buildChild();
+
+  @override
+  void didUpdateWidget(covariant _MarkdownPartView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldPart = oldWidget.part;
+    final newPart = widget.part;
+    if (oldPart.content != newPart.content ||
+        oldPart.language != newPart.language ||
+        oldPart.isCode != newPart.isCode ||
+        oldPart.isOpenCode != newPart.isOpenCode ||
+        oldWidget.isUser != widget.isUser ||
+        oldWidget.textStyle != widget.textStyle ||
+        oldWidget.onTapLink != widget.onTapLink) {
+      _cachedChild = _buildChild();
+    }
+  }
+
+  Widget _buildChild() {
+    final part = widget.part;
+    if (part.content.trim().isEmpty) return const SizedBox.shrink();
+    if (part.isCode) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: RepaintBoundary(
+          child: _CopyableCodeBlock(
+            key: ValueKey('closed-code-${part.language}-${part.content.hashCode}'),
+            code: part.content,
+            language: part.language,
+            isUser: widget.isUser,
+            textStyle: widget.textStyle,
+          ),
+        ),
+      );
+    }
+    if (part.isOpenCode) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: SelectableText(
+          part.content,
+          style: widget.textStyle.copyWith(fontFamily: 'monospace'),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: MarkdownBody(
+        data: MessageContentView._linkifyBareUrls(part.content),
+        inlineSyntaxes: [_TexMathInlineSyntax()],
+        onTapLink: (linkText, href, title) {
+          if (widget.onTapLink != null) {
+            widget.onTapLink!(href);
+          } else if (href != null) {
+            launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
+          }
+        },
+        builders: {
+          'math': _TexMathBuilder(widget.textStyle),
+          'table': _HScrollTableBuilder(
+            isUser: widget.isUser,
+            onTapLink: widget.onTapLink,
+          ),
+        },
+        styleSheet: _MarkdownMessage._markdownStyleSheet(
+          widget.isUser,
+          widget.textStyle,
+          context.gama,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => _cachedChild;
+}
+
 class _CodePart {
   final bool isCode;
+  final bool isOpenCode;
   final String content;
   final String language;
 
   const _CodePart({
     required this.isCode,
+    this.isOpenCode = false,
     required this.content,
     this.language = '',
   });
@@ -816,12 +875,19 @@ List<_CodePart> _splitCodeBlocks(String text) {
     }
 
     if (closeStart < 0) {
-      // fence sem fechamento: trata o resto como código
+      // Durante o streaming, o último bloco não fechado é texto simples.
       var code = src.substring(openEnd);
       if (code.endsWith('\n')) {
         code = code.substring(0, code.length - 1);
       }
-      parts.add(_CodePart(isCode: true, content: code, language: language));
+      parts.add(
+        _CodePart(
+          isCode: false,
+          isOpenCode: true,
+          content: code,
+          language: language,
+        ),
+      );
       cursor = src.length;
       break;
     }
@@ -855,6 +921,7 @@ class _CopyableCodeBlock extends StatefulWidget {
   final TextStyle textStyle;
 
   const _CopyableCodeBlock({
+    super.key,
     required this.code,
     required this.language,
     required this.isUser,
@@ -864,6 +931,8 @@ class _CopyableCodeBlock extends StatefulWidget {
   @override
   State<_CopyableCodeBlock> createState() => _CopyableCodeBlockState();
 }
+
+final Map<String, TextSpan> _highlightedCodeCache = <String, TextSpan>{};
 
 class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
   bool _copied = false;
@@ -953,7 +1022,11 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
     );
   }
 
-  TextSpan _highlightedText(Map<String, TextStyle> theme) {
+  TextSpan _highlightedText(Map<String, TextStyle> theme, bool isDark) {
+    final language = _normalizeCodeLanguage(widget.language);
+    final cacheKey = '${isDark ? 'dark' : 'light'}\u0000$language\u0000${widget.code}';
+    final cached = _highlightedCodeCache[cacheKey];
+    if (cached != null) return cached;
     final base = TextStyle(
       fontFamily: 'monospace',
       fontSize: 13,
@@ -964,17 +1037,28 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
     try {
       final result = highlight.parse(
         widget.code,
-        language: _normalizeCodeLanguage(widget.language),
+        language: language,
       );
-      return TextSpan(
+      final span = TextSpan(
         style: base,
         children: (result.nodes ?? [Node(value: widget.code)])
             .map((node) => _spanForNode(node, theme))
             .toList(),
       );
+      _cacheHighlight(cacheKey, span);
+      return span;
     } catch (_) {
-      return TextSpan(text: widget.code, style: base);
+      final span = TextSpan(text: widget.code, style: base);
+      _cacheHighlight(cacheKey, span);
+      return span;
     }
+  }
+
+  void _cacheHighlight(String key, TextSpan span) {
+    if (_highlightedCodeCache.length >= 80) {
+      _highlightedCodeCache.remove(_highlightedCodeCache.keys.first);
+    }
+    _highlightedCodeCache[key] = span;
   }
 
   @override
@@ -989,7 +1073,7 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
         ? Colors.white.withValues(alpha: 0.12)
         : context.gama.border;
     final muted = isDark ? const Color(0xFFB8B8B2) : const Color(0xFF666666);
-    final highlighted = _highlightedText(theme);
+    final highlighted = _highlightedText(theme, isDark);
     final content = SelectionArea(
       child: RichText(
         text: highlighted,

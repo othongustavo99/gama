@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -16,6 +18,8 @@ class ConversationService extends ChangeNotifier {
 
   String? _currentConversationId;
   final Map<String, String> _drafts = <String, String>{};
+  final Set<String> _pendingConversationDeletes = <String>{};
+  final Map<String, Timer> _conversationDeleteTimers = <String, Timer>{};
   static const _draftPrefix = 'gama_chat_draft_';
 
   String? get currentConversationId => _currentConversationId;
@@ -95,6 +99,7 @@ class ConversationService extends ChangeNotifier {
     return _conversationsBox.values
         .where(
           (c) =>
+              !_pendingConversationDeletes.contains(c.id) &&
               c.isPinned &&
               (conversationHasMessages(c.id) ||
                   (_drafts[c.id]?.isNotEmpty ?? false)),
@@ -107,6 +112,7 @@ class ConversationService extends ChangeNotifier {
     return _conversationsBox.values
         .where(
           (c) =>
+              !_pendingConversationDeletes.contains(c.id) &&
               !c.isPinned &&
               (conversationHasMessages(c.id) ||
                   (_drafts[c.id]?.isNotEmpty ?? false)),
@@ -234,6 +240,8 @@ class ConversationService extends ChangeNotifier {
   }
 
   Future<void> deleteConversation(String id) async {
+    _conversationDeleteTimers.remove(id)?.cancel();
+    _pendingConversationDeletes.remove(id);
     // Apaga todas as mensagens dessa conversa
     final messagesToDelete = _messagesBox.values
         .where((m) => m.conversationId == id)
@@ -264,6 +272,24 @@ class ConversationService extends ChangeNotifier {
     notifyListeners();
     // ignore: unawaited_futures
     ConversationSyncService.instance.deleteRemote(id);
+  }
+
+  void stageDeleteConversation(String id) {
+    if (_conversationsBox.get(id) == null ||
+        !_pendingConversationDeletes.add(id)) {
+      return;
+    }
+    notifyListeners();
+    _conversationDeleteTimers[id] = Timer(const Duration(seconds: 5), () {
+      _conversationDeleteTimers.remove(id);
+      // ignore: unawaited_futures
+      deleteConversation(id);
+    });
+  }
+
+  void undoDeleteConversation(String id) {
+    _conversationDeleteTimers.remove(id)?.cancel();
+    if (_pendingConversationDeletes.remove(id)) notifyListeners();
   }
 
   Future<void> touchConversation(String id) async {
