@@ -184,6 +184,19 @@ class ConversationService extends ChangeNotifier {
     return conversation;
   }
 
+  /// Cria uma conversa para uma rota independente, sem trocar a conversa que
+  /// o HomeScreen está exibindo. Usado pelos modos da Oficina.
+  Future<Conversation> createDetachedConversation({
+    String title = 'Nova conversa',
+    String? mode,
+  }) async {
+    final id = const Uuid().v4();
+    final conversation = Conversation(id: id, title: title, mode: mode);
+    await _conversationsBox.put(id, conversation);
+    notifyListeners();
+    return conversation;
+  }
+
   /// Cria nova conversa apenas se a atual já tiver mensagens.
   /// Se a atual estiver vazia, reutiliza o rascunho (não gera outra vazia).
   Future<Conversation> createConversationIfNeeded({

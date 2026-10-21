@@ -57,7 +57,7 @@ class _OficinaScreenState extends State<OficinaScreen> {
     String? prompt,
   }) async {
     await HapticFeedback.selectionClick();
-    final conv = await ConversationService.instance.createConversationIfNeeded(
+    final conv = await ConversationService.instance.createDetachedConversation(
       mode: kind.chatMode,
     );
     if (!context.mounted) return;
@@ -82,7 +82,6 @@ class _OficinaScreenState extends State<OficinaScreen> {
   ) async {
     final kind = OficinaKindX.fromChatMode(conversation.mode);
     if (kind == null) return;
-    await ConversationService.instance.selectConversation(conversation.id);
     if (!context.mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(

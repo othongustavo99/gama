@@ -2462,13 +2462,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final imagePayload = AttachmentService.buildImagesPayload(pending);
     _attachments.clear();
 
-    if (!isRegeneration &&
-        !_service.conversationHasMessages(widget.conversationId)) {
-      await _service.createConversationIfNeeded(
-        mode: widget.oficinaKind?.chatMode,
-      );
-    }
-
     final userMessage = isRegeneration
         ? _regeneratingUserMessage!
         : Message(
