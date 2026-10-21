@@ -69,6 +69,41 @@ class LibraryScreen extends StatefulWidget {
     return savedPath;
   }
 
+  /// Copia uma imagem ou vídeo da biblioteca para a pasta de downloads do app.
+  static Future<void> downloadEntry(
+    BuildContext context,
+    Map<String, dynamic> it,
+  ) async {
+    final path = it['path']?.toString();
+    final name = it['name']?.toString() ?? 'arquivo';
+    if (path == null || path.isEmpty || !await File(path).exists()) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Arquivo não encontrado no disco.')),
+        );
+      }
+      return;
+    }
+
+    try {
+      await DownloadService.instance.copyFile(path, filename: name);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Arquivo baixado: $name'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Não consegui baixar o arquivo: $e')),
+        );
+      }
+    }
+  }
+
   /// Abre arquivo/imagem da biblioteca (foto no app; PDF/ZIP no visualizador do SO).
   static Future<void> openEntry(
     BuildContext context,
@@ -258,7 +293,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 final it = _items[index];
                 final kind = it['kind']?.toString() ?? '';
                 final path = it['path']?.toString();
-                final hasFile = path != null && path.isNotEmpty;
+                final hasFile =
+                    path != null && path.isNotEmpty && File(path).existsSync();
+                final canDownload =
+                    hasFile && (kind == 'image' || kind == 'video');
 
                 return Material(
                   color: context.gama.surfaceCard,
@@ -301,6 +339,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               ],
                             ),
                           ),
+                          if (canDownload)
+                            IconButton(
+                              tooltip: kind == 'video'
+                                  ? 'Baixar vídeo'
+                                  : 'Baixar imagem',
+                              onPressed: () =>
+                                  LibraryScreen.downloadEntry(context, it),
+                              icon: const Icon(Icons.download_outlined),
+                            ),
                           Icon(
                             hasFile
                                 ? Icons.chevron_right_rounded

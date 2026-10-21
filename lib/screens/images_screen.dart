@@ -90,27 +90,54 @@ class _ImagesScreenState extends State<ImagesScreen> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Expanded(
-                          child: ClipRRect(
-                            borderRadius: const BorderRadius.vertical(
-                              top: Radius.circular(14),
-                            ),
-                            child: hasFile
-                                ? Image.file(
-                                    File(path!),
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Center(
-                                      child: Icon(
-                                        Icons.broken_image_outlined,
-                                        color: context.gama.textMuted,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              ClipRRect(
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(14),
+                                ),
+                                child: hasFile
+                                    ? Image.file(
+                                        File(path!),
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Center(
+                                          child: Icon(
+                                            Icons.broken_image_outlined,
+                                            color: context.gama.textMuted,
+                                          ),
                                       ),
-                                    ),
-                                  )
-                                : Center(
-                                    child: Icon(
-                                      Icons.image_not_supported_outlined,
-                                      color: context.gama.textMuted,
+                                    )
+                                    : Center(
+                                        child: Icon(
+                                          Icons.image_not_supported_outlined,
+                                          color: context.gama.textMuted,
+                                        ),
+                                      ),
+                              ),
+                              Positioned(
+                                top: 6,
+                                right: 6,
+                                child: Material(
+                                  color: context.gama.surface.withValues(
+                                    alpha: 0.9,
+                                  ),
+                                  shape: const CircleBorder(),
+                                  child: IconButton(
+                                    tooltip: 'Baixar imagem',
+                                    onPressed: hasFile
+                                        ? () => LibraryScreen.downloadEntry(
+                                            context,
+                                            it,
+                                          )
+                                        : null,
+                                    icon: const Icon(
+                                      Icons.download_outlined,
                                     ),
                                   ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         Padding(

@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
 import 'auth_interceptor.dart';
@@ -27,7 +30,9 @@ class ConversationSyncService {
   );
 
   bool _syncing = false;
+  bool _syncingPendingGenerations = false;
   DateTime? _lastFullSync;
+  static const _pendingGenerationsKey = 'gama_pending_generations';
 
   Future<bool> _hasGoogleSession() async {
     if (IdentityService.instance.provider != 'google') return false;
@@ -73,6 +78,113 @@ class ConversationSyncService {
       debugPrintStack(stackTrace: st);
     } finally {
       _syncing = false;
+    }
+  }
+
+  Future<Map<String, String>> _readPendingGenerations() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pendingGenerationsKey);
+    if (raw == null || raw.isEmpty) return <String, String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return <String, String>{};
+      return decoded.map(
+        (key, value) => MapEntry(key.toString(), value.toString()),
+      );
+    } catch (_) {
+      return <String, String>{};
+    }
+  }
+
+  Future<void> _writePendingGenerations(Map<String, String> pending) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (pending.isEmpty) {
+      await prefs.remove(_pendingGenerationsKey);
+    } else {
+      await prefs.setString(_pendingGenerationsKey, jsonEncode(pending));
+    }
+  }
+
+  Future<void> trackPendingGeneration({
+    required String conversationId,
+    required String assistantMessageId,
+  }) async {
+    if (IdentityService.instance.provider != 'google' ||
+        conversationId.isEmpty ||
+        assistantMessageId.isEmpty) {
+      return;
+    }
+    final pending = await _readPendingGenerations();
+    pending[assistantMessageId] = conversationId;
+    await _writePendingGenerations(pending);
+  }
+
+  Future<void> clearPendingGeneration(String assistantMessageId) async {
+    if (assistantMessageId.isEmpty) return;
+    final pending = await _readPendingGenerations();
+    if (pending.remove(assistantMessageId) != null) {
+      await _writePendingGenerations(pending);
+    }
+  }
+
+  /// Recolhe respostas que o servidor terminou após o app perder a conexão.
+  Future<void> syncPendingGenerations() async {
+    if (_syncingPendingGenerations) return;
+    _syncingPendingGenerations = true;
+    try {
+      final pending = await _readPendingGenerations();
+      if (pending.isEmpty || !await _hasGoogleSession()) return;
+      for (final entry in Map<String, String>.from(pending).entries) {
+        try {
+          final response = await _client().get('/conversations/${entry.value}');
+          if ((response.statusCode ?? 0) >= 400 || response.data is! Map) {
+            continue;
+          }
+          final conversation = Map<String, dynamic>.from(response.data as Map);
+          final rawMessages = conversation['messages'];
+          if (rawMessages is! List) continue;
+          Map<String, dynamic>? completed;
+          for (final raw in rawMessages) {
+            if (raw is Map && (raw['id'] ?? '').toString() == entry.key) {
+              completed = Map<String, dynamic>.from(raw);
+              break;
+            }
+          }
+          final content = completed?['content']?.toString() ?? '';
+          if (completed == null || content.trim().isEmpty) continue;
+
+          final local = ConversationService.instance;
+          final matchingMessages = local
+              .getMessages(entry.value)
+              .where((item) => item.id == entry.key)
+              .toList();
+          final message = matchingMessages.isEmpty ? null : matchingMessages.first;
+          if (message != null) {
+            message.sourcesJson = (completed['sourcesJson'] ?? '').toString();
+            message.isTruncated = completed['isTruncated'] == true;
+            await local.updateMessageContent(message, content, sync: false);
+          } else {
+            await local.addMessage(
+              Message(
+                id: entry.key,
+                role: 'assistant',
+                content: content,
+                conversationId: entry.value,
+                timestamp: _parseDate(completed['timestamp']),
+                sourcesJson: (completed['sourcesJson'] ?? '').toString(),
+                isTruncated: completed['isTruncated'] == true,
+              ),
+              sync: false,
+            );
+          }
+          pending.remove(entry.key);
+        } catch (e) {
+          debugPrint('pending generation sync ${entry.key}: $e');
+        }
+      }
+      await _writePendingGenerations(pending);
+    } finally {
+      _syncingPendingGenerations = false;
     }
   }
 

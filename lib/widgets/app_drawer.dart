@@ -514,7 +514,7 @@ class AppDrawer extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Conversa “${c.title}” apagada'),
-        duration: const Duration(seconds: 5),
+        duration: const Duration(seconds: 3),
         action: SnackBarAction(
           label: 'Desfazer',
           onPressed: () => service.undoDeleteConversation(c.id),

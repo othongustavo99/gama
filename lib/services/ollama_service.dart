@@ -8,6 +8,7 @@ import 'auth_interceptor.dart';
 import '../models/message.dart';
 import '../utils/message_sanitize.dart';
 import 'identity_service.dart';
+import 'location_service.dart';
 import 'settings_service.dart';
 import 'plugin_settings_service.dart';
 import 'context_manager.dart';
@@ -275,6 +276,44 @@ class OllamaService {
     }
   }
 
+  Future<void> cancelChatGeneration(String assistantMessageId) async {
+    if (assistantMessageId.isEmpty) return;
+    try {
+      await _client().post(
+        '/chat/cancel/${Uri.encodeComponent(assistantMessageId)}',
+        options: Options(
+          receiveTimeout: const Duration(seconds: 5),
+          sendTimeout: const Duration(seconds: 5),
+        ),
+      );
+    } catch (_) {
+      // Cancelamento local continua funcionando se o backend estiver offline.
+    }
+  }
+
+  String _latestUserMessageText(List<Message> messages) {
+    for (final message in messages.reversed) {
+      if (message.role == 'user') return message.content.toLowerCase();
+    }
+    return '';
+  }
+
+  bool _requestNeedsCurrentLocation(String text) {
+    final localIntent = RegExp(
+      r'\b(minha localização|minha localizacao|onde estou|onde eu estou|perto de mim|perto daqui|aqui perto|na minha cidade|na minha região|na minha regiao|meu endereço|meu endereco|local atual)\b',
+    ).hasMatch(text);
+    if (localIntent) return true;
+
+    final asksWeather = RegExp(
+      r'\b(clima|tempo|temperatura|chover|chuva|previsão|previsao)\b',
+    ).hasMatch(text);
+    if (!asksWeather) return false;
+
+    final namesAnotherPlace = RegExp(
+      r'\b(?:em|no|na|para|in|at)\s+(?!(?:mim|minha|meu|qual|que|aqui|perto)\b)[a-zà-ÿ]',
+    ).hasMatch(text);
+    return !namesAnotherPlace;
+  }
   Stream<ChatStreamEvent> chatStream({
     required List<Message> messages,
     String? model,
@@ -286,6 +325,7 @@ class OllamaService {
 
     /// ID da conversa no app — mantém project_id/ZIP entre mensagens.
     String? conversationId,
+    String? assistantMessageId,
   }) async* {
     final selectedModel = model ?? SettingsService.instance.model;
     final dio = _client();
@@ -325,6 +365,20 @@ class OllamaService {
         });
       }
 
+      final locationRequest = _latestUserMessageText(messages);
+      if (!isOficina && _requestNeedsCurrentLocation(locationRequest)) {
+        final location = await LocationService.instance.currentLocationContext();
+        if (location != null) {
+          requestMessages.insert(0, {
+            'role': 'system',
+            'content':
+                'Contexto de localização temporário para esta solicitação: $location. '
+                'Se a pessoa não especificar outra localidade, use esta cidade/região '
+                'como referência para responder e para consultas de clima. Não invente '
+                'um endereço exato e não persista esta informação.',
+          });
+        }
+      }
       final response = await dio.post(
         '/chat',
         data: {
@@ -342,6 +396,8 @@ class OllamaService {
           if (chatMode != null) 'chat_mode': chatMode,
           if (conversationId != null && conversationId.isNotEmpty)
             'conversation_id': conversationId,
+          if (assistantMessageId != null && assistantMessageId.isNotEmpty)
+            'assistant_message_id': assistantMessageId,
         },
         options: Options(
           responseType: ResponseType.stream,

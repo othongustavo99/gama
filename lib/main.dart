@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -10,12 +12,23 @@ import 'models/conversation.dart';
 import 'models/message.dart';
 import 'screens/splash_screen.dart';
 import 'services/conversation_service.dart';
+import 'services/conversation_sync_service.dart';
 import 'services/settings_service.dart';
 import 'services/identity_service.dart';
 
+const _gamaDarkSystemUiOverlayStyle = SystemUiOverlayStyle(
+  statusBarColor: Color(0xFF10141B),
+  statusBarIconBrightness: Brightness.light,
+  statusBarBrightness: Brightness.dark,
+  systemNavigationBarColor: Color(0xFF0B0E13),
+  systemNavigationBarDividerColor: Color(0xFF0B0E13),
+  systemNavigationBarIconBrightness: Brightness.light,
+  systemNavigationBarContrastEnforced: false,
+);
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(_gamaDarkSystemUiOverlayStyle);
 
   await Hive.initFlutter();
 
@@ -55,44 +68,70 @@ Future<void> main() async {
   );
 }
 
-class GamaApp extends StatelessWidget {
+class GamaApp extends StatefulWidget {
   const GamaApp({super.key});
 
-  ThemeData _theme(Brightness brightness) {
-    final isDark = brightness == Brightness.dark;
-    final palette = isDark ? GamaPalette.dark() : GamaPalette.light();
+  @override
+  State<GamaApp> createState() => _GamaAppState();
+}
+
+class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
+  Timer? _pendingGenerationSyncTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(ConversationSyncService.instance.syncPendingGenerations());
+    _pendingGenerationSyncTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) {
+        if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+          unawaited(ConversationSyncService.instance.syncPendingGenerations());
+        }
+      },
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ConversationSyncService.instance.syncPendingGenerations());
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pendingGenerationSyncTimer?.cancel();
+    super.dispose();
+  }
+
+  ThemeData _theme() {
+    final palette = GamaPalette.dark();
     final background = palette.background;
     final surface = palette.surface;
     final textPrimary = palette.textPrimary;
     final textSecondary = palette.textSecondary;
     final border = palette.border;
-    final scheme = isDark
-        ? ColorScheme.dark(
-            primary: palette.accent,
-            secondary: palette.accentCool,
-            surface: palette.surface,
-            error: palette.error,
-            onPrimary: Colors.white,
-            onSecondary: Colors.white,
-            onSurface: palette.textPrimary,
-          )
-        : ColorScheme.light(
-            primary: palette.accentMuted,
-            secondary: palette.accentCool,
-            surface: surface,
-            error: palette.error,
-            onPrimary: Colors.white,
-            onSecondary: Colors.white,
-            onSurface: textPrimary,
-          );
+    final scheme = ColorScheme.dark(
+      primary: palette.accent,
+      secondary: palette.accentCool,
+      surface: palette.surface,
+      error: palette.error,
+      onPrimary: Colors.white,
+      onSecondary: Colors.white,
+      onSurface: palette.textPrimary,
+    );
     return ThemeData(
-      brightness: brightness,
+      brightness: Brightness.dark,
       useMaterial3: true,
       fontFamily: 'Inter',
       extensions: [palette],
       scaffoldBackgroundColor: background,
       colorScheme: scheme,
       appBarTheme: AppBarTheme(
+        systemOverlayStyle: _gamaDarkSystemUiOverlayStyle,
         backgroundColor: surface,
         foregroundColor: textPrimary,
         elevation: 0,
@@ -200,15 +239,13 @@ class GamaApp extends StatelessWidget {
       animation: SettingsService.instance,
       builder: (context, _) {
         final scale = SettingsService.instance.fontScale;
-        final mode = SettingsService.instance.themeMode;
-        final lightTheme = _theme(Brightness.light);
-        final darkTheme = _theme(Brightness.dark);
+        final darkTheme = _theme();
         return MaterialApp(
           title: 'Gama',
           debugShowCheckedModeBanner: false,
-          theme: lightTheme,
+          theme: darkTheme,
           darkTheme: darkTheme,
-          themeMode: mode,
+          themeMode: ThemeMode.dark,
           locale: const Locale('pt', 'BR'),
           supportedLocales: const [Locale('pt', 'BR'), Locale('en')],
           localizationsDelegates: const [
@@ -218,21 +255,12 @@ class GamaApp extends StatelessWidget {
           ],
           builder: (context, child) {
             final media = MediaQuery.of(context);
-            final isLight = Theme.of(context).brightness == Brightness.light;
-            final overlayStyle = SystemUiOverlayStyle(
+            const overlayStyle = SystemUiOverlayStyle(
               statusBarColor: Colors.transparent,
-              statusBarIconBrightness: isLight
-                  ? Brightness.dark
-                  : Brightness.light,
-              systemNavigationBarColor: isLight
-                  ? const Color(0xFFF6F7F9)
-                  : Colors.black,
-              systemNavigationBarIconBrightness: isLight
-                  ? Brightness.dark
-                  : Brightness.light,
-              systemNavigationBarDividerColor: isLight
-                  ? const Color(0xFFD9DEE5)
-                  : Colors.black,
+              statusBarIconBrightness: Brightness.light,
+              systemNavigationBarColor: Colors.black,
+              systemNavigationBarIconBrightness: Brightness.light,
+              systemNavigationBarDividerColor: Colors.black,
               systemNavigationBarContrastEnforced: false,
             );
             final systemScale = media.textScaler.scale(1.0);

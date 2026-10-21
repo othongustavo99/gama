@@ -25,7 +25,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _statusMessage;
   bool? _statusOk;
   bool _ttsAuto = false;
-  ThemeMode _themeMode = ThemeMode.dark;
   double _fontScale = 1.0;
   bool _developerMode = false;
 
@@ -35,7 +34,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _urlController.text = SettingsService.instance.baseUrl;
     _mode = SettingsService.instance.mode;
     _ttsAuto = SettingsService.instance.ttsAuto;
-    _themeMode = SettingsService.instance.themeMode;
     _fontScale = SettingsService.instance.fontScale;
     _developerMode = SettingsService.instance.developerMode;
   }
@@ -118,7 +116,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await SettingsService.instance.setBaseUrl(_urlController.text);
     await SettingsService.instance.setMode(_mode);
     await SettingsService.instance.setTtsAuto(_ttsAuto);
-    await SettingsService.instance.setThemeMode(_themeMode);
     await SettingsService.instance.setFontScale(_fontScale);
     await SettingsService.instance.setDeveloperMode(_developerMode);
 
@@ -292,27 +289,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 28),
           const _SectionTitle('Aparência e acessibilidade'),
-          const SizedBox(height: 8),
-          DropdownButtonFormField<ThemeMode>(
-            value: _themeMode,
-            decoration: const InputDecoration(
-              labelText: 'Tema do aplicativo',
-              helperText: 'Escolha o tema escuro, claro ou o tema do sistema.',
-            ),
-            items: const [
-              DropdownMenuItem(value: ThemeMode.dark, child: Text('Escuro')),
-              DropdownMenuItem(value: ThemeMode.light, child: Text('Claro')),
-              DropdownMenuItem(
-                value: ThemeMode.system,
-                child: Text('Seguir sistema'),
-              ),
-            ],
-            onChanged: (value) async {
-              if (value == null) return;
-              setState(() => _themeMode = value);
-              await SettingsService.instance.setThemeMode(value);
-            },
-          ),
           const SizedBox(height: 14),
           DropdownButtonFormField<double>(
             value: _fontScale,

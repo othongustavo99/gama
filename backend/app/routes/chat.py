@@ -1,5 +1,7 @@
 import asyncio
 import json
+import uuid
+from datetime import datetime, timezone
 import logging
 import re
 from urllib.parse import quote
@@ -48,6 +50,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 gama = GamaCore()
 _background_memory_tasks: set[asyncio.Task] = set()
+_background_generation_tasks: dict[tuple[str, str], tuple[asyncio.Task, asyncio.Event]] = {}
 
 _OFFICE_NON_CREATION_RE = re.compile(
     r"(?i)^\s*(?:como\b|por que\b|porque\b|o que (?:e|é|s[aã]o|acontece)\b|"
@@ -58,11 +61,17 @@ _OFFICE_NON_CREATION_RE = re.compile(
     r"voc[eê] est[aá] a[ií]\b|quem [eé] voc[eê]\b)"
 )
 _OFFICE_EDIT_ACTION_RE = re.compile(
-    r"(?i)\b(edite?|modifique?|altere?|mude?|troque?|substitua?|remova?|"
-    r"adicione?|transforme?|corte?|recorte?|anime?|estabilize?|remonte?)\b"
+    r"(?i)\b(edita|edite|editar|modifica|modifique|modificar|altera|altere|alterar|"
+    r"muda|mude|mudar|troca|troque|trocar|substitui|substitua|substituir|"
+    r"remove|remova|remover|retira|retire|retirar|adiciona|adicione|adicionar|"
+    r"inclui|inclua|incluir|transforma|transforme|transformar|apaga|apague|"
+    r"corta|corte|recorta|recorte|anima|anime|estabiliza|estabilize|"
+    r"remonta|remonte)\b"
 )
 _OFFICE_IMPROVE_ACTION_RE = re.compile(
-    r"(?i)\b(melhore?|aprimore?|refine?|estabilize?|upscale|aumente?\s+(?:a\s+)?qualidade)\b"
+    r"(?i)\b(melhora|melhore|melhorar|aprimora|aprimore|aprimorar|refina|refine|"
+    r"refinar|estabiliza|estabilize|upscale|aumenta|aumente|aumentar)"
+    r"(?:\s+(?:a\s+)?qualidade)?\b"
 )
 
 
@@ -81,9 +90,11 @@ def _office_media_action(
         if detected.intent == ImageIntent.ANALYZE:
             return None
         if _OFFICE_IMPROVE_ACTION_RE.search(cleaned):
-            return "improve" if has_images else None
+            return "improve"
         if _OFFICE_EDIT_ACTION_RE.search(cleaned):
-            return "edit" if has_images else None
+            # Preserve edit intent without a reference so the image handler can
+            # ask for the missing image instead of falling through to generate.
+            return "edit"
         # Oficina Imagem é criação: até um briefing nominal curto é text-to-image.
         return "generate"
 
@@ -750,6 +761,20 @@ def _attached_project_id(messages: list[dict]) -> str | None:
 async def list_models():
     models = await llm.list_models()
     return {"models": models, "provider": llm.provider}
+
+
+@router.post("/chat/cancel/{assistant_message_id}")
+async def cancel_chat_generation(
+    assistant_message_id: str,
+    user_id: str = Depends(current_user_id),
+):
+    key = (user_id, assistant_message_id)
+    active = _background_generation_tasks.get(key)
+    if active is not None:
+        task, user_cancelled = active
+        user_cancelled.set()
+        task.cancel()
+    return {"ok": active is not None}
 
 
 @router.post("/chat")
@@ -1783,8 +1808,109 @@ async def chat(
                 ensure_ascii=False,
             ) + "\n"
 
+    async def stream_for_client():
+        """Keep generation alive if its mobile client disconnects."""
+        queue = asyncio.Queue()
+        client_disconnected = asyncio.Event()
+        user_cancelled = asyncio.Event()
+        assistant_id = getattr(request, "assistant_message_id", None) or uuid.uuid4().hex
+        conversation_id = getattr(request, "conversation_id", None)
+
+        async def produce():
+            response_parts: list[str] = []
+            image_blocks: list[str] = []
+            sources: list = []
+            try:
+                async for chunk in stream_with_meta():
+                    for line in chunk.splitlines():
+                        try:
+                            event = json.loads(line)
+                        except (TypeError, ValueError):
+                            continue
+                        message = event.get("message") or {}
+                        content = message.get("content")
+                        if message.get("role") == "assistant" and isinstance(content, str) and content:
+                            response_parts.append(content)
+                        meta = event.get("gama_meta") or {}
+                        event_sources = meta.get("sources")
+                        if isinstance(event_sources, list):
+                            sources = event_sources
+                        image = meta.get("image")
+                        if isinstance(image, dict) and image.get("data"):
+                            mime = str(image.get("mime") or "image/png").replace("\n", "")
+                            data = str(image["data"]).replace("\n", "").strip()
+                            image_blocks.append(
+                                f"\n[gama_image]\nmime:{mime}\ndata:{data}\n[/gama_image]\n"
+                            )
+                    await queue.put(chunk)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("background chat generation failed")
+            finally:
+                await queue.put(None)
+                current_task = asyncio.current_task()
+                if (
+                    not user_cancelled.is_set()
+                    and not (current_task and current_task.cancelling())
+                ):
+                    await asyncio.sleep(2)
+                if (
+                    client_disconnected.is_set()
+                    and not user_cancelled.is_set()
+                    and conversation_id
+                    and response_parts
+                ):
+                    response_text = "".join(response_parts)
+                    response_text = re.sub(
+                        r"\[\[GAMA_FILES\]\][\s\S]*?\[\[/GAMA_FILES\]\]",
+                        "",
+                        response_text,
+                        flags=re.IGNORECASE,
+                    ).strip()
+                    response_text += "".join(image_blocks)
+                    if response_text.strip():
+                        timestamp = datetime.now(timezone.utc).isoformat()
+                        try:
+                            get_conversation_store(user_id).upsert_message(
+                                conversation_id,
+                                {"updatedAt": timestamp},
+                                {
+                                    "id": assistant_id,
+                                    "role": "assistant",
+                                    "content": response_text,
+                                    "conversationId": conversation_id,
+                                    "timestamp": timestamp,
+                                    "sourcesJson": json.dumps(sources, ensure_ascii=False) if sources else "",
+                                },
+                            )
+                        except Exception:
+                            logger.exception("could not persist response after client disconnect")
+
+        task = asyncio.create_task(produce())
+        task_key = (user_id, assistant_id)
+        _background_generation_tasks[task_key] = (task, user_cancelled)
+
+        def remove_generation_task(completed_task):
+            current = _background_generation_tasks.get(task_key)
+            if current is not None and current[0] is completed_task:
+                _background_generation_tasks.pop(task_key, None)
+
+        task.add_done_callback(remove_generation_task)
+        completed = False
+        try:
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    completed = True
+                    break
+                yield chunk
+        finally:
+            if not completed:
+                client_disconnected.set()
+
     return StreamingResponse(
-        stream_with_meta(),
+        stream_for_client(),
         media_type="application/x-ndjson",
         headers={
             "Cache-Control": "no-cache",

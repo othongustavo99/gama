@@ -24,6 +24,8 @@
 		<string>????</string>
 		<key>CFBundleVersion</key>
 		<string>$(FLUTTER_BUILD_NUMBER)</string>
+		<key>NSLocationWhenInUseUsageDescription</key>
+		<string>A Gama usa sua localização durante o uso para responder perguntas locais, como clima e lugares próximos.</string>
 		<key>LSRequiresIPhoneOS</key>
 		<true/>
 		<key>UIApplicationSceneManifest</key>

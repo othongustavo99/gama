@@ -315,7 +315,7 @@ class ConversationService extends ChangeNotifier {
       return;
     }
     notifyListeners();
-    _conversationDeleteTimers[id] = Timer(const Duration(seconds: 5), () {
+    _conversationDeleteTimers[id] = Timer(const Duration(seconds: 3), () {
       _conversationDeleteTimers.remove(id);
       // ignore: unawaited_futures
       deleteConversation(id);

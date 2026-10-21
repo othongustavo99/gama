@@ -175,7 +175,7 @@ class _OficinaScreenState extends State<OficinaScreen> {
                           crossAxisCount: columns,
                           crossAxisSpacing: 16,
                           mainAxisSpacing: 16,
-                          mainAxisExtent: desktop ? 342 : 350,
+                          mainAxisExtent: desktop ? 300 : 290,
                         ),
                         delegate: SliverChildBuilderDelegate((context, index) {
                           final kind = OficinaKind.values[index];
@@ -462,14 +462,14 @@ class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
               splashColor: color.withValues(alpha: 0.09),
               highlightColor: color.withValues(alpha: 0.05),
               child: Container(
-                padding: const EdgeInsets.all(18),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: g.border),
                   boxShadow: GamaElevation.card(color),
                 ),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Hero(
                       tag: 'oficina-icon-${kind.chatMode}',
@@ -500,18 +500,20 @@ class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
                         child: Icon(kind.icon, size: 27, color: color),
                       ),
                     ),
-                    const SizedBox(height: 15),
+                    const SizedBox(height: 10),
                     Text(
                       kind.label,
+                      textAlign: TextAlign.center,
                       style: TextStyle(
                         color: g.textPrimary,
                         fontSize: 19,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 5),
                     Text(
                       kind.shortDescription,
+                      textAlign: TextAlign.center,
                       maxLines: 2,
                       style: TextStyle(
                         color: g.textSecondary,
@@ -519,19 +521,20 @@ class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
                         height: 1.4,
                       ),
                     ),
-                    const Spacer(),
-                    Wrap(
-                      spacing: 7,
-                      runSpacing: 7,
+                    const SizedBox(height: 12),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        for (final example in kind.examples)
+                        for (var i = 0; i < kind.examples.length; i++) ...[
+                          if (i > 0) const SizedBox(height: 7),
                           ActionChip(
                             label: Text(
-                              example,
+                              kind.examples[i],
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            onPressed: () => widget.onPrompt(example),
+                            onPressed: () => widget.onPrompt(kind.examples[i]),
                             backgroundColor: color.withValues(alpha: 0.08),
                             side: BorderSide(
                               color: color.withValues(alpha: 0.22),
@@ -543,10 +546,12 @@ class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
                             visualDensity: VisualDensity.compact,
                             padding: const EdgeInsets.symmetric(horizontal: 4),
                           ),
+                        ],
                       ],
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
                     Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
                           'Abrir modo',
@@ -556,7 +561,7 @@ class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 8),
                         Icon(
                           Icons.arrow_forward_rounded,
                           size: 18,
