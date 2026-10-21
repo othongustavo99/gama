@@ -19,7 +19,9 @@ class ConversationAdapter extends TypeAdapter<Conversation> {
     return Conversation(
       id: fields[0] as String,
       title: fields[1] as String,
-      isPinned: fields[2] as bool,
+      // Conversas salvas por versões antigas podem não ter o campo Hive 2.
+      // Preserve o padrão do modelo sem invalidar nem descartar o histórico.
+      isPinned: fields[2] == true,
       createdAt: fields[3] as DateTime?,
       updatedAt: fields[4] as DateTime?,
       mode: fields[5] as String?,

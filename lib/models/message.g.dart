@@ -22,11 +22,13 @@ class MessageAdapter extends TypeAdapter<Message> {
       content: fields[2] as String,
       conversationId: fields[4] as String,
       timestamp: fields[3] as DateTime?,
-      attachmentMetadataJson: fields[5] as String,
-      variants: (fields[6] as List?)?.cast<String>(),
-      selectedVariantIndex: fields[7] as int,
-      isTruncated: fields[8] as bool,
-      sourcesJson: fields[9] as String,
+      attachmentMetadataJson: fields[5] as String? ?? '',
+      variants: fields[6] == null ? null : List<String>.from(fields[6] as List),
+      selectedVariantIndex: fields[7] as int? ?? 0,
+      // O campo foi adicionado depois de algumas mensagens já existirem.
+      // Comparar com true tolera campo ausente/nulo sem descartar a mensagem.
+      isTruncated: fields[8] == true,
+      sourcesJson: fields[9] as String? ?? '',
     );
   }
 
