@@ -93,6 +93,7 @@ class ConversationSyncService {
           'id': conv.id,
           'title': conv.title,
           'isPinned': conv.isPinned,
+          'mode': conv.mode,
           'createdAt': conv.createdAt.toUtc().toIso8601String(),
           'updatedAt': conv.updatedAt.toUtc().toIso8601String(),
           'messages': [
@@ -253,6 +254,7 @@ class ConversationSyncService {
 
       final title = (r['title'] ?? 'Nova conversa').toString();
       final isPinned = r['isPinned'] == true || r['is_pinned'] == true;
+      final mode = r['mode']?.toString();
       final createdAt = _parseDate(r['createdAt'] ?? r['created_at']);
       final messagesRaw = r['messages'] as List<dynamic>? ?? [];
 
@@ -260,6 +262,7 @@ class ConversationSyncService {
         id: id,
         title: title,
         isPinned: isPinned,
+        mode: mode,
         createdAt: createdAt,
         updatedAt: remoteUpdated,
         messages: [

@@ -67,6 +67,9 @@ dependencies:
   share_plus: ^13.3.1
   desktop_drop: ^0.8.4
   pasteboard: ^0.5.0
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
+  media_kit_libs_video: ^1.0.7
   flutter_highlight: ^0.7.0
   highlight: ^0.7.0
   
@@ -101,6 +104,12 @@ flutter:
   assets:
     - assets/icons/
     - assets/images/
+
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Variable.ttf
+          weight: 400
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

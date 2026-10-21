@@ -19,6 +19,7 @@ class LibraryScreen extends StatefulWidget {
     required String name,
     required String kind,
     required int bytes,
+    String? conversationId,
     String? sourcePath,
     Uint8List? sourceBytes,
   }) async {
@@ -61,6 +62,7 @@ class LibraryScreen extends StatefulWidget {
       'bytes': bytes,
       'path': savedPath,
       'at': DateTime.now().toIso8601String(),
+      if (conversationId != null) 'conversationId': conversationId,
     });
     final trimmed = list.length > 100 ? list.sublist(list.length - 100) : list;
     await prefs.setString('gama_library', jsonEncode(trimmed));

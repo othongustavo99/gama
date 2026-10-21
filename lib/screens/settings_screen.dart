@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
+import '../widgets/loading_skeleton.dart';
 import '../services/memory_service.dart';
 import '../services/ollama_service.dart';
 import '../services/settings_service.dart';
@@ -174,14 +175,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: OutlinedButton.icon(
               onPressed: _testing ? null : _testConnection,
               icon: _testing
-                  ? SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: context.gama.accent,
-                      ),
-                    )
+                  ? const GamaSkeleton(width: 16, height: 16, radius: 8)
                   : const Icon(Icons.wifi_tethering_rounded, size: 18),
               label: Text(_testing ? 'Testando…' : 'Testar conexão'),
               style: OutlinedButton.styleFrom(
@@ -375,14 +369,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: OutlinedButton.icon(
               onPressed: _resettingMemory ? null : _resetMemory,
               icon: _resettingMemory
-                  ? SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: context.gama.error,
-                      ),
-                    )
+                  ? const GamaSkeleton(width: 16, height: 16, radius: 8)
                   : const Icon(Icons.delete_sweep_rounded, size: 18),
               label: Text(_resettingMemory ? 'Resetando…' : 'Resetar memória'),
               style: OutlinedButton.styleFrom(

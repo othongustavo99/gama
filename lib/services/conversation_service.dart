@@ -133,6 +133,7 @@ class ConversationService extends ChangeNotifier {
     required String id,
     required String title,
     required bool isPinned,
+    String? mode,
     required DateTime createdAt,
     required DateTime updatedAt,
     required List<Message> messages,
@@ -143,6 +144,7 @@ class ConversationService extends ChangeNotifier {
         id: id,
         title: title,
         isPinned: isPinned,
+        mode: mode,
         createdAt: createdAt,
         updatedAt: updatedAt,
       );
@@ -150,6 +152,7 @@ class ConversationService extends ChangeNotifier {
     } else {
       existing.title = title;
       existing.isPinned = isPinned;
+      if (mode != null) existing.mode = mode;
       existing.updatedAt = updatedAt;
       await existing.save();
     }
@@ -170,9 +173,10 @@ class ConversationService extends ChangeNotifier {
 
   Future<Conversation> createConversation({
     String title = 'Nova conversa',
+    String? mode,
   }) async {
     final id = const Uuid().v4();
-    final conversation = Conversation(id: id, title: title);
+    final conversation = Conversation(id: id, title: title, mode: mode);
 
     await _conversationsBox.put(id, conversation);
     _currentConversationId = id;
@@ -184,17 +188,25 @@ class ConversationService extends ChangeNotifier {
   /// Se a atual estiver vazia, reutiliza o rascunho (não gera outra vazia).
   Future<Conversation> createConversationIfNeeded({
     String title = 'Nova conversa',
+    String? mode,
   }) async {
     final currentId = _currentConversationId;
     if (currentId != null &&
         !conversationHasMessages(currentId) &&
         (_drafts[currentId]?.trim().isNotEmpty ?? false) == false) {
       final existing = _conversationsBox.get(currentId);
-      if (existing != null) return existing;
+      if (existing != null) {
+        if (mode != null && existing.mode != mode) {
+          existing.mode = mode;
+          await existing.save();
+          notifyListeners();
+        }
+        return existing;
+      }
     }
     // Apaga outros rascunhos vazios e cria a nova
     await purgeEmptyConversations(exceptId: currentId);
-    return createConversation(title: title);
+    return createConversation(title: title, mode: mode);
   }
 
   /// Abre sempre uma conversa nova em branco (usado no boot do app).
@@ -225,6 +237,16 @@ class ConversationService extends ChangeNotifier {
     await conv.save();
     notifyListeners();
     // ignore: unawaited_futures
+    ConversationSyncService.instance.pushConversationMetadata(id);
+  }
+
+  Future<void> updateConversationMode(String id, String? mode) async {
+    final conv = _conversationsBox.get(id);
+    if (conv == null || conv.mode == mode) return;
+    conv.mode = mode;
+    conv.updatedAt = DateTime.now();
+    await conv.save();
+    notifyListeners();
     ConversationSyncService.instance.pushConversationMetadata(id);
   }
 

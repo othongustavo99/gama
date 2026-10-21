@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
+import '../widgets/loading_skeleton.dart';
 import '../services/memory_service.dart';
 
 class MemoryScreen extends StatefulWidget {
@@ -112,7 +113,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
       future: _facts,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done)
-          return const Center(child: CircularProgressIndicator());
+          return const GamaSkeletonList(itemCount: 5);
         if (snapshot.hasError)
           return Center(
             child: TextButton(

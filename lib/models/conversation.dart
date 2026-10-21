@@ -19,12 +19,17 @@ class Conversation extends HiveObject {
   @HiveField(4)
   DateTime updatedAt;
 
+  /// Oficina mode key; null for regular chats and older conversations.
+  @HiveField(5)
+  String? mode;
+
   Conversation({
     required this.id,
     required this.title,
     this.isPinned = false,
     DateTime? createdAt,
     DateTime? updatedAt,
+    this.mode,
   }) : createdAt = createdAt ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
 }

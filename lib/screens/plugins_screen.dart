@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
+import '../widgets/loading_skeleton.dart';
 import '../services/plugin_settings_service.dart';
 
 /// Capacidade do sistema (ligada no backend ou local).
@@ -150,7 +151,7 @@ class _PluginsScreenState extends State<PluginsScreen> {
         title: const Text('Plugins'),
       ),
       body: _loading
-          ? Center(child: CircularProgressIndicator(color: context.gama.accent))
+          ? const GamaSkeletonList(itemCount: 6)
           : ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: _catalog.length + 1,

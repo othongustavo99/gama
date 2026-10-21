@@ -17,8 +17,10 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:pasteboard/pasteboard.dart';
 
 import '../core/gama_colors.dart';
+import '../core/design_tokens.dart';
 import '../core/constants.dart';
 import '../models/message.dart';
+import '../models/oficina_kind.dart';
 import '../services/attachment_service.dart';
 import '../services/conversation_service.dart';
 import '../services/memory_service.dart';
@@ -28,6 +30,9 @@ import 'settings_screen.dart';
 import '../widgets/message_content.dart';
 import '../widgets/chat_status_indicator.dart';
 import '../widgets/chat_composer.dart';
+import '../widgets/artifact_status_list.dart';
+import '../widgets/empty_state.dart';
+import '../widgets/loading_skeleton.dart';
 import '../services/settings_service.dart';
 import '../services/download_service.dart';
 import '../utils/message_sanitize.dart';
@@ -42,12 +47,14 @@ class ChatScreen extends StatefulWidget {
 
   /// Quando definido, a conversa opera em modo Oficina (criação focada).
   final OficinaKind? oficinaKind;
+  final String? initialPrompt;
 
   const ChatScreen({
     super.key,
     required this.conversationId,
     this.persistentSidebar = false,
     this.oficinaKind,
+    this.initialPrompt,
   });
 
   @override
@@ -67,9 +74,16 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _hoveredMessageId;
   String? _expandedMessageActionsId;
   Timer? _clearMessagesTimer;
+  Timer? _generationTimer;
+  DateTime? _generationStartedAt;
+  Duration _generationElapsed = Duration.zero;
+  String _imageAspectRatio = '1:1';
+  String _imageStyle = 'Automático';
+  String? _beforeImagePath;
   bool _isLoading = false;
   String _streamPhase = '';
   final Map<String, List<Map<String, dynamic>>> _artifactsByMessageId = {};
+  final Map<String, String> _videoPathsByArtifactId = {};
   DateTime? _lastAutoScrollAt;
   bool _scrollCallbackScheduled = false;
   bool _showScrollToBottom = false;
@@ -145,6 +159,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _mode = SettingsService.instance.mode;
+    if (widget.initialPrompt != null) _controller.text = widget.initialPrompt!;
     _loadMessages();
     _controller.addListener(_queueDraftSave);
     _controller.addListener(_updateSlashSuggestions);
@@ -374,11 +389,12 @@ class _ChatScreenState extends State<ChatScreen> {
   }) async {
     if (_titleGenerationInProgress) return;
     final conversation = _service.conversationById(widget.conversationId);
-    if (conversation == null ||
-        (conversation.title.trim().isNotEmpty &&
-            conversation.title != 'Nova conversa')) {
-      return;
-    }
+    final isUntitled =
+        conversation != null &&
+        (conversation.title == 'Nova conversa' ||
+            (widget.oficinaKind != null &&
+                conversation.title == widget.oficinaKind!.conversationTitle));
+    if (conversation == null || !isUntitled) return;
     _titleGenerationInProgress = true;
     try {
       final generated = await _ollama.generateConversationTitle(
@@ -395,7 +411,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 .join(' ');
       if (title.isNotEmpty && mounted) {
         final latest = _service.conversationById(widget.conversationId);
-        if (latest != null && latest.title == 'Nova conversa') {
+        if (latest != null &&
+            (latest.title == 'Nova conversa' ||
+                (widget.oficinaKind != null &&
+                    latest.title == widget.oficinaKind!.conversationTitle))) {
           await _service.renameConversation(widget.conversationId, title);
         }
       }
@@ -410,10 +429,85 @@ class _ChatScreenState extends State<ChatScreen> {
     await _sendMessage();
   }
 
+  Future<void> _sendImageFollowup(String prompt) async {
+    if (prompt.trim().isEmpty || _isLoading) return;
+    _controller.text = prompt;
+    await _sendMessage();
+  }
+
+  Future<void> _editGeneratedImage(String? path, String prompt) async {
+    if (_isLoading) return;
+    if (path != null && await File(path).exists()) {
+      try {
+        final attachment = await _attachmentService.processFile(path);
+        if (!mounted) return;
+        setState(() => _attachments.add(attachment));
+      } catch (_) {
+        _snack('Não consegui anexar a imagem anterior.');
+      }
+    }
+    await _sendImageFollowup(prompt);
+  }
+
+  Future<void> _varyGeneratedImage(String? path, String prompt) async {
+    if (path == null || !await File(path).exists()) {
+      await _sendImageFollowup(prompt);
+      return;
+    }
+    try {
+      final attachment = await _attachmentService.processFile(path);
+      if (!mounted) return;
+      setState(() => _attachments.add(attachment));
+      await _sendImageFollowup(prompt);
+    } catch (_) {
+      _snack('Não consegui usar a imagem anterior como referência.');
+    }
+  }
+
   Future<void> _submitFollowUp(String prompt) async {
     if (_isLoading) return;
     _controller.text = prompt;
     await _sendMessage();
+  }
+
+  void _startGenerationClock() {
+    _generationTimer?.cancel();
+    _generationStartedAt = DateTime.now();
+    _generationElapsed = Duration.zero;
+    _generationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _generationStartedAt == null) return;
+      setState(() {
+        _generationElapsed = DateTime.now().difference(_generationStartedAt!);
+      });
+    });
+  }
+
+  void _stopGenerationClock() {
+    _generationTimer?.cancel();
+    _generationTimer = null;
+    if (_generationStartedAt != null) {
+      _generationElapsed = DateTime.now().difference(_generationStartedAt!);
+    }
+    _generationStartedAt = null;
+  }
+
+  String get _elapsedLabel {
+    final seconds = _generationElapsed.inSeconds;
+    return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
+  }
+
+  String _precedingUserPrompt(int index) {
+    for (var i = index - 1; i >= 0; i--) {
+      if (_messages[i].isUser) return _rawUserPrompt(_messages[i]);
+    }
+    return '';
+  }
+
+  String? _imagePathFromContent(String content) {
+    final match = RegExp(
+      r'\[gama_image_file\]\s*mime:[^\n]+\s*path:([^\n]+)\s*\[/gama_image_file\]',
+    ).firstMatch(content);
+    return match?.group(1)?.trim();
   }
 
   Future<void> _toggleVoiceConversation() async {
@@ -1118,17 +1212,21 @@ class _ChatScreenState extends State<ChatScreen> {
             ? 'Buscando na web…'
             : 'Buscando: $_streamSearchQuery…';
       case 'project_analyzing':
-        return 'Lendo arquivos do projeto…';
+        return _generationElapsed.inSeconds < 3
+            ? 'Lendo arquivos do projeto… · $_elapsedLabel'
+            : _generationElapsed.inSeconds < 8
+            ? 'Mapeando dependências… · $_elapsedLabel'
+            : 'Resumindo arquivos e pontos de entrada… · $_elapsedLabel';
       case 'generating_image':
         return 'Criando imagem…';
       case 'image_analyzing':
         return 'Analisando imagem…';
       case 'video_queued':
-        return 'Preparando vídeo…';
+        return 'Na fila · $_elapsedLabel';
       case 'video_generating':
-        return 'Gerando vídeo…';
+        return 'Gerando vídeo · $_elapsedLabel';
       case 'video_downloading':
-        return 'Salvando vídeo…';
+        return 'Salvando vídeo · $_elapsedLabel';
       case 'video_analyzing':
         return 'Analisando quadros do vídeo…';
       case 'video_editing':
@@ -1693,6 +1791,62 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _cacheVideoArtifact(Map<String, dynamic> artifact) async {
+    final id = artifact['artifact_id']?.toString() ?? '';
+    final filename = artifact['filename']?.toString() ?? 'gama_video.mp4';
+    if (id.isEmpty) return;
+    try {
+      final path = await DownloadService.instance.downloadArtifact(
+        '/artifacts/$id/download',
+        filename: filename,
+      );
+      await LibraryScreen.addEntry(
+        name: filename,
+        kind: 'video',
+        bytes: await File(path).length(),
+        sourcePath: path,
+        conversationId: widget.conversationId,
+      );
+      if (mounted) setState(() => _videoPathsByArtifactId[id] = path);
+    } catch (error) {
+      _snack('Não consegui preparar o vídeo: $error');
+    }
+  }
+
+  void _showGeneratedFilePreview(Map<String, dynamic> file) {
+    final title = file['name']?.toString() ?? 'Prévia do arquivo';
+    final content = file['preview']?.toString() ?? 'Prévia indisponível.';
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      showGeneralDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        barrierLabel: 'Fechar prévia',
+        barrierColor: Colors.black54,
+        pageBuilder: (context, _, __) => Align(
+          alignment: Alignment.centerRight,
+          child: Material(
+            color: context.gama.surface,
+            child: SizedBox(
+              width: MediaQuery.of(context).size.width * 0.55,
+              height: double.infinity,
+              child: _CodePreviewContent(title: title, content: content),
+            ),
+          ),
+        ),
+      );
+    } else {
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: context.gama.surface,
+        builder: (_) => SizedBox(
+          height: MediaQuery.of(context).size.height * 0.82,
+          child: _CodePreviewContent(title: title, content: content),
+        ),
+      );
+    }
+  }
+
   Future<void> _showAttachMenu() async {
     if (_isLoading || _waitingForAttachment) return;
     await showModalBottomSheet<void>(
@@ -1844,9 +1998,12 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _pickFiles() async {
+  Future<void> _pickFiles({bool zipOnly = false}) async {
     try {
-      final result = await FilePicker.pickFiles(type: FileType.any);
+      final result = await FilePicker.pickFiles(
+        type: zipOnly ? FileType.custom : FileType.any,
+        allowedExtensions: zipOnly ? const ['zip'] : null,
+      );
       if (result == null || result.isEmpty) return;
       // Processa sequencialmente para não iniciar vários uploads grandes em
       // paralelo (Android tem memória limitada e o backend também é protegido).
@@ -1883,6 +2040,7 @@ class _ChatScreenState extends State<ChatScreen> {
         kind: processed.kind.name,
         bytes: processed.bytes,
         sourcePath: path,
+        conversationId: widget.conversationId,
       );
       setState(() {
         _attachments.add(processed);
@@ -1915,6 +2073,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Comandos locais /memoria — não vão para o modelo.
   Future<bool> _handleSlashCommand(String text) async {
+    if (widget.oficinaKind != null) return false;
     final t = text.trim();
     final lower = t.toLowerCase();
 
@@ -2088,6 +2247,7 @@ class _ChatScreenState extends State<ChatScreen> {
         kind: 'image',
         bytes: bytes.length,
         sourceBytes: bytes,
+        conversationId: widget.conversationId,
       );
       if (path == null || path.isEmpty) {
         // Último recurso de compatibilidade: mantém a imagem visível caso o
@@ -2210,8 +2370,12 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     if (_voiceConversationMode) _speakNextReply = true;
-    final rawText = _controller.text.trim();
+    var rawText = _controller.text.trim();
     if ((rawText.isEmpty && _attachments.isEmpty) || _isLoading) return;
+    if (widget.oficinaKind == OficinaKind.imagem && rawText.isNotEmpty) {
+      rawText = '$rawText\n\nProporção: $_imageAspectRatio.';
+      if (_imageStyle != 'Automático') rawText += ' Estilo: $_imageStyle.';
+    }
 
     final pluginFlags = await PluginSettingsService.instance.load();
     if (_attachments.isNotEmpty && pluginFlags['attachments'] == false) {
@@ -2298,6 +2462,13 @@ class _ChatScreenState extends State<ChatScreen> {
     final imagePayload = AttachmentService.buildImagesPayload(pending);
     _attachments.clear();
 
+    if (!isRegeneration &&
+        !_service.conversationHasMessages(widget.conversationId)) {
+      await _service.createConversationIfNeeded(
+        mode: widget.oficinaKind?.chatMode,
+      );
+    }
+
     final userMessage = isRegeneration
         ? _regeneratingUserMessage!
         : Message(
@@ -2324,6 +2495,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _streamPhase = 'thinking';
       });
     }
+    _startGenerationClock();
     if (!mounted) return;
     _controller.clear();
     _speechConfirmed = '';
@@ -2533,6 +2705,7 @@ class _ChatScreenState extends State<ChatScreen> {
               : (_streamingText.value.trim().isNotEmpty ||
                     (latestAssistant?.content.trim().isNotEmpty ?? false));
           if (!hasResponse) {
+            _stopGenerationClock();
             latestAssistant?.discardCurrentVariant();
             if (mounted) {
               setState(() {
@@ -2558,6 +2731,7 @@ class _ChatScreenState extends State<ChatScreen> {
               _streamPhase = '';
             });
           }
+          _stopGenerationClock();
 
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
             _ttsEarlyStarted = false;
@@ -2649,6 +2823,7 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         },
         onError: (e) async {
+          _stopGenerationClock();
           _streamRevealTimer?.cancel();
           _streamRevealTimer = null;
           _streamRevealQueue.clear();
@@ -2696,6 +2871,7 @@ class _ChatScreenState extends State<ChatScreen> {
         cancelOnError: true,
       );
     } catch (e) {
+      _stopGenerationClock();
       if (!mounted) return;
       final friendly = e is ChatApiException
           ? e.message
@@ -2720,6 +2896,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _stopGeneration() async {
+    _stopGenerationClock();
     unawaited(HapticFeedback.lightImpact());
     await _streamSubscription?.cancel();
     _streamSubscription = null;
@@ -2815,6 +2992,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _generationTimer?.cancel();
     _micArmed = false;
     try {
       _speech.stop();
@@ -2907,7 +3085,23 @@ class _ChatScreenState extends State<ChatScreen> {
                       children: [
                         // O acesso ao histórico permanece visível, como no layout original.
                         // O Builder garante que o botão encontre o Scaffold que contém o drawer.
-                        if (!isWideDesktop)
+                        if (widget.oficinaKind != null)
+                          IconButton(
+                            tooltip: 'Voltar à Oficina',
+                            icon: const Icon(Icons.arrow_back_rounded),
+                            onPressed: () {
+                              if (Navigator.of(context).canPop()) {
+                                Navigator.of(context).pop();
+                              } else {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => const OficinaScreen(),
+                                  ),
+                                );
+                              }
+                            },
+                          )
+                        else if (!isWideDesktop)
                           Builder(
                             builder: (drawerContext) => IconButton(
                               tooltip: 'Abrir conversas',
@@ -2939,15 +3133,23 @@ class _ChatScreenState extends State<ChatScreen> {
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: context.gama.border),
                           ),
-                          child: Image.asset(
-                            'assets/images/image3.png',
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => Icon(
-                              Icons.auto_awesome_rounded,
-                              color: context.gama.accent,
-                              size: 22,
-                            ),
-                          ),
+                          child: widget.oficinaKind == null
+                              ? Image.asset(
+                                  'assets/images/image3.png',
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (_, __, ___) => Icon(
+                                    Icons.auto_awesome_rounded,
+                                    color: context.gama.accent,
+                                    size: 22,
+                                  ),
+                                )
+                              : Icon(
+                                  widget.oficinaKind!.icon,
+                                  color: widget.oficinaKind!.color(
+                                    context.gama,
+                                  ),
+                                  size: 21,
+                                ),
                         ),
                         const SizedBox(width: 8),
                         // Os outros controles permanecem no menu de três pontos.
@@ -2957,7 +3159,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Gama 2.0',
+                                widget.oficinaKind?.label ?? 'Gama 2.0',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -2970,23 +3172,24 @@ class _ChatScreenState extends State<ChatScreen> {
                             ],
                           ),
                         ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 7,
-                          ),
-                          child: Text(
-                            widget.oficinaKind == OficinaKind.programar
-                                ? 'GLM 5.3 Flash'
-                                : 'GPT-5.4 Mini',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: context.gama.textSecondary,
-                              fontSize: 12,
+                        if (widget.oficinaKind == OficinaKind.programar)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 7,
+                            ),
+                            child: Text(
+                              widget.oficinaKind == OficinaKind.programar
+                                  ? 'GLM 5.3 Flash'
+                                  : 'GPT-5.4 Mini',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: context.gama.textSecondary,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
-                        ),
                         PopupMenuButton<String>(
                           tooltip: 'Mais opções',
                           icon: const Icon(Icons.more_vert_rounded, size: 24),
@@ -3031,23 +3234,24 @@ class _ChatScreenState extends State<ChatScreen> {
                                   contentPadding: EdgeInsets.zero,
                                 ),
                               ),
-                            PopupMenuItem(
-                              value: 'voice',
-                              child: ListTile(
-                                dense: true,
-                                leading: Icon(
-                                  _voiceConversationMode
-                                      ? Icons.headset_mic_rounded
-                                      : Icons.headset_rounded,
+                            if (widget.oficinaKind == null)
+                              PopupMenuItem(
+                                value: 'voice',
+                                child: ListTile(
+                                  dense: true,
+                                  leading: Icon(
+                                    _voiceConversationMode
+                                        ? Icons.headset_mic_rounded
+                                        : Icons.headset_rounded,
+                                  ),
+                                  title: Text(
+                                    _voiceConversationMode
+                                        ? 'Interromper conversa por voz'
+                                        : 'Iniciar conversa por voz',
+                                  ),
+                                  contentPadding: EdgeInsets.zero,
                                 ),
-                                title: Text(
-                                  _voiceConversationMode
-                                      ? 'Interromper conversa por voz'
-                                      : 'Iniciar conversa por voz',
-                                ),
-                                contentPadding: EdgeInsets.zero,
                               ),
-                            ),
                             if (_isLoading || _isSpeaking)
                               const PopupMenuItem(
                                 value: 'stop',
@@ -3109,603 +3313,741 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Stack(
                 children: [
                   Positioned.fill(
-                    child: _messages.isEmpty
-                        ? _EmptyState(
-                            oficinaKind: widget.oficinaKind,
-                            attachmentKinds: _attachments
-                                .map((attachment) => attachment.kind)
-                                .toList(growable: false),
-                            onSuggestion: (action, text) {
-                              if (widget.oficinaKind != null) {
-                                _controller.text = text;
+                    child: AnimatedSwitcher(
+                      duration: GamaMotion.standard,
+                      switchInCurve: GamaMotion.curve,
+                      switchOutCurve: Curves.easeInCubic,
+                      child: _messages.isEmpty
+                          ? EmptyState(
+                              key: const ValueKey('chat-empty'),
+                              oficinaKind: widget.oficinaKind,
+                              attachmentKinds: _attachments
+                                  .map((attachment) => attachment.kind)
+                                  .toList(growable: false),
+                              onSuggestion: (action, text) {
+                                if (widget.oficinaKind != null) {
+                                  _controller.text = text;
+                                  if (widget.oficinaKind ==
+                                          OficinaKind.imagem &&
+                                      _attachments.isEmpty &&
+                                      (text.contains('imagem anexada') ||
+                                          text.startsWith(
+                                            'Analise esta imagem',
+                                          ))) {
+                                    _showAttachMenu();
+                                    return;
+                                  }
+                                  _composerFocusNode.requestFocus();
+                                  return;
+                                }
+                                if (action ==
+                                    EmptySuggestionAction.reviewProject) {
+                                  _controller.text = 'Revise meu projeto e destaque problemas e melhorias.';
+                                  _showAttachMenu();
+                                  return;
+                                }
+                                if (action ==
+                                    EmptySuggestionAction.explainError) {
+                                  _controller.text = 'Explique este erro:\n';
+                                  _composerFocusNode.requestFocus();
+                                  return;
+                                }
+                                _controller.text = switch (action) {
+                                  EmptySuggestionAction.write =>
+                                    'Ajude-me a escrever: ',
+                                  EmptySuggestionAction.explain =>
+                                    'Explique este assunto de forma simples: ',
+                                  EmptySuggestionAction.brainstorm =>
+                                    'Ajude-me a pensar em ideias para: ',
+                                  EmptySuggestionAction.summarizeAttachment =>
+                                    _attachmentPrompt('Resuma'),
+                                  EmptySuggestionAction.analyzeAttachment =>
+                                    _attachmentPrompt('Analise'),
+                                  EmptySuggestionAction.extractTasks =>
+                                    _attachmentPrompt(
+                                      'Extraia os pontos principais e as tarefas de',
+                                    ),
+                                  EmptySuggestionAction.editAttachment =>
+                                    'Sugira alterações para a imagem anexada.',
+                                  _ => 'Ajude-me com: ',
+                                };
                                 _composerFocusNode.requestFocus();
-                                return;
-                              }
-                              if (action ==
-                                  _EmptySuggestionAction.reviewProject) {
-                                _controller.text = 'Revise meu projeto e destaque problemas e melhorias.';
-                                _showAttachMenu();
-                                return;
-                              }
-                              if (action ==
-                                  _EmptySuggestionAction.explainError) {
-                                _controller.text = 'Explique este erro:\n';
-                                _composerFocusNode.requestFocus();
-                                return;
-                              }
-                              _controller.text = switch (action) {
-                                _EmptySuggestionAction.write =>
-                                  'Ajude-me a escrever: ',
-                                _EmptySuggestionAction.explain =>
-                                  'Explique este assunto de forma simples: ',
-                                _EmptySuggestionAction.brainstorm =>
-                                  'Ajude-me a pensar em ideias para: ',
-                                _EmptySuggestionAction.summarizeAttachment =>
-                                  _attachmentPrompt('Resuma'),
-                                _EmptySuggestionAction.analyzeAttachment =>
-                                  _attachmentPrompt('Analise'),
-                                _EmptySuggestionAction.extractTasks =>
-                                  _attachmentPrompt(
-                                    'Extraia os pontos principais e as tarefas de',
-                                  ),
-                                _EmptySuggestionAction.editAttachment =>
-                                  'Sugira alterações para a imagem anexada.',
-                                _ => 'Ajude-me com: ',
-                              };
-                              _composerFocusNode.requestFocus();
-                            },
-                          )
-                        : NotificationListener<ScrollNotification>(
-                            onNotification: _handleListScrollNotification,
-                            child: ListView.builder(
-                              controller: _scrollController,
-                              padding: const EdgeInsets.fromLTRB(
-                                16,
-                                22,
-                                16,
-                                26,
-                              ),
-                              itemCount: _messages.length,
-                              itemBuilder: (context, index) {
-                                final msg = _messages[index];
-                                final isUser = msg.isUser;
-                                final isLastAssistant =
-                                    !isUser && index == _messages.length - 1;
+                              },
+                            )
+                          : NotificationListener<ScrollNotification>(
+                              key: const ValueKey('chat-messages'),
+                              onNotification: _handleListScrollNotification,
+                              child: ListView.builder(
+                                controller: _scrollController,
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  22,
+                                  16,
+                                  26,
+                                ),
+                                itemCount: _messages.length,
+                                itemBuilder: (context, index) {
+                                  final msg = _messages[index];
+                                  final isUser = msg.isUser;
+                                  final isLastAssistant =
+                                      !isUser && index == _messages.length - 1;
 
-                                return TweenAnimationBuilder<double>(
-                                  key: ValueKey('message-enter-${msg.id}'),
-                                  tween: Tween(
-                                    begin: msg.id == _newMessageAnimationId
-                                        ? 0.0
-                                        : 1.0,
-                                    end: 1.0,
-                                  ),
-                                  duration: msg.id == _newMessageAnimationId
-                                      ? const Duration(milliseconds: 180)
-                                      : Duration.zero,
-                                  curve: Curves.easeOutCubic,
-                                  onEnd: () {
-                                    if (mounted &&
-                                        _newMessageAnimationId == msg.id) {
-                                      setState(
-                                        () => _newMessageAnimationId = null,
-                                      );
-                                    }
-                                  },
-                                  child: MouseRegion(
-                                    onEnter: (_) {
-                                      if (_hoveredMessageId != msg.id) {
+                                  return TweenAnimationBuilder<double>(
+                                    key: ValueKey('message-enter-${msg.id}'),
+                                    tween: Tween(
+                                      begin: msg.id == _newMessageAnimationId
+                                          ? 0.0
+                                          : 1.0,
+                                      end: 1.0,
+                                    ),
+                                    duration: msg.id == _newMessageAnimationId
+                                        ? const Duration(milliseconds: 180)
+                                        : Duration.zero,
+                                    curve: Curves.easeOutCubic,
+                                    onEnd: () {
+                                      if (mounted &&
+                                          _newMessageAnimationId == msg.id) {
                                         setState(
-                                          () => _hoveredMessageId = msg.id,
+                                          () => _newMessageAnimationId = null,
                                         );
                                       }
                                     },
-                                    onExit: (_) {
-                                      if (_hoveredMessageId == msg.id) {
-                                        setState(
-                                          () => _hoveredMessageId = null,
-                                        );
-                                      }
-                                    },
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.translucent,
-                                      onLongPress: isUser
-                                          ? () => _showMessageContextMenu(
-                                              msg,
-                                              index,
-                                            )
-                                          : null,
-                                      onTap: !isUser && !isLastAssistant
-                                          ? () => setState(() {
-                                              _expandedMessageActionsId =
-                                                  _expandedMessageActionsId ==
-                                                      msg.id
-                                                  ? null
-                                                  : msg.id;
-                                            })
-                                          : null,
-                                      child: RepaintBoundary(
-                                        key: _messageKeys.putIfAbsent(
-                                          msg.id,
-                                          () => GlobalKey(),
-                                        ),
-                                        child: Center(
-                                          child: ConstrainedBox(
-                                            constraints: const BoxConstraints(
-                                              maxWidth: 760,
-                                            ),
-                                            child: Align(
-                                              alignment: isUser
-                                                  ? Alignment.centerRight
-                                                  : Alignment.centerLeft,
-                                              child: Column(
-                                                crossAxisAlignment: isUser
-                                                    ? CrossAxisAlignment.end
-                                                    : CrossAxisAlignment.start,
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Container(
-                                                    constraints: BoxConstraints(
-                                                      maxWidth: isUser
-                                                          ? 680
-                                                          : 760,
-                                                    ),
-                                                    margin: EdgeInsets.only(
-                                                      bottom: isUser ? 16 : 4,
-                                                    ),
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 16,
-                                                          vertical: 12,
-                                                        ),
-                                                    decoration: isUser
-                                                        ? BoxDecoration(
-                                                            gradient: LinearGradient(
-                                                              begin: Alignment
-                                                                  .topLeft,
-                                                              end: Alignment
-                                                                  .bottomRight,
-                                                              colors: [
-                                                                context
-                                                                    .gama
-                                                                    .bubbleUserSoft,
-                                                                context
-                                                                    .gama
-                                                                    .bubbleUser,
-                                                              ],
-                                                            ),
-                                                            borderRadius: const BorderRadius.only(
-                                                              topLeft:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                              topRight:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                              bottomLeft:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                              bottomRight:
-                                                                  Radius.circular(
-                                                                    7,
-                                                                  ),
-                                                            ),
-                                                            border: Border.all(
-                                                              color: context
-                                                                  .gama
-                                                                  .accent
-                                                                  .withValues(
-                                                                    alpha: 0.20,
-                                                                  ),
-                                                            ),
-                                                          )
-                                                        : BoxDecoration(
-                                                            color: context
-                                                                .gama
-                                                                .surfaceCard,
-                                                            borderRadius: const BorderRadius.only(
-                                                              topLeft:
-                                                                  Radius.circular(
-                                                                    7,
-                                                                  ),
-                                                              topRight:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                              bottomLeft:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                              bottomRight:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                            ),
-                                                            border: Border.all(
-                                                              color: context
-                                                                  .gama
-                                                                  .border
-                                                                  .withValues(
-                                                                    alpha: 0.45,
-                                                                  ),
-                                                            ),
+                                    child: MouseRegion(
+                                      onEnter: (_) {
+                                        if (_hoveredMessageId != msg.id) {
+                                          setState(
+                                            () => _hoveredMessageId = msg.id,
+                                          );
+                                        }
+                                      },
+                                      onExit: (_) {
+                                        if (_hoveredMessageId == msg.id) {
+                                          setState(
+                                            () => _hoveredMessageId = null,
+                                          );
+                                        }
+                                      },
+                                      child: GestureDetector(
+                                        behavior: HitTestBehavior.translucent,
+                                        onLongPress: isUser
+                                            ? () => _showMessageContextMenu(
+                                                msg,
+                                                index,
+                                              )
+                                            : null,
+                                        onTap: !isUser && !isLastAssistant
+                                            ? () => setState(() {
+                                                _expandedMessageActionsId =
+                                                    _expandedMessageActionsId ==
+                                                        msg.id
+                                                    ? null
+                                                    : msg.id;
+                                              })
+                                            : null,
+                                        child: RepaintBoundary(
+                                          key: _messageKeys.putIfAbsent(
+                                            msg.id,
+                                            () => GlobalKey(),
+                                          ),
+                                          child: Center(
+                                            child: ConstrainedBox(
+                                              constraints: const BoxConstraints(
+                                                maxWidth: 760,
+                                              ),
+                                              child: Align(
+                                                alignment: isUser
+                                                    ? Alignment.centerRight
+                                                    : Alignment.centerLeft,
+                                                child: Column(
+                                                  crossAxisAlignment: isUser
+                                                      ? CrossAxisAlignment.end
+                                                      : CrossAxisAlignment
+                                                            .start,
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    Container(
+                                                      constraints:
+                                                          BoxConstraints(
+                                                            maxWidth: isUser
+                                                                ? 680
+                                                                : 760,
                                                           ),
-                                                    child: Column(
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .start,
-                                                      mainAxisSize:
-                                                          MainAxisSize.min,
-                                                      children: [
-                                                        if (!isUser &&
-                                                            msg.id ==
-                                                                _failedAssistantMessageId &&
-                                                            _chatErrorMessage !=
-                                                                null) ...[
-                                                          if (msg.content
-                                                              .trim()
-                                                              .isNotEmpty)
-                                                            MessageContentView(
+                                                      margin: EdgeInsets.only(
+                                                        bottom: isUser ? 16 : 4,
+                                                      ),
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 16,
+                                                            vertical: 12,
+                                                          ),
+                                                      decoration: isUser
+                                                          ? BoxDecoration(
+                                                              gradient: LinearGradient(
+                                                                begin: Alignment
+                                                                    .topLeft,
+                                                                end: Alignment
+                                                                    .bottomRight,
+                                                                colors: [
+                                                                  context
+                                                                      .gama
+                                                                      .bubbleUserSoft,
+                                                                  context
+                                                                      .gama
+                                                                      .bubbleUser,
+                                                                ],
+                                                              ),
+                                                              borderRadius: const BorderRadius.only(
+                                                                topLeft:
+                                                                    Radius.circular(
+                                                                      22,
+                                                                    ),
+                                                                topRight:
+                                                                    Radius.circular(
+                                                                      22,
+                                                                    ),
+                                                                bottomLeft:
+                                                                    Radius.circular(
+                                                                      22,
+                                                                    ),
+                                                                bottomRight:
+                                                                    Radius.circular(
+                                                                      7,
+                                                                    ),
+                                                              ),
+                                                              border: Border.all(
+                                                                color: context
+                                                                    .gama
+                                                                    .accent
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          0.20,
+                                                                    ),
+                                                              ),
+                                                            )
+                                                          : BoxDecoration(
+                                                              color: context
+                                                                  .gama
+                                                                  .surfaceCard,
+                                                              borderRadius: const BorderRadius.only(
+                                                                topLeft:
+                                                                    Radius.circular(
+                                                                      7,
+                                                                    ),
+                                                                topRight:
+                                                                    Radius.circular(
+                                                                      22,
+                                                                    ),
+                                                                bottomLeft:
+                                                                    Radius.circular(
+                                                                      22,
+                                                                    ),
+                                                                bottomRight:
+                                                                    Radius.circular(
+                                                                      22,
+                                                                    ),
+                                                              ),
+                                                              border: Border.all(
+                                                                color: context
+                                                                    .gama
+                                                                    .border
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          0.45,
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                      child: Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: [
+                                                          if (!isUser &&
+                                                              msg.id ==
+                                                                  _failedAssistantMessageId &&
+                                                              _chatErrorMessage !=
+                                                                  null) ...[
+                                                            if (msg.content
+                                                                .trim()
+                                                                .isNotEmpty)
+                                                              MessageContentView(
+                                                                content:
+                                                                    msg.content,
+                                                                isUser: false,
+                                                                onTapLink:
+                                                                    _openLink,
+                                                              ),
+                                                            const SizedBox(
+                                                              height: 8,
+                                                            ),
+                                                            ChatStatusIndicator(
+                                                              label:
+                                                                  _chatErrorMessage!,
+                                                              isError: true,
+                                                              onRetry:
+                                                                  _isLoading
+                                                                  ? null
+                                                                  : _retryLastFailedRequest,
+                                                              onContinue:
+                                                                  !_isLoading &&
+                                                                      msg.content
+                                                                          .trim()
+                                                                          .isNotEmpty &&
+                                                                      _truncatedMessageIds
+                                                                          .contains(
+                                                                            msg.id,
+                                                                          )
+                                                                  ? _continueResponse
+                                                                  : null,
+                                                            ),
+                                                          ] else if (msg
+                                                                  .content
+                                                                  .isEmpty &&
+                                                              !isUser &&
+                                                              _isLoading &&
+                                                              !_firstTokenReceived)
+                                                            widget.oficinaKind ==
+                                                                        OficinaKind
+                                                                            .imagem &&
+                                                                    _streamPhase ==
+                                                                        'generating_image'
+                                                                ? _ImageGenerationPlaceholder(
+                                                                    aspectRatio:
+                                                                        _imageAspectRatio,
+                                                                  )
+                                                                : widget.oficinaKind ==
+                                                                      OficinaKind
+                                                                          .video
+                                                                ? Column(
+                                                                    crossAxisAlignment:
+                                                                        CrossAxisAlignment
+                                                                            .start,
+                                                                    children: [
+                                                                      ChatStatusIndicator(
+                                                                        label:
+                                                                            _chatStatusLabel,
+                                                                      ),
+                                                                      _VideoGenerationProgress(
+                                                                        phase:
+                                                                            _streamPhase,
+                                                                      ),
+                                                                      TextButton.icon(
+                                                                        onPressed:
+                                                                            _stopGeneration,
+                                                                        icon: const Icon(
+                                                                          Icons
+                                                                              .close_rounded,
+                                                                          size:
+                                                                              16,
+                                                                        ),
+                                                                        label:
+                                                                            const Text(
+                                                                              'Cancelar',
+                                                                            ),
+                                                                      ),
+                                                                    ],
+                                                                  )
+                                                                : ChatStatusIndicator(
+                                                                    label:
+                                                                        _chatStatusLabel,
+                                                                  )
+                                                          else if (msg
+                                                                  .content
+                                                                  .isEmpty &&
+                                                              !isUser &&
+                                                              _isLoading &&
+                                                              _voiceResponsePending)
+                                                            const SizedBox.shrink()
+                                                          else if (!isUser &&
+                                                              isLastAssistant &&
+                                                              _isLoading &&
+                                                              !_voiceResponsePending &&
+                                                              _firstTokenReceived)
+                                                            ValueListenableBuilder<
+                                                              String
+                                                            >(
+                                                              valueListenable:
+                                                                  _streamingText,
+                                                              builder: (context, content, _) =>
+                                                                  widget.oficinaKind ==
+                                                                          OficinaKind
+                                                                              .imagem &&
+                                                                      _streamPhase == 'generating_image'
+                                                                  ? _ImageGenerationPlaceholder(
+                                                                      aspectRatio:
+                                                                          _imageAspectRatio,
+                                                                    )
+                                                                  : Column(
+                                                                      crossAxisAlignment:
+                                                                          CrossAxisAlignment
+                                                                              .start,
+                                                                      mainAxisSize:
+                                                                          MainAxisSize
+                                                                              .min,
+                                                                      children: [
+                                                                        MessageContentView(
+                                                                          content: _citationMarkdown(
+                                                                            msg.id,
+                                                                            content,
+                                                                          ),
+                                                                          isUser:
+                                                                              false,
+                                                                          onTapLink:
+                                                                              _openLink,
+                                                                        ),
+                                                                        const _StreamingCursor(),
+                                                                      ],
+                                                                    ),
+                                                            )
+                                                          else if (!isUser &&
+                                                              msg.id ==
+                                                                  _voiceReplyDisplayMessageId)
+                                                            ValueListenableBuilder<
+                                                              String
+                                                            >(
+                                                              valueListenable:
+                                                                  _voiceReplyDisplayedText,
+                                                              builder:
+                                                                  (
+                                                                    context,
+                                                                    content,
+                                                                    _,
+                                                                  ) => MessageContentView(
+                                                                    content:
+                                                                        _citationMarkdown(
+                                                                          msg.id,
+                                                                          content,
+                                                                        ),
+                                                                    isUser:
+                                                                        false,
+                                                                    onTapLink:
+                                                                        _openLink,
+                                                                  ),
+                                                            )
+                                                          else
+                                                            MemoizedMessageContentView(
                                                               content:
-                                                                  msg.content,
-                                                              isUser: false,
+                                                                  _citationMarkdown(
+                                                                    msg.id,
+                                                                    msg.content,
+                                                                  ),
+                                                              isUser: isUser,
                                                               onTapLink:
                                                                   _openLink,
+                                                              additionalImages:
+                                                                  _messageImageAttachments(
+                                                                    msg,
+                                                                  ),
                                                             ),
-                                                          const SizedBox(
-                                                            height: 8,
-                                                          ),
-                                                          ChatStatusIndicator(
-                                                            label:
-                                                                _chatErrorMessage!,
-                                                            isError: true,
-                                                            onRetry: _isLoading
-                                                                ? null
-                                                                : _retryLastFailedRequest,
-                                                            onContinue:
-                                                                !_isLoading &&
-                                                                    msg.content
-                                                                        .trim()
-                                                                        .isNotEmpty &&
-                                                                    _truncatedMessageIds
-                                                                        .contains(
-                                                                          msg.id,
-                                                                        )
-                                                                ? _continueResponse
-                                                                : null,
-                                                          ),
-                                                        ] else if (msg
-                                                                .content
-                                                                .isEmpty &&
-                                                            !isUser &&
-                                                            _isLoading &&
-                                                            !_firstTokenReceived)
-                                                          ChatStatusIndicator(
-                                                            label:
-                                                                _chatStatusLabel,
-                                                          )
-                                                        else if (msg
-                                                                .content
-                                                                .isEmpty &&
-                                                            !isUser &&
-                                                            _isLoading &&
-                                                            _voiceResponsePending)
-                                                          const SizedBox.shrink()
-                                                        else if (!isUser &&
-                                                            isLastAssistant &&
-                                                            _isLoading &&
-                                                            !_voiceResponsePending &&
-                                                            _firstTokenReceived)
-                                                          ValueListenableBuilder<
-                                                            String
-                                                          >(
-                                                            valueListenable:
-                                                                _streamingText,
-                                                            builder: (context, content, _) => Column(
-                                                              crossAxisAlignment:
-                                                                  CrossAxisAlignment
-                                                                      .start,
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                MessageContentView(
-                                                                  content:
-                                                                      _citationMarkdown(
-                                                                        msg.id,
-                                                                        content,
-                                                                      ),
-                                                                  isUser: false,
-                                                                  onTapLink:
-                                                                      _openLink,
-                                                                ),
-                                                                const _StreamingCursor(),
-                                                              ],
-                                                            ),
-                                                          )
-                                                        else if (!isUser &&
-                                                            msg.id ==
-                                                                _voiceReplyDisplayMessageId)
-                                                          ValueListenableBuilder<
-                                                            String
-                                                          >(
-                                                            valueListenable:
-                                                                _voiceReplyDisplayedText,
-                                                            builder:
-                                                                (
-                                                                  context,
-                                                                  content,
-                                                                  _,
-                                                                ) => MessageContentView(
-                                                                  content:
-                                                                      _citationMarkdown(
-                                                                        msg.id,
-                                                                        content,
-                                                                      ),
-                                                                  isUser: false,
-                                                                  onTapLink:
-                                                                      _openLink,
-                                                                ),
-                                                          )
-                                                        else
-                                                          MemoizedMessageContentView(
-                                                            content:
-                                                                _citationMarkdown(
-                                                                  msg.id,
+                                                          if (!isUser &&
+                                                              widget.oficinaKind ==
+                                                                  OficinaKind
+                                                                      .imagem &&
+                                                              (msg.content
+                                                                      .contains(
+                                                                        '[gama_image_file]',
+                                                                      ) ||
+                                                                  msg.content
+                                                                      .contains(
+                                                                        '[gama_image]',
+                                                                      ))) ...[
+                                                            if (_beforeImagePath !=
+                                                                    null &&
+                                                                _imagePathFromContent(
+                                                                      msg.content,
+                                                                    ) !=
+                                                                    null &&
+                                                                _imagePathFromContent(
+                                                                      msg.content,
+                                                                    ) !=
+                                                                    _beforeImagePath)
+                                                              _BeforeAfterImageSlider(
+                                                                beforePath:
+                                                                    _beforeImagePath!,
+                                                                afterPath:
+                                                                    _imagePathFromContent(
+                                                                      msg.content,
+                                                                    )!,
+                                                              ),
+                                                            _ImageCreationActions(
+                                                              onVary: () => _varyGeneratedImage(
+                                                                _imagePathFromContent(
                                                                   msg.content,
                                                                 ),
-                                                            isUser: isUser,
-                                                            onTapLink:
-                                                                _openLink,
-                                                            additionalImages:
-                                                                _messageImageAttachments(
-                                                                  msg,
-                                                                ),
-                                                          ),
-                                                        if (!isUser &&
-                                                            (msg.content
-                                                                    .contains(
-                                                                      'diff --git',
-                                                                    ) ||
-                                                                RegExp(
-                                                                  r'^@@ .* @@',
-                                                                  multiLine:
-                                                                      true,
-                                                                ).hasMatch(
-                                                                  msg.content,
-                                                                )))
-                                                          _UnifiedDiffCard(
-                                                            content:
-                                                                msg.content,
-                                                          ),
-                                                        if (!isUser &&
-                                                            (_artifactsByMessageId[msg
-                                                                        .id]
-                                                                    ?.isNotEmpty ??
-                                                                false)) ...[
-                                                          const SizedBox(
-                                                            height: 12,
-                                                          ),
-                                                          _ArtifactStatusList(
-                                                            artifacts:
-                                                                _artifactsByMessageId[msg
-                                                                    .id]!,
-                                                            onPreview: (file) => showDialog<void>(
-                                                              context: context,
-                                                              builder: (dialogContext) => AlertDialog(
-                                                                title: Text(
-                                                                  file['name']
-                                                                          ?.toString() ??
-                                                                      'Prévia',
-                                                                ),
-                                                                content: SizedBox(
-                                                                  width: 700,
-                                                                  child: SingleChildScrollView(
-                                                                    child: SelectableText(
-                                                                      file['preview']
-                                                                              ?.toString() ??
-                                                                          'Prévia indisponível.',
+                                                                'Crie uma variação da imagem anterior com esta direção: ${_precedingUserPrompt(index)}',
+                                                              ),
+                                                              onEdit: () {
+                                                                final path =
+                                                                    _imagePathFromContent(
+                                                                      msg.content,
+                                                                    );
+                                                                _beforeImagePath =
+                                                                    path;
+                                                                unawaited(
+                                                                  _editGeneratedImage(
+                                                                    path,
+                                                                    'Edite a imagem anterior: ${_precedingUserPrompt(index)}',
+                                                                  ),
+                                                                );
+                                                              },
+                                                              onRegenerate: () =>
+                                                                  _sendImageFollowup(
+                                                                    _precedingUserPrompt(
+                                                                      index,
                                                                     ),
                                                                   ),
+                                                              onViewPrompt: () => showDialog<void>(
+                                                                context:
+                                                                    context,
+                                                                builder: (ctx) => AlertDialog(
+                                                                  title:
+                                                                      const Text(
+                                                                        'Prompt da imagem',
+                                                                      ),
+                                                                  content:
+                                                                      SelectableText(
+                                                                        _precedingUserPrompt(
+                                                                          index,
+                                                                        ),
+                                                                      ),
+                                                                  actions: [
+                                                                    TextButton(
+                                                                      onPressed: () =>
+                                                                          Navigator.pop(
+                                                                            ctx,
+                                                                          ),
+                                                                      child:
+                                                                          const Text(
+                                                                            'Fechar',
+                                                                          ),
+                                                                    ),
+                                                                  ],
                                                                 ),
-                                                                actions: [
-                                                                  TextButton(
-                                                                    onPressed: () =>
-                                                                        Navigator.pop(
-                                                                          dialogContext,
+                                                              ),
+                                                            ),
+                                                          ],
+                                                          if (!isUser &&
+                                                              (msg.content
+                                                                      .contains(
+                                                                        'diff --git',
+                                                                      ) ||
+                                                                  RegExp(
+                                                                    r'^@@ .* @@',
+                                                                    multiLine:
+                                                                        true,
+                                                                  ).hasMatch(
+                                                                    msg.content,
+                                                                  )))
+                                                            _UnifiedDiffCard(
+                                                              content:
+                                                                  msg.content,
+                                                            ),
+                                                          if (!isUser &&
+                                                              (_artifactsByMessageId[msg
+                                                                          .id]
+                                                                      ?.isNotEmpty ??
+                                                                  false)) ...[
+                                                            const SizedBox(
+                                                              height: 12,
+                                                            ),
+                                                            ArtifactStatusList(
+                                                              artifacts:
+                                                                  _artifactsByMessageId[msg
+                                                                      .id]!,
+                                                              videoPaths:
+                                                                  _videoPathsByArtifactId,
+                                                              onPlayVideo:
+                                                                  _cacheVideoArtifact,
+                                                              onPreview:
+                                                                  _showGeneratedFilePreview,
+                                                              onDownload: (artifact) {
+                                                                final id =
+                                                                    artifact['artifact_id']
+                                                                        ?.toString() ??
+                                                                    '';
+                                                                final filename =
+                                                                    artifact['filename']
+                                                                        ?.toString() ??
+                                                                    'gamma_arquivo.zip';
+                                                                if (id
+                                                                    .isNotEmpty) {
+                                                                  _downloadGeneratedArtifact(
+                                                                    id,
+                                                                    filename,
+                                                                  );
+                                                                }
+                                                              },
+                                                            ),
+                                                          ],
+                                                          if (!isUser &&
+                                                              ((_activityByMessageId[msg
+                                                                              .id]
+                                                                          ?.isNotEmpty ??
+                                                                      false) ||
+                                                                  (_sourcesByMessageId[msg
+                                                                              .id]
+                                                                          ?.isNotEmpty ??
+                                                                      false)))
+                                                            _ActivityTimeline(
+                                                              key: ValueKey(
+                                                                'activity-${msg.id}',
+                                                              ),
+                                                              steps:
+                                                                  _activityByMessageId[msg
+                                                                      .id] ??
+                                                                  const [],
+                                                              sources:
+                                                                  _sourcesByMessageId[msg
+                                                                      .id] ??
+                                                                  const [],
+                                                              isRunning:
+                                                                  _isLoading &&
+                                                                  isLastAssistant,
+                                                            ),
+                                                          if (!isUser &&
+                                                              !_isLoading &&
+                                                              _truncatedMessageIds
+                                                                  .contains(
+                                                                    msg.id,
+                                                                  ))
+                                                            Align(
+                                                              alignment: Alignment
+                                                                  .centerLeft,
+                                                              child: TextButton.icon(
+                                                                onPressed:
+                                                                    _continueResponse,
+                                                                icon: const Icon(
+                                                                  Icons
+                                                                      .more_horiz_rounded,
+                                                                  size: 18,
+                                                                ),
+                                                                label:
+                                                                    const Text(
+                                                                      'Continuar',
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                          if (!isUser &&
+                                                              !_isLoading &&
+                                                              msg
+                                                                      .variants
+                                                                      .length >
+                                                                  1)
+                                                            Padding(
+                                                              padding:
+                                                                  const EdgeInsets.only(
+                                                                    top: 8,
+                                                                  ),
+                                                              child: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  IconButton(
+                                                                    tooltip: 'Versão anterior',
+                                                                    constraints:
+                                                                        const BoxConstraints.tightFor(
+                                                                          width:
+                                                                              48,
+                                                                          height:
+                                                                              48,
                                                                         ),
-                                                                    child:
-                                                                        const Text(
-                                                                          'Fechar',
+                                                                    padding:
+                                                                        EdgeInsets
+                                                                            .zero,
+                                                                    onPressed:
+                                                                        msg.selectedVariantIndex >
+                                                                            0
+                                                                        ? () => _selectResponseVariant(
+                                                                            msg,
+                                                                            msg.selectedVariantIndex -
+                                                                                1,
+                                                                          )
+                                                                        : null,
+                                                                    icon: const Icon(
+                                                                      Icons
+                                                                          .chevron_left_rounded,
+                                                                      size: 20,
+                                                                    ),
+                                                                  ),
+                                                                  Text(
+                                                                    '${msg.selectedVariantIndex + 1}/${msg.variants.length}',
+                                                                    style: TextStyle(
+                                                                      color: context
+                                                                          .gama
+                                                                          .textMuted,
+                                                                      fontSize:
+                                                                          12,
+                                                                    ),
+                                                                  ),
+                                                                  IconButton(
+                                                                    tooltip: 'Próxima versão',
+                                                                    constraints:
+                                                                        const BoxConstraints.tightFor(
+                                                                          width:
+                                                                              48,
+                                                                          height:
+                                                                              48,
                                                                         ),
+                                                                    padding:
+                                                                        EdgeInsets
+                                                                            .zero,
+                                                                    onPressed:
+                                                                        msg.selectedVariantIndex <
+                                                                            msg.variants.length -
+                                                                                1
+                                                                        ? () => _selectResponseVariant(
+                                                                            msg,
+                                                                            msg.selectedVariantIndex +
+                                                                                1,
+                                                                          )
+                                                                        : null,
+                                                                    icon: const Icon(
+                                                                      Icons
+                                                                          .chevron_right_rounded,
+                                                                      size: 20,
+                                                                    ),
                                                                   ),
                                                                 ],
                                                               ),
                                                             ),
-                                                            onDownload: (artifact) {
-                                                              final id =
-                                                                  artifact['artifact_id']
-                                                                      ?.toString() ??
-                                                                  '';
-                                                              final filename =
-                                                                  artifact['filename']
-                                                                      ?.toString() ??
-                                                                  'gamma_arquivo.zip';
-                                                              if (id
-                                                                  .isNotEmpty) {
-                                                                _downloadGeneratedArtifact(
-                                                                  id,
-                                                                  filename,
-                                                                );
-                                                              }
-                                                            },
-                                                          ),
                                                         ],
-                                                        if (!isUser &&
-                                                            ((_activityByMessageId[msg
-                                                                            .id]
-                                                                        ?.isNotEmpty ??
-                                                                    false) ||
-                                                                (_sourcesByMessageId[msg
-                                                                            .id]
-                                                                        ?.isNotEmpty ??
-                                                                    false)))
-                                                          _ActivityTimeline(
-                                                            key: ValueKey(
-                                                              'activity-${msg.id}',
-                                                            ),
-                                                            steps:
-                                                                _activityByMessageId[msg
-                                                                    .id] ??
-                                                                const [],
-                                                            sources:
-                                                                _sourcesByMessageId[msg
-                                                                    .id] ??
-                                                                const [],
-                                                            isRunning:
-                                                                _isLoading &&
-                                                                isLastAssistant,
-                                                          ),
-                                                        if (!isUser &&
-                                                            !_isLoading &&
-                                                            _truncatedMessageIds
-                                                                .contains(
-                                                                  msg.id,
-                                                                ))
-                                                          Align(
-                                                            alignment: Alignment
-                                                                .centerLeft,
-                                                            child: TextButton.icon(
-                                                              onPressed:
-                                                                  _continueResponse,
-                                                              icon: const Icon(
-                                                                Icons
-                                                                    .more_horiz_rounded,
-                                                                size: 18,
-                                                              ),
-                                                              label: const Text(
-                                                                'Continuar',
-                                                              ),
-                                                            ),
-                                                          ),
-                                                        if (!isUser &&
-                                                            !_isLoading &&
-                                                            msg
-                                                                    .variants
-                                                                    .length >
-                                                                1)
-                                                          Padding(
-                                                            padding:
-                                                                const EdgeInsets.only(
-                                                                  top: 8,
-                                                                ),
-                                                            child: Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                IconButton(
-                                                                  tooltip: 'Versão anterior',
-                                                                  constraints:
-                                                                      const BoxConstraints.tightFor(
-                                                                        width:
-                                                                            48,
-                                                                        height:
-                                                                            48,
-                                                                      ),
-                                                                  padding:
-                                                                      EdgeInsets
-                                                                          .zero,
-                                                                  onPressed:
-                                                                      msg.selectedVariantIndex >
-                                                                          0
-                                                                      ? () => _selectResponseVariant(
-                                                                          msg,
-                                                                          msg.selectedVariantIndex -
-                                                                              1,
-                                                                        )
-                                                                      : null,
-                                                                  icon: const Icon(
-                                                                    Icons
-                                                                        .chevron_left_rounded,
-                                                                    size: 20,
-                                                                  ),
-                                                                ),
-                                                                Text(
-                                                                  '${msg.selectedVariantIndex + 1}/${msg.variants.length}',
-                                                                  style: TextStyle(
-                                                                    color: context
-                                                                        .gama
-                                                                        .textMuted,
-                                                                    fontSize:
-                                                                        12,
-                                                                  ),
-                                                                ),
-                                                                IconButton(
-                                                                  tooltip: 'Próxima versão',
-                                                                  constraints:
-                                                                      const BoxConstraints.tightFor(
-                                                                        width:
-                                                                            48,
-                                                                        height:
-                                                                            48,
-                                                                      ),
-                                                                  padding:
-                                                                      EdgeInsets
-                                                                          .zero,
-                                                                  onPressed:
-                                                                      msg.selectedVariantIndex <
-                                                                          msg.variants.length -
-                                                                              1
-                                                                      ? () => _selectResponseVariant(
-                                                                          msg,
-                                                                          msg.selectedVariantIndex +
-                                                                              1,
-                                                                        )
-                                                                      : null,
-                                                                  icon: const Icon(
-                                                                    Icons
-                                                                        .chevron_right_rounded,
-                                                                    size: 20,
-                                                                  ),
-                                                                ),
-                                                              ],
-                                                            ),
-                                                          ),
-                                                      ],
+                                                      ),
                                                     ),
-                                                  ),
-                                                  if (msg.content
-                                                      .trim()
-                                                      .isNotEmpty)
-                                                    _messageActions(
-                                                      msg,
-                                                      index,
-                                                      isLastAssistant,
-                                                    ),
-                                                  if (!isUser)
-                                                    const SizedBox(height: 12),
-                                                ],
+                                                    if (msg.content
+                                                        .trim()
+                                                        .isNotEmpty)
+                                                      _messageActions(
+                                                        msg,
+                                                        index,
+                                                        isLastAssistant,
+                                                      ),
+                                                    if (!isUser)
+                                                      const SizedBox(
+                                                        height: 12,
+                                                      ),
+                                                  ],
+                                                ),
                                               ),
                                             ),
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                  builder: (context, value, child) => Opacity(
-                                    opacity: value,
-                                    child: Transform.translate(
-                                      offset: Offset(0, (1 - value) * 8),
-                                      child: child,
+                                    builder: (context, value, child) => Opacity(
+                                      opacity: value,
+                                      child: Transform.translate(
+                                        offset: Offset(0, (1 - value) * 8),
+                                        child: child,
+                                      ),
                                     ),
-                                  ),
-                                );
-                              },
+                                  );
+                                },
+                              ),
                             ),
-                          ),
+                    ),
                   ),
                   if (_showScrollToBottom || (_isLoading && !_followStream))
                     Positioned(
@@ -3752,14 +4094,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 child: Row(
                   children: [
-                    SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.2,
-                        color: context.gama.accent,
-                      ),
-                    ),
+                    const GamaSkeleton(width: 18, height: 18, radius: 9),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -3904,6 +4239,57 @@ class _ChatScreenState extends State<ChatScreen> {
               onSpeakSend: _sendMessageWithVoiceReply,
               onPasteImage: _pasteClipboardContent,
               showSlashMenu: _showSlashSuggestions,
+              oficinaKind: widget.oficinaKind,
+              placeholder: switch (widget.oficinaKind) {
+                OficinaKind.imagem => 'Descreva a imagem que quer criar…',
+                OficinaKind.video => 'Descreva o vídeo…',
+                OficinaKind.programar =>
+                  'Peça um app, anexe um ZIP ou cole um link do GitHub…',
+                null => null,
+              },
+              onExitOficina: widget.oficinaKind == null
+                  ? null
+                  : () async {
+                      await _service.updateConversationMode(
+                        widget.conversationId,
+                        null,
+                      );
+                      if (mounted)
+                        Navigator.of(context)
+                            .popUntil((route) => route.isFirst);
+                    },
+              imageAspectRatio: _imageAspectRatio,
+              imageStyle: _imageStyle,
+              onImageAspectRatioChanged: (value) =>
+                  setState(() => _imageAspectRatio = value),
+              onImageStyleChanged: (value) =>
+                  setState(() => _imageStyle = value),
+              oficinaShortcuts: widget.oficinaKind == OficinaKind.programar
+                  ? [
+                      ActionChip(
+                        avatar: const Icon(Icons.folder_zip_outlined, size: 16),
+                        label: const Text('Anexar ZIP'),
+                        onPressed: () => _pickFiles(zipOnly: true),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.link_rounded, size: 16),
+                        label: const Text('Colar link do GitHub'),
+                        onPressed: () {
+                          _controller.text =
+                              'Analise este repositório: https://github.com/';
+                          _composerFocusNode.requestFocus();
+                        },
+                      ),
+                      ActionChip(
+                        avatar: const Icon(Icons.bug_report_outlined, size: 16),
+                        label: const Text('Colar erro'),
+                        onPressed: () {
+                          _controller.text = 'Explique este erro:\n';
+                          _composerFocusNode.requestFocus();
+                        },
+                      ),
+                    ]
+                  : const [],
               onSlashCommandSelected: _selectSlashCommand,
               onStop: _stopGeneration,
               onModeChanged: (m) async {
@@ -3952,287 +4338,111 @@ class _SourceFavicon extends StatelessWidget {
   }
 }
 
-class _ArtifactStatusList extends StatelessWidget {
-  final List<Map<String, dynamic>> artifacts;
-  final ValueChanged<Map<String, dynamic>> onDownload;
-  final ValueChanged<Map<String, dynamic>> onPreview;
+class _CodePreviewContent extends StatelessWidget {
+  final String title;
+  final String content;
+  const _CodePreviewContent({required this.title, required this.content});
 
-  const _ArtifactStatusList({
-    required this.artifacts,
-    required this.onDownload,
-    required this.onPreview,
-  });
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 12, 10),
+          child: Row(
+            children: [
+              Icon(Icons.code_rounded, color: context.gama.accent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: context.gama.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ),
+        ),
+        Divider(color: context.gama.divider, height: 1),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(18),
+            child: SelectableText(
+              content,
+              style: TextStyle(
+                color: context.gama.textPrimary,
+                fontFamily: 'monospace',
+                fontSize: 12,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
-  String _validationLabel(Map<String, dynamic> validation) {
-    switch (validation['status']?.toString()) {
-      case 'passed':
-        return 'Validação sintática passou nos formatos suportados';
-      case 'partial':
-        return 'Validação sintática parcial';
-      case 'issues_found':
-        return 'Foram encontrados problemas de validação';
-      case 'not_checked':
-        return 'Código não verificado sintaticamente';
-      case 'no_source_files':
-        return 'Nenhum arquivo-fonte reconhecido para validação';
-      case 'invalid_archive':
-        return 'O arquivo não passou na validação estrutural';
-      default:
-        return 'Validação de código não disponível';
-    }
-  }
+class _VideoGenerationProgress extends StatelessWidget {
+  final String phase;
+  const _VideoGenerationProgress({required this.phase});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: artifacts
-          .map((artifact) {
-            final filename =
-                artifact['filename']?.toString() ?? 'arquivo gerado';
-            final kind = artifact['kind']?.toString() ?? 'zip';
-            final structural = artifact['validation'] is Map
-                ? Map<String, dynamic>.from(artifact['validation'] as Map)
-                : <String, dynamic>{};
-            final source = artifact['source_validation'] is Map
-                ? Map<String, dynamic>.from(
-                    artifact['source_validation'] as Map,
-                  )
-                : <String, dynamic>{};
-            final isZip = kind == 'zip';
-            final generatedFiles = artifact['generated_files'] is List
-                ? (artifact['generated_files'] as List)
-                      .whereType<Map>()
-                      .map((file) => Map<String, dynamic>.from(file))
-                      .toList()
-                : <Map<String, dynamic>>[];
-            final isVideo = kind == 'video';
-            final providerCost = double.tryParse(
-              artifact['provider_cost_usd']?.toString() ?? '',
-            );
-            final videoAudioLabel = artifact['audio_generated'] == false
-                ? 'sem áudio'
-                : 'com áudio';
-            final zipOk = structural['ok'] == true;
-            final syntaxStatus = source['status']?.toString() ?? '';
-            final checked = source['checked_count']?.toString() ?? '0';
-            final unverified = source['unverified_count']?.toString() ?? '0';
-            final issues = source['issue_count']?.toString() ?? '0';
-
-            return Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 6),
-              padding: const EdgeInsets.all(11),
-              decoration: BoxDecoration(
-                color: context.gama.surfaceCard.withValues(alpha: 0.82),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: context.gama.borderSoft),
+    final current = phase == 'video_downloading'
+        ? 2
+        : phase == 'video_generating'
+        ? 1
+        : 0;
+    const labels = ['Na fila', 'Gerando', 'Salvando'];
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          for (var i = 0; i < labels.length; i++) ...[
+            Icon(
+              i < current
+                  ? Icons.check_circle
+                  : i == current
+                  ? Icons.circle
+                  : Icons.circle_outlined,
+              size: 12,
+              color: i <= current
+                  ? context.gama.accentCool
+                  : context.gama.textHint,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              labels[i],
+              style: TextStyle(
+                color: i == current
+                    ? context.gama.textSecondary
+                    : context.gama.textMuted,
+                fontSize: 10,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        isZip
-                            ? Icons.folder_zip_outlined
-                            : isVideo
-                            ? Icons.movie_outlined
-                            : Icons.description_outlined,
-                        color: context.gama.accentBright,
-                        size: 19,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          filename,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: context.gama.textPrimary,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (generatedFiles.isNotEmpty) ...[
-                    Text(
-                      '${generatedFiles.length} arquivo(s) · conteúdo pronto para prévia',
-                      style: TextStyle(
-                        color: context.gama.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    for (final file in generatedFiles)
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.code_rounded, size: 18),
-                        title: Text(
-                          file['name']?.toString() ?? 'arquivo',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          '${file['language'] ?? 'texto'} · ${_formatBytes(file['size'])}',
-                        ),
-                        trailing: const Icon(
-                          Icons.visibility_outlined,
-                          size: 18,
-                        ),
-                        onTap: () => onPreview(file),
-                      ),
-                    const SizedBox(height: 4),
-                  ],
-                  if (isZip) ...[
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          zipOk
-                              ? Icons.check_circle_outline
-                              : Icons.error_outline,
-                          size: 16,
-                          color: zipOk
-                              ? context.gama.accentBright
-                              : Colors.orangeAccent,
-                        ),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: Text(
-                            zipOk
-                                ? 'Integridade do ZIP: passou (estrutura/CRC)'
-                                : 'Integridade do ZIP: falhou',
-                            style: TextStyle(
-                              color: context.gama.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          syntaxStatus == 'passed'
-                              ? Icons.verified_outlined
-                              : syntaxStatus == 'issues_found'
-                              ? Icons.warning_amber_rounded
-                              : Icons.info_outline_rounded,
-                          size: 16,
-                          color: syntaxStatus == 'issues_found'
-                              ? Colors.orangeAccent
-                              : context.gama.accentBright,
-                        ),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: Text(
-                            _validationLabel(source),
-                            style: TextStyle(
-                              color: context.gama.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (source.isNotEmpty) ...[
-                      const SizedBox(height: 5),
-                      Text(
-                        'Arquivos verificados: $checked · não verificados: $unverified · problemas: $issues',
-                        style: TextStyle(
-                          color: context.gama.textMuted,
-                          fontSize: 12,
-                        ),
-                      ),
-                      if (source['note'] is String)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 5),
-                          child: Text(
-                            source['note'].toString(),
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: context.gama.textMuted,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ] else if (isVideo) ...[
-                    Text(
-                      'Vídeo gerado${artifact['duration_seconds'] == null ? '' : ' · ${artifact['duration_seconds']} s'}${artifact['resolution'] == null ? '' : ' · ${artifact['resolution']}'} · $videoAudioLabel',
-                      style: TextStyle(
-                        color: context.gama.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Confira o resultado antes de compartilhar ou substituir o original.',
-                      style: TextStyle(
-                        color: context.gama.textMuted,
-                        fontSize: 12,
-                      ),
-                    ),
-                    if (providerCost != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Custo informado pela OpenRouter: US\$${providerCost.toStringAsFixed(4)}',
-                        style: TextStyle(
-                          color: context.gama.textMuted,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ] else ...[
-                    Text(
-                      structural['ok'] == true
-                          ? 'Arquivo gerado e validado estruturalmente.'
-                          : 'O arquivo precisa de verificação adicional.',
-                      style: TextStyle(
-                        color: context.gama.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: () => onDownload(artifact),
-                      icon: Icon(
-                        isVideo ? Icons.play_arrow_rounded : Icons.download_rounded,
-                        size: 18,
-                      ),
-                      label: Text(
-                        isVideo
-                            ? 'Reproduzir vídeo'
-                            : isZip
-                            ? 'Baixar tudo em ZIP'
-                            : 'Baixar arquivo',
-                      ),
-                    ),
-                  ),
-                ],
+            ),
+            if (i < labels.length - 1)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                child: Container(
+                  width: 14,
+                  height: 1,
+                  color: context.gama.border,
+                ),
               ),
-            );
-          })
-          .toList(growable: false),
+          ],
+        ],
+      ),
     );
-  }
-
-  String _formatBytes(dynamic value) {
-    final size = int.tryParse(value?.toString() ?? '') ?? 0;
-    if (size < 1024) return '$size B';
-    if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
-    return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 }
 
@@ -4398,446 +4608,194 @@ class _ActivityTimeline extends StatelessWidget {
   }
 }
 
-enum _EmptySuggestionAction {
-  write,
-  explain,
-  brainstorm,
-  summarizeAttachment,
-  analyzeAttachment,
-  extractTasks,
-  editAttachment,
-  reviewProject,
-  explainError,
-  generateWidget,
-}
+class _ImageCreationActions extends StatelessWidget {
+  final VoidCallback onVary;
+  final VoidCallback onEdit;
+  final VoidCallback onRegenerate;
+  final VoidCallback onViewPrompt;
 
-class _EmptyState extends StatelessWidget {
-  final void Function(_EmptySuggestionAction action, String text) onSuggestion;
-  final OficinaKind? oficinaKind;
-  final List<AttachmentKind> attachmentKinds;
-
-  const _EmptyState({
-    required this.onSuggestion,
-    required this.attachmentKinds,
-    this.oficinaKind,
+  const _ImageCreationActions({
+    required this.onVary,
+    required this.onEdit,
+    required this.onRegenerate,
+    required this.onViewPrompt,
   });
 
-  AttachmentKind? get _attachmentKind =>
-      attachmentKinds.isEmpty ? null : attachmentKinds.first;
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 4,
+    runSpacing: 2,
+    children: [
+      TextButton.icon(
+        onPressed: onVary,
+        icon: const Icon(Icons.auto_awesome, size: 16),
+        label: const Text('Variar'),
+      ),
+      TextButton.icon(
+        onPressed: onEdit,
+        icon: const Icon(Icons.tune_rounded, size: 16),
+        label: const Text('Editar'),
+      ),
+      TextButton.icon(
+        onPressed: onRegenerate,
+        icon: const Icon(Icons.refresh_rounded, size: 16),
+        label: const Text('Regenerar'),
+      ),
+      TextButton.icon(
+        onPressed: onViewPrompt,
+        icon: const Icon(Icons.subject_rounded, size: 16),
+        label: const Text('Ver prompt'),
+      ),
+    ],
+  );
+}
 
-  List<_EmptySuggestionAction> get _activeActions {
-    switch (oficinaKind) {
-      case OficinaKind.imagem:
-      case OficinaKind.video:
-      case OficinaKind.programar:
-        return const [
-          _EmptySuggestionAction.generateWidget,
-          _EmptySuggestionAction.explainError,
-          _EmptySuggestionAction.reviewProject,
-        ];
-      case null:
-        return switch (_attachmentKind) {
-          AttachmentKind.image => const [
-            _EmptySuggestionAction.analyzeAttachment,
-            _EmptySuggestionAction.analyzeAttachment,
-            _EmptySuggestionAction.editAttachment,
-          ],
-          AttachmentKind.video || AttachmentKind.audio => const [
-            _EmptySuggestionAction.summarizeAttachment,
-            _EmptySuggestionAction.analyzeAttachment,
-            _EmptySuggestionAction.extractTasks,
-          ],
-          _ when _attachmentKind != null => const [
-            _EmptySuggestionAction.summarizeAttachment,
-            _EmptySuggestionAction.analyzeAttachment,
-            _EmptySuggestionAction.extractTasks,
-          ],
-          _ => const [
-            _EmptySuggestionAction.write,
-            _EmptySuggestionAction.explain,
-            _EmptySuggestionAction.brainstorm,
-          ],
-        };
-    }
-  }
+class _BeforeAfterImageSlider extends StatefulWidget {
+  final String beforePath;
+  final String afterPath;
+  const _BeforeAfterImageSlider({
+    required this.beforePath,
+    required this.afterPath,
+  });
 
-  List<String> get _activeSuggestions {
-    switch (oficinaKind) {
-      case OficinaKind.imagem:
-        return [
-          'Crie uma imagem de: ',
-          'Melhore esta imagem anexada',
-          'Analise esta imagem e descreva o que vê',
-        ];
-      case OficinaKind.video:
-        return [
-          'Gere um vídeo de: ',
-          'Edite o vídeo anexado: ',
-          'Melhore a qualidade deste vídeo',
-        ];
-      case OficinaKind.programar:
-        return [
-          'Crie um app Flutter que: ',
-          'Analise este projeto (anexe ZIP)',
-          'Refatore e melhore este código: ',
-        ];
-      case null:
-        return switch (_attachmentKind) {
-          AttachmentKind.image => [
-            'Descrever a imagem',
-            'Analisar os elementos',
-            'Sugerir uma edição',
-          ],
-          AttachmentKind.video => [
-            'Resumir o vídeo',
-            'Analisar uma cena',
-            'Listar os momentos principais',
-          ],
-          AttachmentKind.audio => [
-            'Resumir o áudio',
-            'Identificar os temas',
-            'Extrair decisões e tarefas',
-          ],
-          _ when _attachmentKind != null => [
-            'Resumir o arquivo',
-            'Analisar o conteúdo',
-            'Extrair pontos e tarefas',
-          ],
-          _ => ['Escrever um texto', 'Aprender algo novo', 'Pensar em ideias'],
-        };
-    }
-  }
+  @override
+  State<_BeforeAfterImageSlider> createState() =>
+      _BeforeAfterImageSliderState();
+}
 
-  List<String> get _activeTitles {
-    switch (oficinaKind) {
-      case OficinaKind.imagem:
-        return ['Criar imagem', 'Editar / melhorar', 'Analisar imagem'];
-      case OficinaKind.video:
-        return ['Gerar vídeo', 'Editar vídeo', 'Melhorar vídeo'];
-      case OficinaKind.programar:
-        return ['Criar projeto', 'Analisar código', 'Refatorar'];
-      case null:
-        return switch (_attachmentKind) {
-          AttachmentKind.image => ['Descrever', 'Analisar', 'Editar'],
-          AttachmentKind.video => [
-            'Resumir',
-            'Analisar cena',
-            'Momentos-chave',
-          ],
-          AttachmentKind.audio => ['Resumir', 'Temas', 'Decisões e tarefas'],
-          _ when _attachmentKind != null => [
-            'Resumir arquivo',
-            'Analisar conteúdo',
-            'Extrair tarefas',
-          ],
-          _ => ['Escrever', 'Explicar', 'Criar ideias'],
-        };
-    }
-  }
+class _BeforeAfterImageSliderState extends State<_BeforeAfterImageSlider> {
+  double _position = 0.5;
 
-  List<String> get _activeDescriptions {
-    switch (oficinaKind) {
-      case OficinaKind.imagem:
-        return [
-          'Descreva a cena, estilo e detalhes.',
-          'Anexe a imagem e diga o que mudar.',
-          'Anexe a imagem para análise visual.',
-        ];
-      case OficinaKind.video:
-        return [
-          'Descreva o vídeo, duração e estilo.',
-          'Anexe o vídeo e diga a transformação.',
-          'Anexe o vídeo para upscale ou limpeza.',
-        ];
-      case OficinaKind.programar:
-        return [
-          'Descreva a feature ou o app desejado.',
-          'Anexe ZIP ou cole o link do GitHub.',
-          'Cole o trecho ou anexe os arquivos.',
-        ];
-      case null:
-        return switch (_attachmentKind) {
-          AttachmentKind.image => [
-            'Descreva o que aparece ou peça detalhes visuais.',
-            'Identifique elementos e relações na imagem.',
-            'Diga como gostaria de transformar a imagem.',
-          ],
-          AttachmentKind.video => [
-            'Receba um resumo do conteúdo enviado.',
-            'Peça uma análise de uma cena específica.',
-            'Encontre os principais momentos do vídeo.',
-          ],
-          AttachmentKind.audio => [
-            'Receba um resumo do conteúdo falado.',
-            'Entenda os assuntos discutidos.',
-            'Liste decisões e ações mencionadas.',
-          ],
-          _ when _attachmentKind != null => [
-            'Faça um resumo claro do arquivo enviado.',
-            'Entenda o conteúdo e seus pontos importantes.',
-            'Liste decisões, tópicos e próximos passos.',
-          ],
-          _ => [
-            'Rascunhe uma mensagem, e-mail ou publicação.',
-            'Peça uma explicação passo a passo.',
-            'Explore possibilidades para um desafio.',
-          ],
-        };
-    }
-  }
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Antes · Depois',
+        style: TextStyle(
+          color: context.gama.textSecondary,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: 6),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: AspectRatio(
+          aspectRatio: 4 / 3,
+          child: LayoutBuilder(
+            builder: (context, bounds) => Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.file(File(widget.beforePath), fit: BoxFit.cover),
+                ClipRect(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: _position,
+                    child: SizedBox(
+                      width: bounds.maxWidth,
+                      height: bounds.maxHeight,
+                      child: Image.file(
+                        File(widget.afterPath),
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: bounds.maxWidth * _position - 1,
+                  top: 0,
+                  bottom: 0,
+                  child: Container(width: 2, color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      Slider(
+        value: _position,
+        onChanged: (value) => setState(() => _position = value),
+      ),
+    ],
+  );
+}
 
-  List<IconData> get _activeIcons {
-    switch (oficinaKind) {
-      case OficinaKind.imagem:
-        return [
-          Icons.image_outlined,
-          Icons.auto_fix_high_outlined,
-          Icons.visibility_outlined,
-        ];
-      case OficinaKind.video:
-        return [
-          Icons.videocam_outlined,
-          Icons.content_cut_rounded,
-          Icons.high_quality_outlined,
-        ];
-      case OficinaKind.programar:
-        return [
-          Icons.code_rounded,
-          Icons.folder_zip_outlined,
-          Icons.auto_awesome_outlined,
-        ];
-      case null:
-        return switch (_attachmentKind) {
-          AttachmentKind.image => [
-            Icons.image_outlined,
-            Icons.search_rounded,
-            Icons.auto_fix_high_outlined,
-          ],
-          AttachmentKind.video => [
-            Icons.movie_outlined,
-            Icons.search_rounded,
-            Icons.video_library_outlined,
-          ],
-          AttachmentKind.audio => [
-            Icons.summarize_outlined,
-            Icons.graphic_eq_rounded,
-            Icons.checklist_rounded,
-          ],
-          _ when _attachmentKind != null => [
-            Icons.summarize_outlined,
-            Icons.manage_search,
-            Icons.checklist_rounded,
-          ],
-          _ => [
-            Icons.edit_note_rounded,
-            Icons.lightbulb_outline_rounded,
-            Icons.auto_awesome_rounded,
-          ],
-        };
-    }
-  }
+class _ImageGenerationPlaceholder extends StatefulWidget {
+  final String aspectRatio;
 
-  String get _headline {
-    switch (oficinaKind) {
-      case OficinaKind.imagem:
-        return 'Oficina · Imagem';
-      case OficinaKind.video:
-        return 'Oficina · Vídeo';
-      case OficinaKind.programar:
-        return 'Oficina · Programar';
-      case null:
-        return 'Sua assistente virtual';
-    }
-  }
+  const _ImageGenerationPlaceholder({required this.aspectRatio});
 
-  String get _subtitle {
-    switch (oficinaKind) {
-      case OficinaKind.imagem:
-        return 'Crie, edite, transforme ou analise imagens.\nA Gama entende a intenção de cada pedido.';
-      case OficinaKind.video:
-        return 'Gere, edite e melhore vídeos.\nDescreva o que quer e anexe referências se precisar.';
-      case OficinaKind.programar:
-        return 'Código, análise e arquivos com GLM Flash.\nCada mensagem é tratada como tarefa de criação.';
-      case null:
-        return _attachmentKind != null
-            ? 'Seu anexo está pronto. Escolha uma sugestão ou escreva seu pedido.'
-            : 'Escolha um começo ou escreva o que você tem em mente.';
-    }
-  }
+  @override
+  State<_ImageGenerationPlaceholder> createState() =>
+      _ImageGenerationPlaceholderState();
+}
 
-  String get _badge {
-    switch (oficinaKind) {
-      case OficinaKind.imagem:
-        return 'MODO CRIAÇÃO · IMAGEM';
-      case OficinaKind.video:
-        return 'MODO CRIAÇÃO · VÍDEO';
-      case OficinaKind.programar:
-        return 'MODO CRIAÇÃO · CÓDIGO';
-      case null:
-        return 'CONVERSA';
-    }
+class _ImageGenerationPlaceholderState
+    extends State<_ImageGenerationPlaceholder>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1300),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 94,
-                height: 94,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      context.gama.surfaceHover,
-                      context.gama.surfaceCard,
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(30),
-                  border: Border.all(color: context.gama.border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: context.gama.accent.withValues(alpha: 0.12),
-                      blurRadius: 36,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-                child: Image.asset(
-                  'assets/images/image3.png',
-                  fit: BoxFit.contain,
-                ),
-              ),
-              const SizedBox(height: 22),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: context.gama.surfaceCard,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: context.gama.borderSoft),
-                ),
-                child: Row(
+    final ratio = switch (widget.aspectRatio) {
+      '16:9' => 16 / 9,
+      '9:16' => 9 / 16,
+      _ => 1.0,
+    };
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 360),
+      child: AspectRatio(
+        aspectRatio: ratio,
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) => DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              color: context.gama.surfaceCard,
+              border: Border.all(color: context.gama.border),
+            ),
+            child: ShaderMask(
+              shaderCallback: (bounds) => LinearGradient(
+                begin: Alignment(-1.5 + 3 * _controller.value, 0),
+                end: Alignment(-0.5 + 3 * _controller.value, 0),
+                colors: [
+                  Colors.white.withValues(alpha: 0.02),
+                  Colors.white.withValues(alpha: 0.22),
+                  Colors.white.withValues(alpha: 0.02),
+                ],
+              ).createShader(bounds),
+              blendMode: BlendMode.srcATop,
+              child: Center(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.circle, color: context.gama.success, size: 7),
-                    SizedBox(width: 7),
+                    Icon(
+                      Icons.auto_awesome_rounded,
+                      color: context.gama.accent,
+                      size: 28,
+                    ),
+                    const SizedBox(height: 8),
                     Text(
-                      _badge,
+                      'Criando sua imagem…',
                       style: TextStyle(
                         color: context.gama.textSecondary,
                         fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.0,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 15),
-              Text(
-                _headline,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: context.gama.textPrimary,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.8,
-                  height: 1.12,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Converse, programe ou explore uma ideia.\nA Gama ajuda você a dar o próximo passo.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: context.gama.textMuted,
-                  fontSize: 14,
-                  height: 1.55,
-                ),
-              ),
-              const SizedBox(height: 27),
-              ..._activeSuggestions.asMap().entries.map((entry) {
-                final index = entry.key;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Material(
-                    color: context.gama.surfaceCard,
-                    borderRadius: BorderRadius.circular(18),
-                    child: InkWell(
-                      onTap: () =>
-                          onSuggestion(_activeActions[index], entry.value),
-                      borderRadius: BorderRadius.circular(18),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.fromLTRB(13, 13, 14, 13),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: context.gama.borderSoft),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 42,
-                              height: 42,
-                              decoration: BoxDecoration(
-                                color: context.gama.accentSoft,
-                                borderRadius: BorderRadius.circular(13),
-                              ),
-                              child: Icon(
-                                _activeIcons[index],
-                                color: context.gama.accentBright,
-                                size: 20,
-                              ),
-                            ),
-                            const SizedBox(width: 13),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _activeTitles[index],
-                                    style: TextStyle(
-                                      color: context.gama.textPrimary,
-                                      fontSize: 13.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    _activeDescriptions[index],
-                                    style: TextStyle(
-                                      color: context.gama.textMuted,
-                                      fontSize: 12,
-                                      height: 1.35,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Icon(
-                              Icons.arrow_forward_rounded,
-                              color: context.gama.textMuted,
-                              size: 18,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            ],
+            ),
           ),
         ),
       ),

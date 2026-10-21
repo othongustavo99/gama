@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/gama_colors.dart';
+import '../widgets/loading_skeleton.dart';
 import '../services/local_notification_service.dart';
 import '../services/plugin_settings_service.dart';
 
@@ -289,7 +290,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
         child: const Icon(Icons.add, color: Colors.white),
       ),
       body: _loading
-          ? Center(child: CircularProgressIndicator(color: context.gama.accent))
+          ? const GamaSkeletonList(itemCount: 5)
           : _items.isEmpty
           ? Center(
               child: Padding(

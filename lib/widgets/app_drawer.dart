@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
 import '../models/conversation.dart';
+import '../models/oficina_kind.dart';
 import '../services/conversation_service.dart';
 import '../services/identity_service.dart';
 import '../services/auth_service.dart';
@@ -740,7 +741,15 @@ class _ConversationTile extends StatelessWidget {
                   : null,
             ),
             child: ListTile(
-              leading: isSelected
+              leading: OficinaKindX.fromChatMode(conversation.mode) != null
+                  ? Icon(
+                      OficinaKindX.fromChatMode(conversation.mode)!.icon,
+                      size: 16,
+                      color: isSelected
+                          ? context.gama.accent
+                          : context.gama.textMuted,
+                    )
+                  : isSelected
                   ? Container(
                       width: 3,
                       height: 18,

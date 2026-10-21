@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../core/gama_colors.dart';
 import '../screens/oficina_screen.dart';
+import '../models/oficina_kind.dart';
 import '../services/settings_service.dart';
 
 /// Barra de envio no estilo da home:
@@ -26,6 +27,14 @@ class ChatComposer extends StatelessWidget {
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSlashCommandSelected;
   final bool showSlashMenu;
+  final OficinaKind? oficinaKind;
+  final String? placeholder;
+  final VoidCallback? onExitOficina;
+  final String imageAspectRatio;
+  final String imageStyle;
+  final ValueChanged<String>? onImageAspectRatioChanged;
+  final ValueChanged<String>? onImageStyleChanged;
+  final List<Widget> oficinaShortcuts;
 
   const ChatComposer({
     super.key,
@@ -44,6 +53,14 @@ class ChatComposer extends StatelessWidget {
     this.onChanged,
     this.onSlashCommandSelected,
     this.showSlashMenu = false,
+    this.oficinaKind,
+    this.placeholder,
+    this.onExitOficina,
+    this.imageAspectRatio = '1:1',
+    this.imageStyle = 'Automático',
+    this.onImageAspectRatioChanged,
+    this.onImageStyleChanged,
+    this.oficinaShortcuts = const [],
   });
 
   bool get _usesDesktopEnterShortcut =>
@@ -72,8 +89,10 @@ class ChatComposer extends StatelessWidget {
               ('/memoria limpar', 'Apagar fatos salvos'),
               ('/memoria ', 'Salvar um fato na memória'),
               ('/limpar', 'Limpar esta conversa'),
-              ('/modo programar', 'Mudar para Programar'),
-              ('/modo conversar', 'Mudar para Conversar'),
+              if (oficinaKind == null) ...[
+                ('/modo programar', 'Mudar para Programar'),
+                ('/modo conversar', 'Mudar para Conversar'),
+              ],
             ]
             .where(
               (entry) =>
@@ -114,6 +133,53 @@ class ChatComposer extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (oficinaShortcuts.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Wrap(
+                      spacing: 7,
+                      runSpacing: 5,
+                      children: oficinaShortcuts,
+                    ),
+                  ),
+                if (oficinaKind == OficinaKind.imagem)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Wrap(
+                      spacing: 7,
+                      runSpacing: 6,
+                      children: [
+                        for (final ratio in const ['1:1', '16:9', '9:16'])
+                          ChoiceChip(
+                            label: Text(ratio),
+                            selected: imageAspectRatio == ratio,
+                            onSelected: (_) =>
+                                onImageAspectRatioChanged?.call(ratio),
+                            visualDensity: VisualDensity.compact,
+                            labelStyle: TextStyle(
+                              color: context.gama.textSecondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                        for (final style in const [
+                          'Automático',
+                          'Foto',
+                          'Ilustração',
+                          '3D',
+                        ])
+                          ChoiceChip(
+                            label: Text(style),
+                            selected: imageStyle == style,
+                            onSelected: (_) => onImageStyleChanged?.call(style),
+                            visualDensity: VisualDensity.compact,
+                            labelStyle: TextStyle(
+                              color: context.gama.textSecondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 if (showSlashMenu && slashCommands.isNotEmpty)
                   Container(
                     margin: const EdgeInsets.only(bottom: 8),
@@ -180,7 +246,7 @@ class ChatComposer extends StatelessWidget {
                         decoration: InputDecoration(
                           hintText: isListening
                               ? 'Ouvindo… o texto aparece aqui'
-                              : 'Escreva sua mensagem...',
+                              : placeholder ?? 'Escreva sua mensagem...',
                           hintStyle: TextStyle(
                             color: context.gama.textMuted,
                             fontSize: 14.5,
@@ -214,16 +280,20 @@ class ChatComposer extends StatelessWidget {
                     // Botão único "Oficina" (substitui o toggle Programar/Conversar).
                     // Visual: fundo escuro + traços brancos. Abre a tela Oficina.
                     _ModeChip(
-                      label: 'Oficina',
-                      icon: Icons.handyman_rounded,
+                      label: oficinaKind == null
+                          ? 'Oficina'
+                          : '${oficinaKind!.label}  ×',
+                      icon: oficinaKind?.icon ?? Icons.handyman_rounded,
                       selected: true,
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const OficinaScreen(),
-                          ),
-                        );
-                      },
+                      onTap: oficinaKind == null
+                          ? () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => const OficinaScreen(),
+                                ),
+                              );
+                            }
+                          : (onExitOficina ?? () {}),
                     ),
                     const Spacer(),
                     IconButton(
@@ -256,16 +326,17 @@ class ChatComposer extends StatelessWidget {
                         size: 22,
                       ),
                     ),
-                    IconButton(
-                      onPressed: isLoading ? null : onSpeakSend,
-                      tooltip: 'Enviar e ouvir resposta',
-                      style: IconButton.styleFrom(
-                        foregroundColor: context.gama.accent,
-                        disabledForegroundColor: context.gama.textHint,
-                        visualDensity: VisualDensity.compact,
+                    if (oficinaKind == null)
+                      IconButton(
+                        onPressed: isLoading ? null : onSpeakSend,
+                        tooltip: 'Enviar e ouvir resposta',
+                        style: IconButton.styleFrom(
+                          foregroundColor: context.gama.accent,
+                          disabledForegroundColor: context.gama.textHint,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        icon: const Icon(Icons.graphic_eq_rounded, size: 22),
                       ),
-                      icon: const Icon(Icons.graphic_eq_rounded, size: 22),
-                    ),
                     const SizedBox(width: 4),
                     Material(
                       color: isLoading
@@ -280,12 +351,18 @@ class ChatComposer extends StatelessWidget {
                         child: SizedBox(
                           width: 40,
                           height: 40,
-                          child: Icon(
-                            isLoading
-                                ? Icons.stop_rounded
-                                : Icons.arrow_upward_rounded,
-                            color: Colors.white,
-                            size: isLoading ? 22 : 20,
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            transitionBuilder: (child, animation) =>
+                                ScaleTransition(scale: animation, child: child),
+                            child: Icon(
+                              key: ValueKey(isLoading),
+                              isLoading
+                                  ? Icons.stop_rounded
+                                  : Icons.arrow_upward_rounded,
+                              color: Colors.white,
+                              size: isLoading ? 22 : 20,
+                            ),
                           ),
                         ),
                       ),
@@ -320,34 +397,35 @@ class _ModeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Estilo fixo: fundo escuro geral + traços/ícone/texto brancos.
-    const whiteStroke = Color(0xE6FFFFFF); // branco ~90%
-    final darkBg = context.gama.surfaceCard;
+    final g = context.gama;
 
     return Material(
-      color: darkBg,
+      color: g.surfaceCard,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
-        onTap: onTap,
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
         borderRadius: BorderRadius.circular(20),
-        splashColor: Colors.white.withValues(alpha: 0.08),
-        highlightColor: Colors.white.withValues(alpha: 0.04),
+        splashColor: g.accent.withValues(alpha: 0.08),
+        highlightColor: g.accent.withValues(alpha: 0.04),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: whiteStroke, width: 1.15),
+            border: Border.all(color: g.border, width: 1.15),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 14, color: whiteStroke),
+              Icon(icon, size: 14, color: g.textPrimary),
               const SizedBox(width: 5),
               Text(
                 label,
-                style: const TextStyle(
-                  color: whiteStroke,
+                style: TextStyle(
+                  color: g.textPrimary,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.1,

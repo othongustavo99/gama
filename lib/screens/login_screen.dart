@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
+import '../widgets/loading_skeleton.dart';
 import '../services/auth_service.dart';
 import '../services/identity_service.dart';
 import '../services/memory_service.dart';
@@ -232,12 +233,12 @@ class _LoginScreenState extends State<LoginScreen> {
                                 elevation: 0,
                               ),
                               child: _loading
-                                  ? const SizedBox(
+                                  ? const GamaSkeleton(
                                       width: 22,
                                       height: 22,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
+                                      radius: 11,
+                                      baseColor: Color(0x33FFFFFF),
+                                      highlightColor: Color(0x99FFFFFF),
                                     )
                                   : const Row(
                                       mainAxisAlignment:

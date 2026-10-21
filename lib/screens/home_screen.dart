@@ -3,8 +3,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../core/gama_colors.dart';
+import '../core/design_tokens.dart';
+import '../widgets/loading_skeleton.dart';
 import '../services/conversation_service.dart';
 import '../services/conversation_sync_service.dart';
+import '../models/oficina_kind.dart';
 import '../widgets/app_drawer.dart';
 import 'chat_screen.dart';
 import 'images_screen.dart';
@@ -101,7 +104,9 @@ class _HomeScreenState extends State<HomeScreen> {
           final currentConversation = currentId == null
               ? null
               : _service.conversationById(currentId);
-          final oficinaKind = _oficinaKindForTitle(currentConversation?.title);
+          final oficinaKind = OficinaKindX.fromChatMode(
+            currentConversation?.mode,
+          );
           final desktopSidebar =
               defaultTargetPlatform == TargetPlatform.windows;
           final appDrawer = AppDrawer(
@@ -145,52 +150,44 @@ class _HomeScreenState extends State<HomeScreen> {
           return Scaffold(
             backgroundColor: context.gama.background,
             drawer: desktopSidebar ? null : appDrawer,
-            body: currentId == null
-                ? Center(
-                    child: SizedBox(
-                      width: 28,
-                      height: 28,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: context.gama.accent,
-                      ),
-                    ),
-                  )
-                : desktopSidebar
-                ? Row(
-                    children: [
-                      SizedBox(width: 280, child: appDrawer),
-                      VerticalDivider(
-                        width: 1,
-                        thickness: 1,
-                        color: context.gama.divider,
-                      ),
-                      Expanded(
-                        child: ChatScreen(
-                          key: ValueKey(currentId),
-                          conversationId: currentId,
-                          oficinaKind: oficinaKind,
-                          persistentSidebar: true,
+            body: AnimatedSwitcher(
+              duration: GamaMotion.standard,
+              switchInCurve: GamaMotion.curve,
+              switchOutCurve: Curves.easeInCubic,
+              child: currentId == null
+                  ? const GamaSkeletonList(
+                      key: ValueKey('home-loading'),
+                      itemCount: 3,
+                    )
+                  : desktopSidebar
+                  ? Row(
+                      key: ValueKey('home-desktop-$currentId'),
+                      children: [
+                        SizedBox(width: 280, child: appDrawer),
+                        VerticalDivider(
+                          width: 1,
+                          thickness: 1,
+                          color: context.gama.divider,
                         ),
-                      ),
-                    ],
-                  )
-                : ChatScreen(
-                    key: ValueKey(currentId),
-                    conversationId: currentId,
-                    oficinaKind: oficinaKind,
-                  ),
+                        Expanded(
+                          child: ChatScreen(
+                            key: ValueKey(currentId),
+                            conversationId: currentId,
+                            oficinaKind: oficinaKind,
+                            persistentSidebar: true,
+                          ),
+                        ),
+                      ],
+                    )
+                  : ChatScreen(
+                      key: ValueKey(currentId),
+                      conversationId: currentId,
+                      oficinaKind: oficinaKind,
+                    ),
+            ),
           );
         },
       ),
     );
-  }
-
-  OficinaKind? _oficinaKindForTitle(String? title) {
-    if (title == null) return null;
-    for (final kind in OficinaKind.values) {
-      if (title.startsWith(kind.conversationTitle)) return kind;
-    }
-    return null;
   }
 }

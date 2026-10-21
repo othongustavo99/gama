@@ -405,153 +405,166 @@ class MessageContentView extends StatelessWidget {
       letterSpacing: 0.1,
     );
 
-    return SelectionArea(
-      child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (images.isNotEmpty) ...[
-          ...images.map((img) {
-            final filePath = img.filePath;
-            final fileExists =
-                filePath != null &&
-                filePath.isNotEmpty &&
-                File(filePath).existsSync();
-            if (!fileExists && img.base64.isEmpty) {
-              return Padding(
-                padding: EdgeInsets.only(bottom: 10),
-                child: Text(
+    Widget buildGeneratedImage(GeneratedImageData img) {
+      final filePath = img.filePath;
+      final fileExists =
+          filePath != null &&
+          filePath.isNotEmpty &&
+          File(filePath).existsSync();
+      if (!fileExists && img.base64.isEmpty) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: 10),
+          child: Text(
+            '[imagem indisponível]',
+            style: TextStyle(color: context.gama.textMuted),
+          ),
+        );
+      }
+      try {
+        final memoryBytes = img.base64.isEmpty
+            ? null
+            : base64Decode(img.base64);
+        final imageWidget = fileExists
+            ? Image.file(
+                File(filePath!),
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+                errorBuilder: (_, __, ___) => Text(
+                  '[imagem indisponível]',
+                  style: TextStyle(color: context.gama.textMuted),
+                ),
+              )
+            : Image.memory(
+                memoryBytes!,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+                errorBuilder: (_, __, ___) => Text(
                   '[imagem indisponível]',
                   style: TextStyle(color: context.gama.textMuted),
                 ),
               );
-            }
-            try {
-              final memoryBytes = img.base64.isEmpty
-                  ? null
-                  : base64Decode(img.base64);
-              final imageWidget = fileExists
-                  ? Image.file(
-                      File(filePath!),
-                      fit: BoxFit.contain,
-                      gaplessPlayback: true,
-                      errorBuilder: (_, __, ___) => Text(
-                        '[imagem indisponível]',
-                        style: TextStyle(color: context.gama.textMuted),
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Semantics(
+                button: true,
+                label: 'Abrir imagem em tela cheia',
+                child: GestureDetector(
+                  onTap: () => showDialog<void>(
+                    context: context,
+                    barrierColor: Colors.black87,
+                    builder: (_) => _FullscreenImageDialog(
+                      image: fileExists
+                          ? Image.file(File(filePath!), fit: BoxFit.contain)
+                          : Image.memory(memoryBytes!, fit: BoxFit.contain),
+                      sourcePath: fileExists ? filePath : null,
+                      base64Data: img.base64,
+                      mime: img.mime,
+                    ),
+                  ),
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 480),
+                        child: imageWidget,
                       ),
-                    )
-                  : Image.memory(
-                      memoryBytes!,
-                      fit: BoxFit.contain,
-                      gaplessPlayback: true,
-                      errorBuilder: (_, __, ___) => Text(
-                        '[imagem indisponível]',
-                        style: TextStyle(color: context.gama.textMuted),
-                      ),
-                    );
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  spacing: 4,
                   children: [
-                    Semantics(
-                      button: true,
-                      label: 'Abrir imagem em tela cheia',
-                      child: GestureDetector(
-                        onTap: () => showDialog<void>(
-                          context: context,
-                          barrierColor: Colors.black87,
-                          builder: (_) => _FullscreenImageDialog(
-                            image: fileExists
-                                ? Image.file(
-                                    File(filePath!),
-                                    fit: BoxFit.contain,
-                                  )
-                                : Image.memory(
-                                    memoryBytes!,
-                                    fit: BoxFit.contain,
-                                  ),
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        foregroundColor: context.gama.accent,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: () async {
+                        try {
+                          final path = await _saveImageFile(
                             sourcePath: fileExists ? filePath : null,
                             base64Data: img.base64,
                             mime: img.mime,
-                          ),
-                        ),
-                        child: MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(14),
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxHeight: 480),
-                              child: imageWidget,
-                            ),
-                          ),
-                        ),
-                      ),
+                          );
+                          await DownloadService.instance.openPath(path);
+                        } catch (_) {}
+                      },
+                      icon: const Icon(Icons.download_rounded, size: 18),
+                      label: const Text('Salvar imagem'),
                     ),
-                    const SizedBox(height: 6),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Wrap(
-                        spacing: 4,
-                        children: [
-                          TextButton.icon(
-                            style: TextButton.styleFrom(
-                              foregroundColor: context.gama.accent,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                              ),
-                              visualDensity: VisualDensity.compact,
-                            ),
-                            onPressed: () async {
-                              try {
-                                final path = await _saveImageFile(
-                                  sourcePath: fileExists ? filePath : null,
-                                  base64Data: img.base64,
-                                  mime: img.mime,
-                                );
-                                await DownloadService.instance.openPath(path);
-                              } catch (_) {}
-                            },
-                            icon: const Icon(Icons.download_rounded, size: 18),
-                            label: const Text('Salvar imagem'),
-                          ),
-                          TextButton.icon(
-                            onPressed: () => _shareImageFile(
-                              context,
-                              sourcePath: fileExists ? filePath : null,
-                              base64Data: img.base64,
-                              mime: img.mime,
-                            ),
-                            icon: const Icon(Icons.share_outlined, size: 17),
-                            label: const Text('Compartilhar'),
-                          ),
-                        ],
+                    TextButton.icon(
+                      onPressed: () => _shareImageFile(
+                        context,
+                        sourcePath: fileExists ? filePath : null,
+                        base64Data: img.base64,
+                        mime: img.mime,
                       ),
+                      icon: const Icon(Icons.share_outlined, size: 17),
+                      label: const Text('Compartilhar'),
                     ),
                   ],
                 ),
-              );
-            } catch (_) {
-              return const SizedBox.shrink();
-            }
-          }),
-        ],
-        if (parsed.text.isNotEmpty)
-          _MarkdownMessage(
-            text: parsed.text,
-            isUser: isUser,
-            textStyle: textStyle,
-            onTapLink: onTapLink,
+              ),
+            ],
           ),
-        if (parsed.attachments.isNotEmpty) ...[
-          if (parsed.text.isNotEmpty) const SizedBox(height: 10),
-          ...parsed.attachments.map(
-            (a) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: _AttachmentChip(preview: a, isUser: isUser),
+        );
+      } catch (_) {
+        return const SizedBox.shrink();
+      }
+    }
+
+    return SelectionArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (images.isNotEmpty) ...[
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = images.length == 1 ? 1 : 2;
+                final itemWidth = columns == 1
+                    ? constraints.maxWidth
+                    : (constraints.maxWidth - 10) / 2;
+                return Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: images
+                      .map(
+                        (img) => SizedBox(
+                          width: itemWidth,
+                          child: buildGeneratedImage(img),
+                        ),
+                      )
+                      .toList(growable: false),
+                );
+              },
             ),
-          ),
+          ],
+          if (parsed.text.isNotEmpty)
+            _MarkdownMessage(
+              text: parsed.text,
+              isUser: isUser,
+              textStyle: textStyle,
+              onTapLink: onTapLink,
+            ),
+          if (parsed.attachments.isNotEmpty) ...[
+            if (parsed.text.isNotEmpty) const SizedBox(height: 10),
+            ...parsed.attachments.map(
+              (a) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: _AttachmentChip(preview: a, isUser: isUser),
+              ),
+            ),
+          ],
         ],
-      ],
       ),
     );
   }
@@ -766,7 +779,9 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
         padding: const EdgeInsets.only(bottom: 10),
         child: RepaintBoundary(
           child: _CopyableCodeBlock(
-            key: ValueKey('closed-code-${part.language}-${part.content.hashCode}'),
+            key: ValueKey(
+              'closed-code-${part.language}-${part.content.hashCode}',
+            ),
             code: part.content,
             language: part.language,
             isUser: widget.isUser,
@@ -1024,7 +1039,8 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
 
   TextSpan _highlightedText(Map<String, TextStyle> theme, bool isDark) {
     final language = _normalizeCodeLanguage(widget.language);
-    final cacheKey = '${isDark ? 'dark' : 'light'}\u0000$language\u0000${widget.code}';
+    final cacheKey =
+        '${isDark ? 'dark' : 'light'}\u0000$language\u0000${widget.code}';
     final cached = _highlightedCodeCache[cacheKey];
     if (cached != null) return cached;
     final base = TextStyle(
@@ -1035,10 +1051,7 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
       color: theme['root']?.color ?? widget.textStyle.color,
     );
     try {
-      final result = highlight.parse(
-        widget.code,
-        language: language,
-      );
+      final result = highlight.parse(widget.code, language: language);
       final span = TextSpan(
         style: base,
         children: (result.nodes ?? [Node(value: widget.code)])

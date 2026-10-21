@@ -8,6 +8,8 @@ list(APPEND FLUTTER_PLUGIN_LIST
   file_selector_windows
   flutter_secure_storage_windows
   flutter_timezone
+  media_kit_libs_windows_video
+  media_kit_video
   pasteboard
   permission_handler_windows
   share_plus

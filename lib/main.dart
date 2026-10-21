@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'core/gama_colors.dart';
+import 'core/design_tokens.dart';
 import 'models/conversation.dart';
 import 'models/message.dart';
 import 'screens/splash_screen.dart';
@@ -13,6 +15,7 @@ import 'services/identity_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
 
   await Hive.initFlutter();
 
@@ -85,6 +88,7 @@ class GamaApp extends StatelessWidget {
     return ThemeData(
       brightness: brightness,
       useMaterial3: true,
+      fontFamily: 'Inter',
       extensions: [palette],
       scaffoldBackgroundColor: background,
       colorScheme: scheme,
@@ -121,7 +125,7 @@ class GamaApp extends StatelessWidget {
         behavior: SnackBarBehavior.floating,
         elevation: 8,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(GamaRadius.md),
           side: BorderSide(color: border, width: 0.5),
         ),
       ),
@@ -129,7 +133,7 @@ class GamaApp extends StatelessWidget {
         backgroundColor: surface,
         elevation: 12,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(GamaRadius.xl),
           side: BorderSide(color: border, width: 0.5),
         ),
       ),
@@ -137,7 +141,7 @@ class GamaApp extends StatelessWidget {
         color: surface,
         elevation: 10,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(GamaRadius.md),
           side: BorderSide(color: border, width: 0.5),
         ),
       ),
@@ -146,15 +150,15 @@ class GamaApp extends StatelessWidget {
         fillColor: palette.surfaceInput,
         hintStyle: TextStyle(color: textSecondary),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(GamaRadius.md),
           borderSide: BorderSide(color: border),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(GamaRadius.md),
           borderSide: BorderSide(color: border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(GamaRadius.md),
           borderSide: BorderSide(color: palette.accent, width: 1.4),
         ),
       ),
@@ -162,7 +166,7 @@ class GamaApp extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           elevation: 0,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(GamaRadius.md),
           ),
         ),
       ),
@@ -171,7 +175,7 @@ class GamaApp extends StatelessWidget {
           foregroundColor: textPrimary,
           side: BorderSide(color: border),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(GamaRadius.md),
           ),
         ),
       ),
@@ -182,7 +186,9 @@ class GamaApp extends StatelessWidget {
         backgroundColor: surface,
         selectedColor: palette.accentSoft,
         side: BorderSide(color: border),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(GamaRadius.md),
+        ),
         labelStyle: TextStyle(color: textSecondary),
       ),
     );
@@ -214,20 +220,20 @@ class GamaApp extends StatelessWidget {
             final media = MediaQuery.of(context);
             final isLight = Theme.of(context).brightness == Brightness.light;
             final overlayStyle = SystemUiOverlayStyle(
-                statusBarColor: Colors.transparent,
-                statusBarIconBrightness: isLight
-                    ? Brightness.dark
-                    : Brightness.light,
-                systemNavigationBarColor: isLight
-                    ? const Color(0xFFF6F7F9)
-                    : Colors.black,
-                systemNavigationBarIconBrightness: isLight
-                    ? Brightness.dark
-                    : Brightness.light,
-                systemNavigationBarDividerColor: isLight
-                    ? const Color(0xFFD9DEE5)
-                    : Colors.black,
-                systemNavigationBarContrastEnforced: false,
+              statusBarColor: Colors.transparent,
+              statusBarIconBrightness: isLight
+                  ? Brightness.dark
+                  : Brightness.light,
+              systemNavigationBarColor: isLight
+                  ? const Color(0xFFF6F7F9)
+                  : Colors.black,
+              systemNavigationBarIconBrightness: isLight
+                  ? Brightness.dark
+                  : Brightness.light,
+              systemNavigationBarDividerColor: isLight
+                  ? const Color(0xFFD9DEE5)
+                  : Colors.black,
+              systemNavigationBarContrastEnforced: false,
             );
             final systemScale = media.textScaler.scale(1.0);
             return AnnotatedRegion<SystemUiOverlayStyle>(

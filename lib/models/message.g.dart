@@ -22,11 +22,11 @@ class MessageAdapter extends TypeAdapter<Message> {
       content: fields[2] as String,
       conversationId: fields[4] as String,
       timestamp: fields[3] as DateTime?,
-      attachmentMetadataJson: fields[5] as String? ?? '',
-      variants: fields[6] == null ? null : List<String>.from(fields[6] as List),
-      selectedVariantIndex: fields[7] as int? ?? 0,
-      isTruncated: fields[8] as bool? ?? false,
-      sourcesJson: fields[9] as String? ?? '',
+      attachmentMetadataJson: fields[5] as String,
+      variants: (fields[6] as List?)?.cast<String>(),
+      selectedVariantIndex: fields[7] as int,
+      isTruncated: fields[8] as bool,
+      sourcesJson: fields[9] as String,
     );
   }
 

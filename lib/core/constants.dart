@@ -17,7 +17,7 @@ class AppConstants {
       apiKey.isEmpty ? const <String, String>{} : {'X-API-Key': apiKey};
 
   /// Modo Programar — código, debug, arquitetura, análise de ZIP/PDF.
-  static const String modelProgramar = 'openai/gpt-5.4-mini';
+  static const String modelProgramar = 'z-ai/glm-5.3-flash';
 
   /// Modo Conversar — diálogo rápido, voz, memória leve.
   static const String modelConversar = 'openai/gpt-5.4-mini';

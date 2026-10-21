@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
+import '../widgets/loading_skeleton.dart';
 import 'library_screen.dart';
 
 class ImagesScreen extends StatefulWidget {
@@ -50,7 +51,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
         title: const Text('Imagens'),
       ),
       body: _loading
-          ? Center(child: CircularProgressIndicator(color: context.gama.accent))
+          ? const GamaSkeletonGrid(itemCount: 6)
           : _items.isEmpty
           ? Center(
               child: Padding(

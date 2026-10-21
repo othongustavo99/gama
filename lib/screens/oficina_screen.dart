@@ -1,7 +1,15 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
+import '../core/design_tokens.dart';
+import '../models/conversation.dart';
+import '../models/oficina_kind.dart';
 import '../services/conversation_service.dart';
 import 'chat_screen.dart';
 import '../widgets/app_drawer.dart';
@@ -11,47 +19,46 @@ import 'plugins_screen.dart';
 import 'projects_screen.dart';
 import 'scheduled_screen.dart';
 
-/// Tipos de criação da Oficina.
-enum OficinaKind { imagem, video, programar }
-
-extension OficinaKindX on OficinaKind {
-  String get label => switch (this) {
-    OficinaKind.imagem => 'Imagem',
-    OficinaKind.video => 'Vídeo',
-    OficinaKind.programar => 'Programar',
-  };
-
-  String get chatMode => switch (this) {
-    OficinaKind.imagem => 'oficina_imagem',
-    OficinaKind.video => 'oficina_video',
-    OficinaKind.programar => 'oficina_programar',
-  };
-
-  String get conversationTitle => 'Oficina · $label';
-
-  IconData get icon => switch (this) {
-    OficinaKind.imagem => Icons.image_outlined,
-    OficinaKind.video => Icons.videocam_outlined,
-    OficinaKind.programar => Icons.code_rounded,
-  };
-
-  String get subtitle => switch (this) {
-    OficinaKind.imagem =>
-      'Criar, editar, melhorar e analisar imagens com a skill de imagem.',
-    OficinaKind.video =>
-      'Gerar, editar e transformar vídeos com a skill de vídeo.',
-    OficinaKind.programar =>
-      'Código, análise, refatoração e arquivos — modelo GLM Flash.',
-  };
-}
-
 /// Hub da Oficina: visual alinhado à chat screen, com 3 caminhos de criação.
-class OficinaScreen extends StatelessWidget {
+class OficinaScreen extends StatefulWidget {
   const OficinaScreen({super.key});
 
-  Future<void> _openKind(BuildContext context, OficinaKind kind) async {
-    final conv = await ConversationService.instance.createConversation(
-      title: kind.conversationTitle,
+  @override
+  State<OficinaScreen> createState() => _OficinaScreenState();
+}
+
+class _OficinaScreenState extends State<OficinaScreen> {
+  late Future<List<Map<String, dynamic>>> _libraryFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _libraryFuture = _loadLibrary();
+  }
+
+  Future<List<Map<String, dynamic>>> _loadLibrary() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('gama_library') ?? '[]';
+    try {
+      return (jsonDecode(raw) as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList()
+          .reversed
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _openKind(
+    BuildContext context,
+    OficinaKind kind, {
+    String? prompt,
+  }) async {
+    await HapticFeedback.selectionClick();
+    final conv = await ConversationService.instance.createConversationIfNeeded(
+      mode: kind.chatMode,
     );
     if (!context.mounted) return;
     await Navigator.of(context).push(
@@ -60,11 +67,35 @@ class OficinaScreen extends StatelessWidget {
           child: ChatScreen(
             conversationId: conv.id,
             oficinaKind: kind,
+            initialPrompt: prompt,
             persistentSidebar: defaultTargetPlatform == TargetPlatform.windows,
           ),
         ),
       ),
     );
+    if (mounted) setState(() => _libraryFuture = _loadLibrary());
+  }
+
+  Future<void> _openRecent(
+    BuildContext context,
+    Conversation conversation,
+  ) async {
+    final kind = OficinaKindX.fromChatMode(conversation.mode);
+    if (kind == null) return;
+    await ConversationService.instance.selectConversation(conversation.id);
+    if (!context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _OficinaScaffold(
+          child: ChatScreen(
+            conversationId: conversation.id,
+            oficinaKind: kind,
+            persistentSidebar: defaultTargetPlatform == TargetPlatform.windows,
+          ),
+        ),
+      ),
+    );
+    if (mounted) setState(() => _libraryFuture = _loadLibrary());
   }
 
   @override
@@ -75,66 +106,171 @@ class OficinaScreen extends StatelessWidget {
       title: 'Oficina',
       child: ColoredBox(
         color: g.background,
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: Column(
-                children: [
-                  Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      color: g.surfaceCard,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.22),
-                        width: 1.2,
+        child: LayoutBuilder(
+          builder: (context, _) {
+            final desktop = defaultTargetPlatform == TargetPlatform.windows;
+            final columns = desktop ? 3 : 1;
+            final conversations = [
+              ...ConversationService.instance.pinnedConversations,
+              ...ConversationService.instance.recentConversations,
+            ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+            final recent = conversations
+                .where((c) => OficinaKindX.fromChatMode(c.mode) != null)
+                .take(8)
+                .toList();
+            return Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1180),
+                child: CustomScrollView(
+                  slivers: [
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(24, 30, 24, 20),
+                      sliver: SliverToBoxAdapter(
+                        child: Column(
+                          children: [
+                            Hero(
+                              tag: 'oficina-hub-icon',
+                              child: Container(
+                                width: 68,
+                                height: 68,
+                                decoration: BoxDecoration(
+                                  color: g.surfaceCard,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: g.border),
+                                ),
+                                child: Icon(
+                                  Icons.handyman_rounded,
+                                  size: 32,
+                                  color: g.textPrimary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                            Text(
+                              'Modo criação',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: g.textPrimary,
+                                fontSize: 25,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.6,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Escolha um caminho e comece com uma ideia.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: g.textMuted,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    child: Icon(
-                      Icons.handyman_rounded,
-                      size: 34,
-                      color: Colors.white.withValues(alpha: 0.88),
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  Text(
-                    'Modo criação',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: g.textPrimary,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.6,
-                      height: 1.15,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Escolha o que você quer criar.\nA Gama entra em foco total naquela skill.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: g.textMuted,
-                      fontSize: 14,
-                      height: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 28),
-                  ...OficinaKind.values.map(
-                    (kind) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _OficinaCard(
-                        kind: kind,
-                        onTap: () => _openKind(context, kind),
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      sliver: SliverGrid(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: 16,
+                          mainAxisSpacing: 16,
+                          mainAxisExtent: desktop ? 342 : 350,
+                        ),
+                        delegate: SliverChildBuilderDelegate((context, index) {
+                          final kind = OficinaKind.values[index];
+                          return _OficinaCard(
+                            kind: kind,
+                            staggerIndex: index,
+                            onTap: () => _openKind(context, kind),
+                            onPrompt: (prompt) =>
+                                _openKind(context, kind, prompt: prompt),
+                          );
+                        }, childCount: OficinaKind.values.length),
                       ),
                     ),
-                  ),
-                ],
+                    if (recent.isNotEmpty)
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(24, 30, 24, 36),
+                        sliver: SliverToBoxAdapter(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Recentes da Oficina',
+                                style: TextStyle(
+                                  color: g.textPrimary,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              SizedBox(
+                                height: 178,
+                                child:
+                                    FutureBuilder<List<Map<String, dynamic>>>(
+                                      future: _libraryFuture,
+                                      builder: (context, snapshot) =>
+                                          ListView.separated(
+                                            scrollDirection: Axis.horizontal,
+                                            itemCount: recent.length,
+                                            separatorBuilder: (_, __) =>
+                                                const SizedBox(width: 12),
+                                            itemBuilder: (context, index) {
+                                              final conversation =
+                                                  recent[index];
+                                              final kind =
+                                                  OficinaKindX.fromChatMode(
+                                                    conversation.mode,
+                                                  )!;
+                                              final messages =
+                                                  ConversationService.instance
+                                                      .getMessages(
+                                                        conversation.id,
+                                                      );
+                                              final prompt = messages
+                                                  .where((m) => m.isUser)
+                                                  .map((m) => m.content.trim())
+                                                  .firstWhere(
+                                                    (text) => text.isNotEmpty,
+                                                    orElse: () =>
+                                                        conversation.title,
+                                                  );
+                                              final entry = snapshot.data
+                                                  ?.firstWhere(
+                                                    (e) =>
+                                                        e['conversationId'] ==
+                                                            conversation.id &&
+                                                        e['kind'] == 'image',
+                                                    orElse: () =>
+                                                        <String, dynamic>{},
+                                                  );
+                                              final imagePath = entry?['path']
+                                                  ?.toString();
+                                              return _RecentCreation(
+                                                kind: kind,
+                                                title: conversation.title,
+                                                prompt: prompt,
+                                                imagePath: imagePath,
+                                                onTap: () => _openRecent(
+                                                  context,
+                                                  conversation,
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
@@ -183,35 +319,35 @@ class _OficinaScaffold extends StatelessWidget {
       // O drawer móvel pertence ao Scaffold externo; o AppBar usa um Scaffold
       // interno. Este contexto alcança o drawer correto.
       builder: (drawerContext) => title == null
-        ? child
-        : Scaffold(
-            backgroundColor: context.gama.background,
-            appBar: AppBar(
-              backgroundColor: context.gama.surface,
-              elevation: 0,
-              surfaceTintColor: Colors.transparent,
-              leading: Builder(
-                builder: (ctx) => IconButton(
-                  tooltip: 'Abrir conversas',
-                  icon: Icon(
-                    desktop ? Icons.arrow_back_rounded : Icons.menu_rounded,
-                    color: context.gama.textPrimary,
+          ? child
+          : Scaffold(
+              backgroundColor: context.gama.background,
+              appBar: AppBar(
+                backgroundColor: context.gama.surface,
+                elevation: 0,
+                surfaceTintColor: Colors.transparent,
+                leading: Builder(
+                  builder: (ctx) => IconButton(
+                    tooltip: 'Abrir conversas',
+                    icon: Icon(
+                      desktop ? Icons.arrow_back_rounded : Icons.menu_rounded,
+                      color: context.gama.textPrimary,
+                    ),
+                    onPressed: () => desktop
+                        ? Navigator.of(context).pop()
+                        : Scaffold.of(drawerContext).openDrawer(),
                   ),
-                  onPressed: () => desktop
-                      ? Navigator.of(context).pop()
-                      : Scaffold.of(drawerContext).openDrawer(),
+                ),
+                title: Text(
+                  title!,
+                  style: TextStyle(
+                    color: context.gama.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-              title: Text(
-                title!,
-                style: TextStyle(
-                  color: context.gama.textPrimary,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              body: child,
             ),
-            body: child,
-          ),
     );
 
     return Scaffold(
@@ -248,79 +384,287 @@ class _OficinaScaffold extends StatelessWidget {
 
 class _OficinaCard extends StatelessWidget {
   final OficinaKind kind;
+  final int staggerIndex;
   final VoidCallback onTap;
+  final ValueChanged<String> onPrompt;
 
-  const _OficinaCard({required this.kind, required this.onTap});
+  const _OficinaCard({
+    required this.kind,
+    required this.staggerIndex,
+    required this.onTap,
+    required this.onPrompt,
+  });
+
+  @override
+  Widget build(BuildContext context) => _AnimatedOficinaCard(
+    kind: kind,
+    staggerIndex: staggerIndex,
+    onTap: onTap,
+    onPrompt: onPrompt,
+  );
+}
+
+class _AnimatedOficinaCard extends StatefulWidget {
+  final OficinaKind kind;
+  final int staggerIndex;
+  final VoidCallback onTap;
+  final ValueChanged<String> onPrompt;
+
+  const _AnimatedOficinaCard({
+    required this.kind,
+    required this.staggerIndex,
+    required this.onTap,
+    required this.onPrompt,
+  });
+
+  @override
+  State<_AnimatedOficinaCard> createState() => _AnimatedOficinaCardState();
+}
+
+class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
+  bool _pressed = false;
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.delayed(Duration(milliseconds: 90 * widget.staggerIndex), () {
+      if (mounted) setState(() => _visible = true);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final g = context.gama;
+    final kind = widget.kind;
+    final color = kind.color(g);
 
-    return Material(
-      color: g.surfaceCard,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        splashColor: Colors.white.withValues(alpha: 0.06),
-        highlightColor: Colors.white.withValues(alpha: 0.03),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.18),
-              width: 1.1,
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
+    return AnimatedOpacity(
+      opacity: _visible ? 1 : 0,
+      duration: const Duration(milliseconds: 360),
+      curve: Curves.easeOut,
+      child: AnimatedSlide(
+        offset: _visible ? Offset.zero : const Offset(0, 0.08),
+        duration: const Duration(milliseconds: 360),
+        curve: Curves.easeOutCubic,
+        child: AnimatedScale(
+          scale: _pressed ? 0.98 : 1,
+          duration: const Duration(milliseconds: 110),
+          curve: Curves.easeOut,
+          child: Material(
+            color: g.surfaceCard,
+            borderRadius: BorderRadius.circular(20),
+            child: InkWell(
+              onTap: widget.onTap,
+              onTapDown: (_) => setState(() => _pressed = true),
+              onTapCancel: () => setState(() => _pressed = false),
+              onTapUp: (_) => setState(() => _pressed = false),
+              borderRadius: BorderRadius.circular(20),
+              splashColor: color.withValues(alpha: 0.09),
+              highlightColor: color.withValues(alpha: 0.05),
+              child: Container(
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  color: g.surfaceElevated,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.12),
-                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: g.border),
+                  boxShadow: GamaElevation.card(color),
                 ),
-                child: Icon(
-                  kind.icon,
-                  color: Colors.white.withValues(alpha: 0.9),
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Hero(
+                      tag: 'oficina-icon-${kind.chatMode}',
+                      child: Container(
+                        width: 54,
+                        height: 54,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              color.withValues(alpha: 0.24),
+                              color.withValues(alpha: 0.07),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: color.withValues(alpha: 0.28),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: color.withValues(alpha: 0.18),
+                              blurRadius: 18,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                        child: Icon(kind.icon, size: 27, color: color),
+                      ),
+                    ),
+                    const SizedBox(height: 15),
                     Text(
                       kind.label,
                       style: TextStyle(
                         color: g.textPrimary,
-                        fontSize: 16,
+                        fontSize: 19,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 6),
                     Text(
-                      kind.subtitle,
+                      kind.shortDescription,
+                      maxLines: 2,
                       style: TextStyle(
                         color: g.textSecondary,
-                        fontSize: 12.5,
-                        height: 1.35,
+                        fontSize: 13.5,
+                        height: 1.4,
                       ),
+                    ),
+                    const Spacer(),
+                    Wrap(
+                      spacing: 7,
+                      runSpacing: 7,
+                      children: [
+                        for (final example in kind.examples)
+                          ActionChip(
+                            label: Text(
+                              example,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onPressed: () => widget.onPrompt(example),
+                            backgroundColor: color.withValues(alpha: 0.08),
+                            side: BorderSide(
+                              color: color.withValues(alpha: 0.22),
+                            ),
+                            labelStyle: TextStyle(
+                              color: g.textSecondary,
+                              fontSize: 11,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Text(
+                          'Abrir modo',
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const Spacer(),
+                        Icon(
+                          Icons.arrow_forward_rounded,
+                          size: 18,
+                          color: color,
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
-              Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 14,
-                color: g.textMuted,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentCreation extends StatelessWidget {
+  final OficinaKind kind;
+  final String title;
+  final String prompt;
+  final String? imagePath;
+  final VoidCallback onTap;
+
+  const _RecentCreation({
+    required this.kind,
+    required this.title,
+    required this.prompt,
+    required this.imagePath,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final g = context.gama;
+    final file = imagePath == null ? null : File(imagePath!);
+    final hasImage = file != null && file.existsSync();
+    final color = kind.color(g);
+    return SizedBox(
+      width: 238,
+      child: Material(
+        color: g.surfaceCard,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(16),
+                ),
+                child: SizedBox(
+                  width: 92,
+                  height: 178,
+                  child: hasImage
+                      ? Image.file(
+                          file!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              _RecentFallback(kind: kind, color: color),
+                        )
+                      : _RecentFallback(kind: kind, color: color),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(11),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        kind.label.toUpperCase(),
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: g.textPrimary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        prompt,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: g.textMuted,
+                          fontSize: 10.5,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
@@ -328,4 +672,26 @@ class _OficinaCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RecentFallback extends StatelessWidget {
+  final OficinaKind kind;
+  final Color color;
+  const _RecentFallback({required this.kind, required this.color});
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          color.withValues(alpha: 0.45),
+          color.withValues(alpha: 0.12),
+          context.gama.surfaceElevated,
+        ],
+      ),
+    ),
+    child: Center(child: Icon(kind.icon, color: color, size: 30)),
+  );
 }
