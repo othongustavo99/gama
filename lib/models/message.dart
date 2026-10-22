@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:hive/hive.dart';
 
+import '../utils/error_logger.dart';
+
 part 'message.g.dart';
 
 @HiveType(typeId: 0)
@@ -78,7 +80,8 @@ class Message extends HiveObject {
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return const [];
     }
   }

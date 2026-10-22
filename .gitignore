@@ -63,7 +63,13 @@ backend/data/
 
 # Logs
 *.log
+hs_err_pid*.log
 
 # Local patch backups and one-off migration scripts
-**/*.bak_video_*
+*.bak_*
 /aplicar_correcao_video.py
+
+# Keystores e credenciais de assinatura (inclui arquivos fora da pasta android/)
+**/key.properties
+*.jks
+*.keystore

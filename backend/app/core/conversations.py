@@ -12,6 +12,7 @@ import os
 import re
 import tempfile
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -64,8 +65,9 @@ def _parse_ts(value: Any) -> datetime:
 
 
 class ConversationStore:
-    MAX_CONVERSATIONS = 200
-    MAX_MESSAGES_PER_CONV = 500
+    # Nenhuma conversa é descartada automaticamente durante um upsert.
+    # Não corte mensagens antigas: o cliente pode sincronizar conversas extensas.
+    # O controle de tráfego/paginação deve acontecer na API, não apagando dados.
 
     def __init__(self, user_id: Optional[str] = None):
         self.user_id = _safe_user_id(user_id)
@@ -172,7 +174,11 @@ class ConversationStore:
         self._atomic_json_write(self.path, data)
 
     def _write_conversation(self, item: dict) -> None:
+        # Versão opaca que muda a cada gravação confirmada. Diferente de
+        # updatedAt, não depende do relógio do telefone e inclui tombstones,
+        # edições de mensagem e alterações de metadados.
         item["user_id"] = self.user_id
+        item["syncRevision"] = uuid.uuid4().hex
         self._atomic_json_write(self._conversation_path(item["id"]), item)
 
     def list_conversations(self, include_messages: bool = True) -> List[dict]:
@@ -215,7 +221,7 @@ class ConversationStore:
         raw_msgs = payload.get("messages") or []
         messages: List[dict] = []
         if isinstance(raw_msgs, list):
-            for m in raw_msgs[-self.MAX_MESSAGES_PER_CONV :]:
+            for m in raw_msgs:
                 if not isinstance(m, dict):
                     continue
                 mid = str(m.get("id") or "").strip()
@@ -266,12 +272,12 @@ class ConversationStore:
             if isinstance(updated_at, str)
             else _utc_now(),
             "messages": messages,
+            "mode": payload.get("mode"),
         }
 
         with _lock:
             data = self._read()
             convs: Dict[str, Any] = data.get("conversations", {})
-            previous_ids = set(convs)
             existing = convs.get(cid)
             if existing:
                 deleted = set(existing.get("deletedMessageIds") or [])
@@ -289,36 +295,54 @@ class ConversationStore:
                     if previous is None or _parse_ts(previous.get("timestamp")) <= _parse_ts(message.get("timestamp")):
                         merged[mid] = message
                 item["messages"] = sorted(
-                    merged.values(), key=lambda message: _parse_ts(message.get("timestamp"))
-                )[-self.MAX_MESSAGES_PER_CONV :]
-                item["deletedMessageIds"] = sorted(deleted)[-2000:]
-                if _parse_ts(existing.get("updatedAt")) > _parse_ts(item.get("updatedAt")):
-                    item["updatedAt"] = existing["updatedAt"]
+                    merged.values(), key=lambda message: (_parse_ts(message.get("timestamp")), str(message.get("id")))
+                )
+                # Tombstones não devem expirar: um aparelho offline pode voltar
+                # após meses e não pode ressuscitar mensagens excluídas.
+                item["deletedMessageIds"] = sorted(deleted)
+                incoming_is_current = (
+                    _parse_ts(item.get("updatedAt")) >= _parse_ts(existing.get("updatedAt"))
+                )
+                if not incoming_is_current:
+                    for key in ("title", "isPinned", "createdAt", "updatedAt"):
+                        item[key] = existing.get(key, item[key])
+                    item["mode"] = existing.get("mode")
+                elif item["mode"] is None:
+                    # Clientes antigos não conhecem 'mode'; não apague Oficina.
+                    item["mode"] = existing.get("mode")
 
             convs[cid] = item
 
-            # Limita quantidade de conversas (remove as mais antigas sem pin)
-            if len(convs) > self.MAX_CONVERSATIONS:
-                ordered = sorted(
-                    convs.values(),
-                    key=lambda c: (
-                        1 if c.get("isPinned") else 0,
-                        _parse_ts(c.get("updatedAt")),
-                    ),
-                )
-                while len(ordered) > self.MAX_CONVERSATIONS:
-                    drop = ordered.pop(0)
-                    convs.pop(drop["id"], None)
-
-            for removed_id in previous_ids - set(convs):
-                try:
-                    self._conversation_path(removed_id).unlink(missing_ok=True)
-                except OSError:
-                    pass
+            # Não elimine conversas antigas ao chegar a um limite arbitrário.
+            # Apenas DELETE explícito pode remover uma conversa do servidor.
 
             data["conversations"] = convs
             self._write_conversation(item)
             return item
+
+    def update_metadata(self, conversation_id: str, updates: dict) -> bool:
+        """Altera apenas os metadados, sem reserializar/truncar as mensagens."""
+        with _lock:
+            item = self._read_conversation(conversation_id)
+            if item is None:
+                return False
+            incoming_updated_at = updates.get("updatedAt")
+            if incoming_updated_at is not None and (
+                _parse_ts(incoming_updated_at) < _parse_ts(item.get("updatedAt"))
+            ):
+                # Protege título/pin/modo alterados em outro dispositivo.
+                return True
+            for key in ("title", "isPinned", "mode"):
+                if key in updates:
+                    value = updates[key]
+                    if key == "title":
+                        value = str(value or "Nova conversa").strip()[:200] or "Nova conversa"
+                    elif key == "isPinned":
+                        value = bool(value)
+                    item[key] = value
+            item["updatedAt"] = incoming_updated_at or _utc_now()
+            self._write_conversation(item)
+            return True
 
     def upsert_message(self, conversation_id: str, payload: dict, message: dict) -> dict:
         """Mescla uma mensagem por ID e grava só o arquivo desta conversa."""
@@ -342,7 +366,7 @@ class ConversationStore:
                     messages.append(normalized)
                 elif _parse_ts(messages[old_index].get("timestamp")) <= _parse_ts(normalized.get("timestamp")):
                     messages[old_index] = normalized
-                existing["messages"] = messages[-self.MAX_MESSAGES_PER_CONV :]
+                existing["messages"] = messages
             for key in ("title", "isPinned", "createdAt", "updatedAt"):
                 if key in payload and payload[key] is not None:
                     existing[key] = payload[key]
@@ -360,7 +384,7 @@ class ConversationStore:
                 return None
             deleted = set(item.get("deletedMessageIds") or [])
             deleted.update(str(message_id) for message_id in message_ids if message_id)
-            item["deletedMessageIds"] = sorted(deleted)[-2000:]
+            item["deletedMessageIds"] = sorted(deleted)
             item["messages"] = [
                 m for m in item.get("messages", []) if str(m.get("id")) not in deleted
             ]

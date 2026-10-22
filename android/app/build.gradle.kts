@@ -1,6 +1,34 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Credenciais locais: nunca adicionar android/key.properties ou a chave .jks ao Git.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.isFile) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+
+// Mensagens claras em builds release sem impedir sincronizacao e builds debug.
+val releaseBuildRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+if (releaseBuildRequested) {
+    require(keystorePropertiesFile.isFile) {
+        "Assinatura release ausente: crie android/key.properties conforme android/key.properties.example."
+    }
+    val requiredKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+    val missingKeys = requiredKeys.filter { keystoreProperties.getProperty(it).isNullOrBlank() }
+    require(missingKeys.isEmpty()) {
+        "Assinatura release incompleta em android/key.properties: ${missingKeys.joinToString()}."
+    }
+    require(file(keystoreProperties.getProperty("storeFile")).isFile) {
+        "Arquivo .jks nao encontrado: confira storeFile em android/key.properties."
+    }
 }
 
 android {
@@ -27,11 +55,19 @@ android {
         versionName = flutter.versionName
     }
 
-
+    signingConfigs {
+        create("release") {
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+            storeFile = keystoreProperties.getProperty("storeFile")?.let { file(it) }
+            storePassword = keystoreProperties.getProperty("storePassword")
+        }
+    }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            // Nao assina releases com a chave debug, em hipotese alguma.
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

@@ -128,17 +128,23 @@ class ConversationService extends ChangeNotifier {
 
   Conversation? conversationById(String id) => _conversationsBox.get(id);
 
-  /// Aplica conversa vinda do Railway (merge remoto → local).
+  /// Mescla a conversa remota por ID, sem excluir mensagens locais ausentes
+  /// da resposta (por exemplo, quando um servidor antigo devolve apenas 500).
+  /// Exclusões legítimas são processadas separadamente pelos tombstones.
   Future<void> applyRemoteConversation({
     required String id,
     required String title,
     required bool isPinned,
     String? mode,
+    bool modeProvided = false,
     required DateTime createdAt,
     required DateTime updatedAt,
     required List<Message> messages,
   }) async {
     final existing = _conversationsBox.get(id);
+    final remoteWins =
+        existing == null || !existing.updatedAt.isAfter(updatedAt);
+    var changed = false;
     if (existing == null) {
       final conv = Conversation(
         id: id,
@@ -149,26 +155,47 @@ class ConversationService extends ChangeNotifier {
         updatedAt: updatedAt,
       );
       await _conversationsBox.put(id, conv);
-    } else {
+      changed = true;
+    } else if (remoteWins) {
       existing.title = title;
       existing.isPinned = isPinned;
-      if (mode != null) existing.mode = mode;
+      if (modeProvided) existing.mode = mode;
       existing.updatedAt = updatedAt;
       await existing.save();
+      changed = true;
     }
 
-    // Substitui mensagens locais desta conversa pelas do remoto
-    final old = _messagesBox.values
-        .where((m) => m.conversationId == id)
-        .toList();
-    for (final m in old) {
-      await m.delete();
+    final byId = <String, Message>{
+      for (final m in _messagesBox.values.where((m) => m.conversationId == id))
+        m.id: m,
+    };
+    for (final remote in messages) {
+      if (remote.id.isEmpty || remote.content.trim().isEmpty) continue;
+      final local = byId[remote.id];
+      if (local == null) {
+        await _messagesBox.add(remote);
+        byId[remote.id] = remote;
+        changed = true;
+      } else if (remoteWins &&
+          (local.content != remote.content ||
+              local.attachmentMetadataJson != remote.attachmentMetadataJson ||
+              !listEquals(local.variants, remote.variants) ||
+              local.selectedVariantIndex != remote.selectedVariantIndex ||
+              local.isTruncated != remote.isTruncated ||
+              local.sourcesJson != remote.sourcesJson)) {
+        // Hive mantém a identidade da mensagem. Atualiza apenas os campos
+        // mutáveis para não criar mensagens duplicadas na interface.
+        local.content = remote.content;
+        local.attachmentMetadataJson = remote.attachmentMetadataJson;
+        local.variants = List<String>.from(remote.variants);
+        local.selectedVariantIndex = remote.selectedVariantIndex;
+        local.isTruncated = remote.isTruncated;
+        local.sourcesJson = remote.sourcesJson;
+        await local.save();
+        changed = true;
+      }
     }
-    for (final m in messages) {
-      if (m.id.isEmpty || m.content.trim().isEmpty) continue;
-      await _messagesBox.add(m);
-    }
-    notifyListeners();
+    if (changed) notifyListeners();
   }
 
   Future<Conversation> createConversation({

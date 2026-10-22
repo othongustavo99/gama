@@ -40,6 +40,7 @@ class ConversationIn(BaseModel):
     id: str
     title: str = "Nova conversa"
     isPinned: bool = False
+    mode: Optional[str] = Field(default=None, max_length=80)
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
     messages: List[MessageIn] = Field(default_factory=list)
@@ -48,7 +49,13 @@ class ConversationIn(BaseModel):
 class ConversationMetadataIn(BaseModel):
     title: Optional[str] = None
     isPinned: Optional[bool] = None
+    mode: Optional[str] = Field(default=None, max_length=80)
     updatedAt: Optional[str] = None
+
+
+class SyncPullIn(BaseModel):
+    # Checkpoints opacos por conversa. Cada usuário só acessa seu próprio store.
+    known: Dict[str, str] = Field(default_factory=dict, max_length=10000)
 
 
 class DeleteMessagesIn(BaseModel):
@@ -63,6 +70,32 @@ async def list_conversations(
     store = get_conversation_store(user_id)
     items = store.list_conversations(include_messages=full)
     return {"user_id": store.user_id, "conversations": items, "count": len(items)}
+
+
+@router.post("/sync/pull")
+async def pull_changed_conversations(
+    body: SyncPullIn,
+    user_id: str = Depends(current_user_id),
+):
+    """Retorna em lote apenas conversas com revisão nova.
+
+    Nunca usa updatedAt para decidir: relógios diferentes, exclusões e edições
+    podem mudar o conteúdo sem avançar esse campo.
+    """
+    store = get_conversation_store(user_id)
+    items = store.list_conversations(include_messages=True)
+    revisions: Dict[str, str] = {}
+    changed = []
+    for item in items:
+        cid = str(item.get("id") or "")
+        if not cid:
+            continue
+        rev = str(item.get("syncRevision") or "")
+        if rev:
+            revisions[cid] = rev
+        if not rev or body.known.get(cid) != rev:
+            changed.append(item)
+    return {"conversations": changed, "revisions": revisions}
 
 
 @router.post("/title")
@@ -154,13 +187,11 @@ async def update_conversation_metadata(
     user_id: str = Depends(current_user_id),
 ):
     store = get_conversation_store(user_id)
-    existing = store.get(conversation_id)
-    if existing is None:
+    # exclude_unset mantém o significado de mode:null (limpar o modo),
+    # sem alterar o modo quando clientes antigos não enviam esse campo.
+    payload = body.model_dump(exclude_unset=True)
+    if not store.update_metadata(conversation_id, payload):
         raise HTTPException(status_code=404, detail="Conversa não encontrada")
-    payload = body.model_dump(exclude_none=True)
-    existing.update(payload)
-    existing["id"] = conversation_id
-    store.upsert(existing)
     return {"ok": True}
 
 

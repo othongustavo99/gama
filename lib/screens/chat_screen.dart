@@ -16,7 +16,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:pasteboard/pasteboard.dart';
 
+import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
+import 'voice_mode_screen.dart';
 import '../core/design_tokens.dart';
 import '../core/constants.dart';
 import '../models/message.dart';
@@ -41,6 +43,9 @@ import '../services/tts_service.dart';
 import '../services/plugin_settings_service.dart';
 import '../services/identity_service.dart';
 import 'oficina_screen.dart';
+import '../utils/error_logger.dart';
+import '../utils/speech_recovery_policy.dart';
+import '../utils/generation_session.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
@@ -50,12 +55,18 @@ class ChatScreen extends StatefulWidget {
   final OficinaKind? oficinaKind;
   final String? initialPrompt;
 
+  /// Optional, read-only reference for the Oficina's code review.
+  final String? codeComparisonBase;
+  final String? codeComparisonLanguage;
+
   const ChatScreen({
     super.key,
     required this.conversationId,
     this.persistentSidebar = false,
     this.oficinaKind,
     this.initialPrompt,
+    this.codeComparisonBase,
+    this.codeComparisonLanguage,
   });
 
   @override
@@ -94,6 +105,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final Queue<int> _streamRevealQueue = Queue<int>();
   final Map<String, GlobalKey> _messageKeys = <String, GlobalKey>{};
   Timer? _streamRevealTimer;
+  DateTime? _streamRevealLastFrame;
+  double _streamRevealBudget = 0;
+  bool _messageKeyPruneScheduled = false;
   StringBuffer _streamRawText = StringBuffer();
   String _streamSearchQuery = '';
   bool _followStream = true;
@@ -102,6 +116,40 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _restoringDraft = false;
   bool _draggingFiles = false;
   bool _voiceConversationMode = false;
+  double _voiceSoundLevel = 0;
+  bool _voiceMutedByUser = false;
+
+  /// Mantém a tela de voz acoplada ao STT/TTS existente, sem duplicar sessão.
+  Future<void> _openVoiceMode() async {
+    if (widget.oficinaKind != null) return;
+    if (!_voiceConversationMode) await _toggleVoiceConversation();
+    if (!mounted || !_voiceConversationMode) return;
+    try {
+      await Navigator.of(context).push<void>(
+        GamaPageRoute<void>(
+          builder: (_) => VoiceModeScreen(
+            isListening: () => _micArmed && _isListening,
+            isReconnecting: () => _micArmed && !_isListening,
+            isSpeaking: () => _isSpeaking || TtsService.instance.isBusy,
+            isProcessing: () => _isLoading,
+            soundLevel: () => _voiceSoundLevel,
+            transcript: () =>
+                (_isSpeaking || _isLoading) &&
+                    _voiceReplyDisplayedText.value.isNotEmpty
+                ? _voiceReplyDisplayedText.value
+                : _controller.text,
+            onToggleMic: _toggleVoiceMicrophone,
+            onInterrupt: _toggleVoiceConversation,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted && _voiceConversationMode) {
+        await _toggleVoiceConversation();
+      }
+    }
+  }
+
   bool _titleGenerationInProgress = false;
   final Map<String, List<Map<String, dynamic>>> _sourcesByMessageId = {};
   final Map<String, List<String>> _activityByMessageId = {};
@@ -109,6 +157,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, int> _feedbackByMessageId = {};
   StreamSubscription<ChatStreamEvent>? _streamSubscription;
   Future<void>? _assistantPersistence;
+  // Cada geração recebe um token de sessão: callbacks de streams cancelados
+  // nunca devem finalizar ou sobrescrever uma geração mais recente.
+  final GenerationSession _generation = GenerationSession();
 
   /// Arquivos anexados (ainda não enviados)
   final List<ProcessedAttachment> _attachments = [];
@@ -134,6 +185,8 @@ class _ChatScreenState extends State<ChatScreen> {
   String _speechLastFinalText = '';
   int _speechSessionId = 0;
   bool _speechRestartScheduled = false;
+  Timer? _speechRestartTimer;
+  final SpeechRecoveryPolicy _speechRecovery = SpeechRecoveryPolicy();
 
   GamaMode _mode = GamaMode.programar;
   bool _speakNextReply = false;
@@ -210,7 +263,9 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final text = draftValue ?? _controller.text;
       await _service.saveDraft(widget.conversationId, text);
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
   }
 
   Future<void> _pasteClipboardContent() async {
@@ -232,7 +287,8 @@ class _ChatScreenState extends State<ChatScreen> {
         await _addPath(path);
         return;
       }
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       // Clipboard text fallback remains available if the image format is absent.
     }
 
@@ -271,7 +327,9 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
       if (mounted) setState(() => _feedbackByMessageId.addAll(loaded));
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
   }
 
   Future<void> _setMessageFeedback(Message message, int value) async {
@@ -291,7 +349,9 @@ class _ChatScreenState extends State<ChatScreen> {
       } else {
         await prefs.setInt(key, next);
       }
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
   }
 
   void _handleScrollChange() {
@@ -318,49 +378,114 @@ class _ChatScreenState extends State<ChatScreen> {
     return false;
   }
 
+  // Revelação adaptativa a cada ~frame, limitada pelo tempo efetivamente
+  // decorrido. A fila é por code point: não quebra pares UTF-16/emoji.
+  // O texto original e a persistência não são modificados por este efeito.
   void _queueStreamText(String text) {
     _streamRawText.write(text);
-    _streamRevealQueue.addAll(text.runes);
-    _streamRevealTimer ??= Timer.periodic(const Duration(milliseconds: 60), (
-      _,
-    ) {
-      if (!mounted) return;
-      if (_streamRevealQueue.isEmpty) {
-        _streamRevealTimer?.cancel();
-        _streamRevealTimer = null;
-        return;
-      }
-      final next = StringBuffer();
-      final queued = _streamRevealQueue.length;
-      final batchSize = queued < 60
-          ? 12
-          : queued < 240
-          ? 36
-          : 120;
-      for (var i = 0; i < batchSize && _streamRevealQueue.isNotEmpty; i++) {
-        next.writeCharCode(_streamRevealQueue.removeFirst());
-      }
-      _streamingText.value = '${_streamingText.value}${next.toString()}';
+    if (text.isEmpty) return;
+    // Opção do sistema para reduzir movimento (TalkBack/acessibilidade).
+    if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
+      _streamRevealTimer?.cancel();
+      _streamRevealTimer = null;
+      _streamRevealLastFrame = null;
+      _streamRevealBudget = 0;
+      final pending = String.fromCharCodes(_streamRevealQueue);
+      _streamRevealQueue.clear();
+      _streamingText.value = '${_streamingText.value}$pending$text';
       if (_followStream) _scrollToBottom(followStream: true);
-    });
+      return;
+    }
+
+    _streamRevealQueue.addAll(text.runes);
+    if (_streamRevealTimer == null) {
+      _streamRevealLastFrame = DateTime.now();
+      _streamRevealBudget = 0;
+      _streamRevealTimer = Timer.periodic(
+        const Duration(milliseconds: 16),
+        _revealStreamFrame,
+      );
+    }
+  }
+
+  void _revealStreamFrame(Timer timer) {
+    if (!mounted || _streamRevealQueue.isEmpty) {
+      timer.cancel();
+      _streamRevealTimer = null;
+      _streamRevealLastFrame = null;
+      _streamRevealBudget = 0;
+      return;
+    }
+    final now = DateTime.now();
+    final elapsed = now
+        .difference(_streamRevealLastFrame ?? now)
+        .inMicroseconds;
+    _streamRevealLastFrame = now;
+    // Mantém movimento constante em 60/90/120 Hz e após frames atrasados.
+    final seconds = (elapsed / 1000000).clamp(0.0, 0.050).toDouble();
+    final pending = _streamRevealQueue.length;
+    final charsPerSecond = pending > 650
+        ? 390.0
+        : pending > 260
+        ? 260.0
+        : pending > 80
+        ? 170.0
+        : 92.0;
+    _streamRevealBudget += seconds * charsPerSecond;
+    final count = _streamRevealBudget.floor().clamp(0, 12).toInt();
+    if (count == 0) return;
+    _streamRevealBudget -= count;
+    final next = StringBuffer();
+    for (var i = 0; i < count && _streamRevealQueue.isNotEmpty; i++) {
+      next.writeCharCode(_streamRevealQueue.removeFirst());
+    }
+    _streamingText.value = '${_streamingText.value}${next.toString()}';
+    if (_followStream) _scrollToBottom(followStream: true);
   }
 
   void _finishStreamReveal(String finalText) {
     _streamRevealTimer?.cancel();
     _streamRevealTimer = null;
+    _streamRevealLastFrame = null;
+    _streamRevealBudget = 0;
     _streamRevealQueue.clear();
     if (mounted) _streamingText.value = finalText;
   }
 
-  void _scrollToMessageTop(String messageId) {
+  // Conserva chaves visíveis e das mensagens mais recentes. Mensagens antigas
+  // recebem uma chave novamente quando o ListView precisa montá-las.
+  GlobalKey _messageKeyFor(String messageId) {
     final key = _messageKeys.putIfAbsent(messageId, () => GlobalKey());
+    if (_messageKeys.length > 140 && !_messageKeyPruneScheduled) {
+      _messageKeyPruneScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _messageKeyPruneScheduled = false;
+        if (mounted) _pruneMessageKeys();
+      });
+    }
+    return key;
+  }
+
+  void _pruneMessageKeys() {
+    if (_messageKeys.length <= 120) return;
+    final recentStart = _messages.length > 80 ? _messages.length - 80 : 0;
+    final recent = _messages.skip(recentStart).map((m) => m.id).toSet();
+    _messageKeys.removeWhere(
+      (id, key) => !recent.contains(id) && key.currentContext == null,
+    );
+  }
+
+  void _scrollToMessageTop(String messageId) {
+    final key = _messageKeyFor(messageId);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final target = key.currentContext;
       if (!mounted || target == null) return;
       Scrollable.ensureVisible(
         target,
         alignment: 0.02,
-        duration: const Duration(milliseconds: 220),
+        duration: (MediaQuery.maybeOf(context)?.disableAnimations ?? false)
+            ? Duration.zero
+            : const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
       );
     });
@@ -448,7 +573,8 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
       setState(() => _attachments.add(attachment));
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       _snack('Não consegui anexar a imagem anterior.');
       return;
     }
@@ -469,7 +595,8 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       setState(() => _attachments.add(attachment));
       await _sendImageFollowup(prompt);
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       _snack('Não consegui usar a imagem anterior como referência.');
     }
   }
@@ -556,13 +683,17 @@ class _ChatScreenState extends State<ChatScreen> {
       // modo de voz ativo e reabre o microfone para a próxima mensagem.
       try {
         await TtsService.instance.stop();
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
       if (mounted) setState(() => _isSpeaking = false);
       _micArmed = false;
       _speechSessionId++;
       try {
         await _speech.stop();
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
       if (mounted) setState(() => _isListening = false);
       await _toggleListen();
       if (mounted && _micArmed) _snack('Resposta interrompida. Pode falar.');
@@ -570,6 +701,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (_voiceConversationMode) {
       _voiceConversationMode = false;
+      _voiceMutedByUser = false;
+      _cancelSpeechRestart();
       _voiceAutoSendTimer?.cancel();
       _voiceAutoSendTimer = null;
       _micArmed = false;
@@ -577,10 +710,14 @@ class _ChatScreenState extends State<ChatScreen> {
       _speechRestartScheduled = false;
       try {
         await _speech.stop();
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
       try {
         await TtsService.instance.stop();
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
       if (mounted) {
         setState(() {
           _isListening = false;
@@ -591,6 +728,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     _voiceConversationMode = true;
+    _voiceMutedByUser = false;
     if (mounted) setState(() {});
     if (!_micArmed) await _toggleListen();
     if (!mounted) return;
@@ -607,6 +745,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _toggleVoiceMicrophone() async {
+    await _toggleListen();
+    _voiceMutedByUser = !_micArmed;
+  }
+
   Future<void> _sendMessageWithVoiceReply() async {
     if (_controller.text.trim().isEmpty && _attachments.isEmpty) return;
     _speakNextReply = true;
@@ -614,10 +757,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _resumeVoiceConversation() async {
-    if (!mounted || !_voiceConversationMode || _isLoading || _micArmed) return;
+    if (!mounted ||
+        !_voiceConversationMode ||
+        _isLoading ||
+        _micArmed ||
+        _voiceMutedByUser)
+      return;
     try {
       await _toggleListen();
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
   }
 
   Widget _sourceChips(String messageId) {
@@ -811,24 +961,22 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       _speechReady = await _speech.initialize(
         onStatus: (status) {
-          if (!mounted) return;
+          if (!mounted || !_micArmed) return;
           debugPrint('speech status: $status (armed=$_micArmed)');
-          if (!_micArmed) return;
-
-          // O Android pode encerrar a sessão interna depois de ~1–3 s sem
-          // fala. Isso NÃO significa que o usuário desligou o microfone.
-          // O botão continua armado e abrimos outra sessão automaticamente.
-          if (status == 'done' || status == 'notListening') {
+          if (status == 'listening') {
+            _cancelSpeechRestart();
+            _speechRecovery.reset();
+            if (!_isListening) setState(() => _isListening = true);
+          } else if (status == 'done' || status == 'notListening') {
+            if (_isListening) setState(() => _isListening = false);
+            // O fim normal da sessão (silêncio) não consome tentativas.
             _scheduleSpeechRestart();
           }
         },
         onError: (error) {
           debugPrint('speech error: $error');
           if (!_micArmed || !mounted) return;
-
-          // Timeout/erro de silêncio também é tratado como troca de sessão,
-          // nunca como desligamento do microfone pelo usuário.
-          _scheduleSpeechRestart();
+          _handleSpeechFailure(permanent: error.permanent);
         },
         debugLogging: kDebugMode,
       );
@@ -839,32 +987,58 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _scheduleSpeechRestart() {
-    if (!_micArmed || !mounted || _speechRestartScheduled) return;
-    _speechRestartScheduled = true;
+  void _cancelSpeechRestart() {
+    _speechRestartTimer?.cancel();
+    _speechRestartTimer = null;
+    _speechRestartScheduled = false;
+  }
 
-    Future.delayed(const Duration(milliseconds: 850), () async {
-      if (!mounted || !_micArmed) {
+  void _handleSpeechFailure({required bool permanent}) {
+    if (!_micArmed || !mounted) return;
+    final delay = _speechRecovery.recordFailure(permanent: permanent);
+    if (delay == null) {
+      _cancelSpeechRestart();
+      _micArmed = false;
+      _speechSessionId++;
+      _flushSpeechPartial();
+      setState(() => _isListening = false);
+      _snack(
+        permanent
+            ? 'O acesso ao microfone foi negado ou não está disponível. Confira as permissões e ative novamente.'
+            : 'Não foi possível restabelecer o microfone. Toque para tentar novamente.',
+      );
+      return;
+    }
+    if (_isListening) setState(() => _isListening = false);
+    _scheduleSpeechRestart(delay: delay, replaceExisting: true);
+  }
+
+  void _scheduleSpeechRestart({
+    Duration delay = const Duration(milliseconds: 850),
+    bool replaceExisting = false,
+  }) {
+    if (!_micArmed || !mounted) return;
+    if (_speechRestartScheduled && !replaceExisting) return;
+    _cancelSpeechRestart();
+    _speechRestartScheduled = true;
+    final sessionId = _speechSessionId;
+    _speechRestartTimer = Timer(delay, () async {
+      _speechRestartTimer = null;
+      if (!mounted || !_micArmed || sessionId != _speechSessionId) {
         _speechRestartScheduled = false;
         return;
       }
-
-      // Damos tempo para o speech_to_text entregar o finalResult depois do
-      // evento "done". Só o que realmente ficou sem finalResult é promovido.
+      // O Android pode entregar o finalResult um pouco depois de "done".
       _flushSpeechPartial();
-
       try {
         await _speech.stop();
-      } catch (_) {}
-
-      if (!_micArmed || !mounted) {
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
+      if (!mounted || !_micArmed || sessionId != _speechSessionId) {
         _speechRestartScheduled = false;
         return;
       }
-
-      // Visualmente o microfone continua ativo durante a troca interna.
-      if (mounted) setState(() => _isListening = true);
-
       _speechRestartScheduled = false;
       await _resumeListenIfArmed();
     });
@@ -876,15 +1050,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _flushSpeechPartial();
       _speechLastFinalText = '';
       await _startListenSession();
-    } catch (e) {
-      debugPrint('resume listen: $e');
-      if (_micArmed && mounted && !_speechRestartScheduled) {
-        Future.delayed(const Duration(milliseconds: 500), () async {
-          if (_micArmed && mounted) {
-            await _resumeListenIfArmed();
-          }
-        });
-      }
+    } catch (e, stack) {
+      logSwallowed(e, stack, context: 'reconexão de voz');
+      _handleSpeechFailure(permanent: false);
     }
   }
 
@@ -906,28 +1074,35 @@ class _ChatScreenState extends State<ChatScreen> {
         // onStatus faz a reabertura automática enquanto _micArmed == true.
         pauseFor: const Duration(seconds: 2),
         onResult: (result) => _onSpeechResult(result, sessionId),
+        onSoundLevelChange: (level) {
+          if (!mounted || sessionId != _speechSessionId) return;
+          // Valor relativo retornado pela plataforma, não volume calibrado.
+          _voiceSoundLevel = ((level + 25) / 55).clamp(0.0, 1.0).toDouble();
+        },
       );
     }
 
     try {
       await listen();
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       try {
         await _speech.stop();
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
       try {
         await listen();
-      } catch (e) {
-        debugPrint('start listen failed: $e');
-        if (_micArmed && mounted) {
-          _scheduleSpeechRestart();
-        }
+      } catch (e, stack) {
+        logSwallowed(e, stack, context: 'iniciar reconhecimento de voz');
+        _handleSpeechFailure(permanent: false);
         return;
       }
     }
 
     if (mounted && _micArmed && sessionId == _speechSessionId) {
-      setState(() => _isListening = true);
+      // O botão pode estar armado enquanto a plataforma reconecta.
+      setState(() => _isListening = _speech.isListening);
     }
   }
 
@@ -1001,11 +1176,14 @@ class _ChatScreenState extends State<ChatScreen> {
       // caminho: enquanto o botão estiver ligado, _micArmed continua true.
       _micArmed = false;
       _speechSessionId++;
-      _speechRestartScheduled = false;
+      _cancelSpeechRestart();
+      _speechRecovery.reset();
       _flushSpeechPartial();
       try {
         await _speech.stop();
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
       if (mounted) setState(() => _isListening = false);
       return;
     }
@@ -1015,7 +1193,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _speechPartial = '';
     _speechLastFinalText = '';
     _speechSessionId++;
-    _speechRestartScheduled = false;
+    _cancelSpeechRestart();
+    _speechRecovery.reset();
     _micArmed = true;
     if (mounted) setState(() => _isListening = true);
 
@@ -1034,9 +1213,12 @@ class _ChatScreenState extends State<ChatScreen> {
   void didUpdateWidget(covariant ChatScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.conversationId != widget.conversationId) {
+      _generation.invalidate();
       _streamSubscription?.cancel();
       _streamRevealTimer?.cancel();
       _streamRevealTimer = null;
+      _streamRevealLastFrame = null;
+      _streamRevealBudget = 0;
       _streamRevealQueue.clear();
       _streamRawText = StringBuffer();
       _streamingText.value = '';
@@ -1053,10 +1235,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _speechPartial = '';
       _speechLastFinalText = '';
       _speechSessionId++;
-      _speechRestartScheduled = false;
+      _cancelSpeechRestart();
       try {
         _speech.stop();
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
       _isListening = false;
       _loadMessages();
     }
@@ -1109,7 +1293,9 @@ class _ChatScreenState extends State<ChatScreen> {
           position.pixels >= position.maxScrollExtent - 120) {
         _scrollController.animateTo(
           position.maxScrollExtent,
-          duration: Duration(milliseconds: force ? 180 : 90),
+          duration: (MediaQuery.maybeOf(context)?.disableAnimations ?? false)
+              ? Duration.zero
+              : Duration(milliseconds: force ? 180 : 90),
           curve: Curves.easeOut,
         );
       }
@@ -1122,7 +1308,9 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final decoded = jsonDecode(encoded);
       if (decoded is Map) return Map<String, dynamic>.from(decoded);
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
     return null;
   }
 
@@ -1245,9 +1433,8 @@ class _ChatScreenState extends State<ChatScreen> {
     return restored;
   }
 
-  String get _streamStatusLabel => _voiceResponsePending
-      ? 'Gamma ainda está respondendo'
-      : _chatStatusLabel;
+  String get _streamStatusLabel =>
+      _voiceResponsePending ? 'Gamma ainda está respondendo' : _chatStatusLabel;
 
   String get _chatStatusLabel {
     switch (_streamPhase) {
@@ -1262,7 +1449,9 @@ class _ChatScreenState extends State<ChatScreen> {
             ? 'Mapeando dependências… · $_elapsedLabel'
             : 'Resumindo arquivos e pontos de entrada… · $_elapsedLabel';
       case 'generating_image':
-        return _looksLikeImageEditRequest(_precedingUserPrompt(_messages.length))
+        return _looksLikeImageEditRequest(
+              _precedingUserPrompt(_messages.length),
+            )
             ? 'Editando imagem…'
             : 'Criando imagem…';
       case 'image_analyzing':
@@ -1567,7 +1756,8 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       await DownloadService.instance.openPath(path);
       _snack('Conversa exportada');
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       _snack('Não foi possível exportar a conversa.');
     }
   }
@@ -1587,7 +1777,8 @@ class _ChatScreenState extends State<ChatScreen> {
               : box.localToGlobal(Offset.zero) & box.size,
         ),
       );
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       _snack('Não foi possível compartilhar a conversa.');
     }
   }
@@ -1648,6 +1839,45 @@ class _ChatScreenState extends State<ChatScreen> {
                 _copyMessage(message);
               },
             ),
+            if (!message.isUser) ...[
+              ListTile(
+                leading: const Icon(Icons.volume_up_rounded),
+                title: const Text('Ouvir resposta'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_speakMessage(message));
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.share_rounded),
+                title: const Text('Compartilhar'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_shareMessage(message, context));
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.download_rounded),
+                title: const Text('Baixar'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_downloadMessage(message));
+                },
+              ),
+              if (!_isLoading &&
+                  index == _messages.length - 1 &&
+                  index > 0 &&
+                  _messages[index - 1].isUser &&
+                  _canReusePrompt(_messages[index - 1]))
+                ListTile(
+                  leading: const Icon(Icons.refresh_rounded),
+                  title: const Text('Regenerar resposta'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    unawaited(_regenerateResponse(index));
+                  },
+                ),
+            ],
             if (message.isUser && !_isLoading && _canReusePrompt(message))
               ListTile(
                 leading: const Icon(Icons.edit_rounded),
@@ -1807,7 +2037,8 @@ class _ChatScreenState extends State<ChatScreen> {
             ? 'Mensagem salva no dispositivo'
             : 'Não há conteúdo para salvar',
       );
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       _snack('Não foi possível salvar a mensagem no dispositivo.');
     }
   }
@@ -2344,7 +2575,8 @@ class _ChatScreenState extends State<ChatScreen> {
         block =
             '\n[gama_image_file]\nmime:$normalizedMime\npath:$path\n[/gama_image_file]\n';
       }
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       block = '\n[gama_image]\nmime:$mime\ndata:$data\n[/gama_image]\n';
     }
 
@@ -2367,7 +2599,9 @@ class _ChatScreenState extends State<ChatScreen> {
           messageToUpdate,
           messageToUpdate.content,
         );
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
     }
     _scrollToBottom();
   }
@@ -2451,7 +2685,8 @@ class _ChatScreenState extends State<ChatScreen> {
             return;
           }
           setState(() => _attachments.add(attachment));
-        } catch (_) {
+        } catch (error, stack) {
+          logSwallowed(error, stack);
           _snack('Não consegui carregar a imagem anterior para edição.');
           return;
         }
@@ -2527,11 +2762,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_micArmed || _isListening) {
       _micArmed = false;
       _speechSessionId++;
-      _speechRestartScheduled = false;
+      _cancelSpeechRestart();
       _flushSpeechPartial();
       try {
         await _speech.stop();
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
       if (mounted) setState(() => _isListening = false);
     }
 
@@ -2677,8 +2914,10 @@ class _ChatScreenState extends State<ChatScreen> {
         assistantMessageId: assistantMessage.id,
       );
 
+      final generationEpoch = _generation.start();
       _streamSubscription = stream.listen(
         (event) {
+          if (!_generation.isCurrent(generationEpoch)) return;
           if (event.truncated &&
               _messages.isNotEmpty &&
               _messages.last.isAssistant) {
@@ -2784,6 +3023,7 @@ class _ChatScreenState extends State<ChatScreen> {
           if (isFirstToken && mounted) setState(() {});
         },
         onDone: () async {
+          if (!_generation.isCurrent(generationEpoch)) return;
           _streamSubscription = null;
           _streamRevealTimer?.cancel();
           _streamRevealTimer = null;
@@ -2851,6 +3091,7 @@ class _ChatScreenState extends State<ChatScreen> {
             await ConversationSyncService.instance.clearPendingGeneration(
               assistantMessage.id,
             );
+            if (!_generation.isCurrent(generationEpoch)) return;
             _regeneratingAssistantMessage = null;
             _regeneratingUserMessage = null;
             return;
@@ -2878,6 +3119,7 @@ class _ChatScreenState extends State<ChatScreen> {
             try {
               final pendingWrite = _assistantPersistence;
               if (pendingWrite != null) await pendingWrite;
+              if (!_generation.isCurrent(generationEpoch)) return;
               if (isRegeneration || assistantToSave.isInBox) {
                 await _service.updateMessageContent(
                   assistantToSave,
@@ -2890,6 +3132,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 assistantToSave.id,
               );
               // A resposta já está no Hive antes de iniciar qualquer TTS.
+              if (!_generation.isCurrent(generationEpoch)) return;
               if (mounted) {
                 if (isVoiceReply) {
                   await _maybeSpeak(responseText, revealWhileSpeaking: true);
@@ -2897,6 +3140,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   await _maybeSpeak(responseText);
                 }
               }
+              if (!_generation.isCurrent(generationEpoch)) return;
               unawaited(
                 _ensureConversationTitle(
                   userMessage: rawText.isEmpty ? 'Arquivo anexado' : rawText,
@@ -2910,6 +3154,7 @@ class _ChatScreenState extends State<ChatScreen> {
               _regeneratingAssistantMessage = null;
               _regeneratingUserMessage = null;
             } catch (e) {
+              if (!_generation.isCurrent(generationEpoch)) return;
               // Se o áudio falhar, ainda mostramos a resposta completa para
               // não perder a mensagem que o servidor já gerou.
               if (isVoiceReply && mounted) {
@@ -2927,6 +3172,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   assistantToSave.content,
                 );
               }
+              if (!_generation.isCurrent(generationEpoch)) return;
               unawaited(
                 _ensureConversationTitle(
                   userMessage: rawText.isEmpty ? 'Arquivo anexado' : rawText,
@@ -2948,15 +3194,18 @@ class _ChatScreenState extends State<ChatScreen> {
                 );
               }
             } finally {
-              _voiceResponsePending = false;
-              _voiceResponseBuffer = '';
-              if (mounted && _voiceConversationMode) {
-                unawaited(_resumeVoiceConversation());
+              if (_generation.isCurrent(generationEpoch)) {
+                _voiceResponsePending = false;
+                _voiceResponseBuffer = '';
+                if (mounted && _voiceConversationMode) {
+                  unawaited(_resumeVoiceConversation());
+                }
               }
             }
           }
         },
         onError: (e) async {
+          if (!_generation.isCurrent(generationEpoch)) return;
           _stopGenerationClock();
           _streamRevealTimer?.cancel();
           _streamRevealTimer = null;
@@ -2976,6 +3225,7 @@ class _ChatScreenState extends State<ChatScreen> {
             try {
               final pendingWrite = _assistantPersistence;
               if (pendingWrite != null) await pendingWrite;
+              if (!_generation.isCurrent(generationEpoch)) return;
               if (failed.isInBox) {
                 await _service.updateMessageContent(failed, partial);
               } else {
@@ -2987,6 +3237,7 @@ class _ChatScreenState extends State<ChatScreen> {
               );
             }
           }
+          if (!_generation.isCurrent(generationEpoch)) return;
           if (mounted) {
             setState(() {
               _failedAssistantMessageId = failed?.id;
@@ -3030,6 +3281,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _stopGeneration() async {
+    // Invalida os eventos de rede antes de aguardar o cancelamento remoto.
+    _generation.invalidate();
     _stopGenerationClock();
     unawaited(HapticFeedback.lightImpact());
     final activeAssistant = _messages.isNotEmpty && _messages.last.isAssistant
@@ -3044,7 +3297,11 @@ class _ChatScreenState extends State<ChatScreen> {
     await _streamSubscription?.cancel();
     _streamSubscription = null;
     _finishStreamReveal(_streamRawText.toString());
-    await TtsService.instance.stop();
+    try {
+      await TtsService.instance.stop();
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'parar áudio');
+    }
     _isSpeaking = false;
     if (!mounted) return;
     final lastMessage = _messages.isNotEmpty ? _messages.last : null;
@@ -3135,11 +3392,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _generation.invalidate();
     _generationTimer?.cancel();
+    _cancelSpeechRestart();
     _micArmed = false;
     try {
       _speech.stop();
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
     final activeAssistant = _messages.isNotEmpty && _messages.last.isAssistant
         ? _messages.last
         : null;
@@ -3160,6 +3421,8 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
     _streamRevealTimer?.cancel();
+    _streamRevealLastFrame = null;
+    _streamRevealBudget = 0;
     _streamRevealQueue.clear();
     _voiceAutoSendTimer?.cancel();
     _draftSaveTimer?.cancel();
@@ -3237,7 +3500,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 Navigator.of(context).pop();
                               } else {
                                 Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
+                                  GamaPageRoute<void>(
                                     builder: (_) => const OficinaScreen(),
                                   ),
                                 );
@@ -3342,7 +3605,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 Scaffold.of(context).openDrawer();
                                 break;
                               case 'voice':
-                                _toggleVoiceConversation();
+                                await _openVoiceMode();
                                 break;
                               case 'stop':
                                 _stopGeneration();
@@ -3350,7 +3613,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               case 'settings':
                                 Navigator.push(
                                   context,
-                                  MaterialPageRoute(
+                                  GamaPageRoute(
                                     builder: (_) => const SettingsScreen(),
                                   ),
                                 );
@@ -3457,7 +3720,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   Positioned.fill(
                     child: AnimatedSwitcher(
-                      duration: GamaMotion.standard,
+                      duration: MediaQuery.of(context).disableAnimations
+                          ? Duration.zero
+                          : GamaMotion.standard,
                       switchInCurve: GamaMotion.curve,
                       switchOutCurve: Curves.easeInCubic,
                       child: _messages.isEmpty
@@ -3467,6 +3732,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               attachmentKinds: _attachments
                                   .map((attachment) => attachment.kind)
                                   .toList(growable: false),
+                              draft: _controller,
                               onSuggestion: (action, text) {
                                 if (widget.oficinaKind != null) {
                                   _controller.text = text;
@@ -3504,6 +3770,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                     'Ajude-me a pensar em ideias para: ',
                                   EmptySuggestionAction.summarizeAttachment =>
                                     _attachmentPrompt('Resuma'),
+                                  EmptySuggestionAction.describeAttachment => 'Descreva a imagem anexada com detalhes visuais claros, incluindo textos legíveis, se houver.',
                                   EmptySuggestionAction.analyzeAttachment =>
                                     _attachmentPrompt('Analise'),
                                   EmptySuggestionAction.extractTasks =>
@@ -3543,7 +3810,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                           : 1.0,
                                       end: 1.0,
                                     ),
-                                    duration: msg.id == _newMessageAnimationId
+                                    duration:
+                                        MediaQuery.of(context).disableAnimations
+                                        ? Duration.zero
+                                        : msg.id == _newMessageAnimationId
                                         ? const Duration(milliseconds: 180)
                                         : Duration.zero,
                                     curve: Curves.easeOutCubic,
@@ -3555,592 +3825,633 @@ class _ChatScreenState extends State<ChatScreen> {
                                         );
                                       }
                                     },
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.translucent,
-                                      onLongPress: isUser
-                                          ? () => _showMessageContextMenu(
-                                              msg,
-                                              index,
-                                            )
-                                          : null,
-                                      child: RepaintBoundary(
-                                        key: _messageKeys.putIfAbsent(
-                                          msg.id,
-                                          () => GlobalKey(),
-                                        ),
-                                        child: Center(
-                                          child: ConstrainedBox(
-                                            constraints: const BoxConstraints(
-                                              maxWidth: 760,
-                                            ),
-                                            child: Align(
-                                              alignment: isUser
-                                                  ? Alignment.centerRight
-                                                  : Alignment.centerLeft,
-                                              child: Column(
-                                                crossAxisAlignment: isUser
-                                                    ? CrossAxisAlignment.end
-                                                    : CrossAxisAlignment.start,
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Container(
-                                                    constraints: BoxConstraints(
-                                                      maxWidth: isUser
-                                                          ? 680
-                                                          : 760,
-                                                    ),
-                                                    margin: EdgeInsets.only(
-                                                      bottom: isUser ? 8 : 4,
-                                                    ),
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 16,
-                                                          vertical: 12,
-                                                        ),
-                                                    decoration: isUser
-                                                        ? BoxDecoration(
-                                                            gradient: LinearGradient(
-                                                              begin: Alignment
-                                                                  .topLeft,
-                                                              end: Alignment
-                                                                  .bottomRight,
-                                                              colors: [
-                                                                context
+                                    child: Semantics(
+                                      container: true,
+                                      explicitChildNodes: true,
+                                      label: isUser
+                                          ? 'Você disse'
+                                          : 'Gama respondeu',
+                                      child: GestureDetector(
+                                        behavior: HitTestBehavior.translucent,
+                                        onLongPress: () =>
+                                            _showMessageContextMenu(msg, index),
+                                        child: RepaintBoundary(
+                                          key: _messageKeyFor(msg.id),
+                                          child: Center(
+                                            child: ConstrainedBox(
+                                              constraints: const BoxConstraints(
+                                                maxWidth: 760,
+                                              ),
+                                              child: Align(
+                                                alignment: isUser
+                                                    ? Alignment.centerRight
+                                                    : Alignment.centerLeft,
+                                                child: Column(
+                                                  crossAxisAlignment: isUser
+                                                      ? CrossAxisAlignment.end
+                                                      : CrossAxisAlignment
+                                                            .start,
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    Container(
+                                                      constraints:
+                                                          BoxConstraints(
+                                                            maxWidth: isUser
+                                                                ? 680
+                                                                : 760,
+                                                          ),
+                                                      margin: EdgeInsets.only(
+                                                        bottom: isUser ? 8 : 4,
+                                                      ),
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 16,
+                                                            vertical: 12,
+                                                          ),
+                                                      decoration: isUser
+                                                          ? BoxDecoration(
+                                                              gradient: LinearGradient(
+                                                                begin: Alignment
+                                                                    .topLeft,
+                                                                end: Alignment
+                                                                    .bottomRight,
+                                                                colors: [
+                                                                  context
+                                                                      .gama
+                                                                      .bubbleUserSoft,
+                                                                  context
+                                                                      .gama
+                                                                      .bubbleUser,
+                                                                ],
+                                                              ),
+                                                              borderRadius: const BorderRadius.only(
+                                                                topLeft:
+                                                                    Radius.circular(
+                                                                      22,
+                                                                    ),
+                                                                topRight:
+                                                                    Radius.circular(
+                                                                      22,
+                                                                    ),
+                                                                bottomLeft:
+                                                                    Radius.circular(
+                                                                      22,
+                                                                    ),
+                                                                bottomRight:
+                                                                    Radius.circular(
+                                                                      7,
+                                                                    ),
+                                                              ),
+                                                              border: Border.all(
+                                                                color: context
                                                                     .gama
-                                                                    .bubbleUserSoft,
-                                                                context
-                                                                    .gama
-                                                                    .bubbleUser,
-                                                              ],
-                                                            ),
-                                                            borderRadius: const BorderRadius.only(
-                                                              topLeft:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                              topRight:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                              bottomLeft:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                              bottomRight:
-                                                                  Radius.circular(
-                                                                    7,
-                                                                  ),
-                                                            ),
-                                                            border: Border.all(
+                                                                    .accent
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          0.20,
+                                                                    ),
+                                                              ),
+                                                            )
+                                                          : BoxDecoration(
                                                               color: context
                                                                   .gama
-                                                                  .accent
-                                                                  .withValues(
-                                                                    alpha: 0.20,
-                                                                  ),
-                                                            ),
-                                                          )
-                                                        : BoxDecoration(
-                                                            color: context
-                                                                .gama
-                                                                .surfaceCard,
-                                                            borderRadius: const BorderRadius.only(
-                                                              topLeft:
-                                                                  Radius.circular(
-                                                                    7,
-                                                                  ),
-                                                              topRight:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                              bottomLeft:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                              bottomRight:
-                                                                  Radius.circular(
-                                                                    22,
-                                                                  ),
-                                                            ),
-                                                            border: Border.all(
-                                                              color: context
-                                                                  .gama
-                                                                  .border
-                                                                  .withValues(
-                                                                    alpha: 0.45,
-                                                                  ),
-                                                            ),
-                                                          ),
-                                                    child: Column(
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .start,
-                                                      mainAxisSize:
-                                                          MainAxisSize.min,
-                                                      children: [
-                                                        if (!isUser &&
-                                                            msg.id ==
-                                                                _failedAssistantMessageId &&
-                                                            _chatErrorMessage !=
-                                                                null) ...[
-                                                          if (msg.content
-                                                              .trim()
-                                                              .isNotEmpty)
-                                                            MessageContentView(
-                                                              content:
-                                                                  msg.content,
-                                                              isUser: false,
-                                                              onTapLink:
-                                                                  _openLink,
-                                                            ),
-                                                          const SizedBox(
-                                                            height: 8,
-                                                          ),
-                                                          ChatStatusIndicator(
-                                                            label:
-                                                                _chatErrorMessage!,
-                                                            isError: true,
-                                                            onRetry: _isLoading
-                                                                ? null
-                                                                : _retryLastFailedRequest,
-                                                            onContinue:
-                                                                !_isLoading &&
-                                                                    msg.content
-                                                                        .trim()
-                                                                        .isNotEmpty &&
-                                                                    _truncatedMessageIds
-                                                                        .contains(
-                                                                          msg.id,
-                                                                        )
-                                                                ? _continueResponse
-                                                                : null,
-                                                          ),
-                                                        ] else if (msg
-                                                                .content
-                                                                .isEmpty &&
-                                                            !isUser &&
-                                                            _isLoading &&
-                                                            !_firstTokenReceived)
-                                                          widget.oficinaKind ==
-                                                                      OficinaKind
-                                                                          .imagem &&
-                                                                  _streamPhase ==
-                                                                      'generating_image'
-                                                              ? _ImageGenerationPlaceholder(
-                                                                  aspectRatio:
-                                                                      _imageAspectRatio,
-                                                                )
-                                                              : widget.oficinaKind ==
-                                                                    OficinaKind
-                                                                        .video
-                                                              ? Column(
-                                                                  crossAxisAlignment:
-                                                                      CrossAxisAlignment
-                                                                          .start,
-                                                                  children: [
-                                                                    ChatStatusIndicator(
-                                                                      label:
-                                                                          _streamStatusLabel,
+                                                                  .surfaceCard,
+                                                              borderRadius: const BorderRadius.only(
+                                                                topLeft:
+                                                                    Radius.circular(
+                                                                      7,
                                                                     ),
-                                                                    _VideoGenerationProgress(
-                                                                      phase:
-                                                                          _streamPhase,
+                                                                topRight:
+                                                                    Radius.circular(
+                                                                      22,
                                                                     ),
-                                                                    TextButton.icon(
-                                                                      onPressed:
-                                                                          _stopGeneration,
-                                                                      icon: const Icon(
-                                                                        Icons
-                                                                            .close_rounded,
-                                                                        size:
-                                                                            16,
-                                                                      ),
-                                                                      label:
-                                                                          const Text(
-                                                                            'Cancelar',
-                                                                          ),
+                                                                bottomLeft:
+                                                                    Radius.circular(
+                                                                      22,
                                                                     ),
-                                                                  ],
-                                                                )
-                                                              : ChatStatusIndicator(
-                                                                  label:
-                                                                      _streamStatusLabel,
-                                                                )
-                                                        else if (msg
-                                                                .content
-                                                                .isEmpty &&
-                                                            !isUser &&
-                                                            _isLoading &&
-                                                            _voiceResponsePending)
-                                                          ChatStatusIndicator(
-                                                            label:
-                                                                _streamStatusLabel,
-                                                          )
-                                                        else if (!isUser &&
-                                                            isLastAssistant &&
-                                                            _isLoading &&
-                                                            !_voiceResponsePending &&
-                                                            _firstTokenReceived)
-                                                          ValueListenableBuilder<
-                                                            String
-                                                          >(
-                                                            valueListenable:
-                                                                _streamingText,
-                                                            builder: (context, content, _) =>
-                                                                widget.oficinaKind ==
+                                                                bottomRight:
+                                                                    Radius.circular(
+                                                                      22,
+                                                                    ),
+                                                              ),
+                                                              border: Border.all(
+                                                                color: context
+                                                                    .gama
+                                                                    .border
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          0.45,
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                      child: Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: [
+                                                          if (!isUser &&
+                                                              msg.id ==
+                                                                  _failedAssistantMessageId &&
+                                                              _chatErrorMessage !=
+                                                                  null) ...[
+                                                            if (msg.content
+                                                                .trim()
+                                                                .isNotEmpty)
+                                                              MessageContentView(
+                                                                content:
+                                                                    msg.content,
+                                                                isUser: false,
+                                                                onTapLink:
+                                                                    _openLink,
+                                                              ),
+                                                            const SizedBox(
+                                                              height: 8,
+                                                            ),
+                                                            ChatStatusIndicator(
+                                                              label:
+                                                                  _chatErrorMessage!,
+                                                              isError: true,
+                                                              onRetry:
+                                                                  _isLoading
+                                                                  ? null
+                                                                  : _retryLastFailedRequest,
+                                                              onContinue:
+                                                                  !_isLoading &&
+                                                                      msg.content
+                                                                          .trim()
+                                                                          .isNotEmpty &&
+                                                                      _truncatedMessageIds
+                                                                          .contains(
+                                                                            msg.id,
+                                                                          )
+                                                                  ? _continueResponse
+                                                                  : null,
+                                                            ),
+                                                          ] else if (msg
+                                                                  .content
+                                                                  .isEmpty &&
+                                                              !isUser &&
+                                                              _isLoading &&
+                                                              !_firstTokenReceived)
+                                                            widget.oficinaKind ==
                                                                         OficinaKind
                                                                             .imagem &&
-                                                                    _streamPhase == 'generating_image'
+                                                                    _streamPhase ==
+                                                                        'generating_image'
                                                                 ? _ImageGenerationPlaceholder(
                                                                     aspectRatio:
                                                                         _imageAspectRatio,
                                                                   )
-                                                                : Column(
+                                                                : widget.oficinaKind ==
+                                                                      OficinaKind
+                                                                          .video
+                                                                ? Column(
                                                                     crossAxisAlignment:
                                                                         CrossAxisAlignment
                                                                             .start,
-                                                                    mainAxisSize:
-                                                                        MainAxisSize
-                                                                            .min,
                                                                     children: [
-                                                                      MessageContentView(
-                                                                        content: _citationMarkdown(
+                                                                      ChatStatusIndicator(
+                                                                        label:
+                                                                            _streamStatusLabel,
+                                                                      ),
+                                                                      _VideoGenerationProgress(
+                                                                        phase:
+                                                                            _streamPhase,
+                                                                      ),
+                                                                      TextButton.icon(
+                                                                        onPressed:
+                                                                            _stopGeneration,
+                                                                        icon: const Icon(
+                                                                          Icons
+                                                                              .close_rounded,
+                                                                          size:
+                                                                              16,
+                                                                        ),
+                                                                        label:
+                                                                            const Text(
+                                                                              'Cancelar',
+                                                                            ),
+                                                                      ),
+                                                                    ],
+                                                                  )
+                                                                : ChatStatusIndicator(
+                                                                    label:
+                                                                        _streamStatusLabel,
+                                                                  )
+                                                          else if (msg
+                                                                  .content
+                                                                  .isEmpty &&
+                                                              !isUser &&
+                                                              _isLoading &&
+                                                              _voiceResponsePending)
+                                                            ChatStatusIndicator(
+                                                              label:
+                                                                  _streamStatusLabel,
+                                                            )
+                                                          else if (!isUser &&
+                                                              isLastAssistant &&
+                                                              _isLoading &&
+                                                              !_voiceResponsePending &&
+                                                              _firstTokenReceived)
+                                                            ValueListenableBuilder<
+                                                              String
+                                                            >(
+                                                              valueListenable:
+                                                                  _streamingText,
+                                                              builder: (context, content, _) =>
+                                                                  widget.oficinaKind ==
+                                                                          OficinaKind
+                                                                              .imagem &&
+                                                                      _streamPhase == 'generating_image'
+                                                                  ? _ImageGenerationPlaceholder(
+                                                                      aspectRatio:
+                                                                          _imageAspectRatio,
+                                                                    )
+                                                                  : Column(
+                                                                      crossAxisAlignment:
+                                                                          CrossAxisAlignment
+                                                                              .start,
+                                                                      mainAxisSize:
+                                                                          MainAxisSize
+                                                                              .min,
+                                                                      children: [
+                                                                        MessageContentView(
+                                                                          streaming:
+                                                                              true,
+                                                                          content: _citationMarkdown(
+                                                                            msg.id,
+                                                                            content,
+                                                                          ),
+                                                                          isUser:
+                                                                              false,
+                                                                          onTapLink:
+                                                                              _openLink,
+                                                                        ),
+                                                                        const _StreamingCursor(),
+                                                                      ],
+                                                                    ),
+                                                            )
+                                                          else if (!isUser &&
+                                                              msg.id ==
+                                                                  _voiceReplyDisplayMessageId)
+                                                            ValueListenableBuilder<
+                                                              String
+                                                            >(
+                                                              valueListenable:
+                                                                  _voiceReplyDisplayedText,
+                                                              builder:
+                                                                  (
+                                                                    context,
+                                                                    content,
+                                                                    _,
+                                                                  ) => MessageContentView(
+                                                                    content:
+                                                                        _citationMarkdown(
                                                                           msg.id,
                                                                           content,
                                                                         ),
-                                                                        isUser:
-                                                                            false,
-                                                                        onTapLink:
-                                                                            _openLink,
-                                                                      ),
-                                                                      const _StreamingCursor(),
-                                                                    ],
+                                                                    isUser:
+                                                                        false,
+                                                                    onTapLink:
+                                                                        _openLink,
                                                                   ),
-                                                          )
-                                                        else if (!isUser &&
-                                                            msg.id ==
-                                                                _voiceReplyDisplayMessageId)
-                                                          ValueListenableBuilder<
-                                                            String
-                                                          >(
-                                                            valueListenable:
-                                                                _voiceReplyDisplayedText,
-                                                            builder:
-                                                                (
-                                                                  context,
-                                                                  content,
-                                                                  _,
-                                                                ) => MessageContentView(
-                                                                  content:
-                                                                      _citationMarkdown(
-                                                                        msg.id,
-                                                                        content,
-                                                                      ),
-                                                                  isUser: false,
-                                                                  onTapLink:
-                                                                      _openLink,
-                                                                ),
-                                                          )
-                                                        else
-                                                          MemoizedMessageContentView(
-                                                            content:
-                                                                _citationMarkdown(
-                                                                  msg.id,
+                                                            )
+                                                          else
+                                                            MemoizedMessageContentView(
+                                                              referenceCode:
+                                                                  !isUser &&
+                                                                      widget.oficinaKind ==
+                                                                          OficinaKind
+                                                                              .programar
+                                                                  ? widget
+                                                                        .codeComparisonBase
+                                                                  : null,
+                                                              referenceLanguage:
+                                                                  widget
+                                                                      .codeComparisonLanguage,
+                                                              content:
+                                                                  _citationMarkdown(
+                                                                    msg.id,
+                                                                    msg.content,
+                                                                  ),
+                                                              isUser: isUser,
+                                                              onTapLink:
+                                                                  _openLink,
+                                                              additionalImages:
+                                                                  _messageImageAttachments(
+                                                                    msg,
+                                                                  ),
+                                                            ),
+                                                          if (!isUser &&
+                                                              widget.oficinaKind ==
+                                                                  OficinaKind
+                                                                      .imagem &&
+                                                              (msg.content
+                                                                      .contains(
+                                                                        '[gama_image_file]',
+                                                                      ) ||
+                                                                  msg.content
+                                                                      .contains(
+                                                                        '[gama_image]',
+                                                                      ))) ...[
+                                                            if (_beforeImagePath !=
+                                                                    null &&
+                                                                _imagePathFromContent(
+                                                                      msg.content,
+                                                                    ) !=
+                                                                    null &&
+                                                                _imagePathFromContent(
+                                                                      msg.content,
+                                                                    ) !=
+                                                                    _beforeImagePath)
+                                                              _BeforeAfterImageSlider(
+                                                                beforePath:
+                                                                    _beforeImagePath!,
+                                                                afterPath:
+                                                                    _imagePathFromContent(
+                                                                      msg.content,
+                                                                    )!,
+                                                              ),
+                                                            _ImageCreationActions(
+                                                              onVary: () => _varyGeneratedImage(
+                                                                _imagePathFromContent(
                                                                   msg.content,
                                                                 ),
-                                                            isUser: isUser,
-                                                            onTapLink:
-                                                                _openLink,
-                                                            additionalImages:
-                                                                _messageImageAttachments(
-                                                                  msg,
-                                                                ),
-                                                          ),
-                                                        if (!isUser &&
-                                                            widget.oficinaKind ==
-                                                                OficinaKind
-                                                                    .imagem &&
-                                                            (msg.content
-                                                                    .contains(
-                                                                      '[gama_image_file]',
-                                                                    ) ||
-                                                                msg.content
-                                                                    .contains(
-                                                                      '[gama_image]',
-                                                                    ))) ...[
-                                                          if (_beforeImagePath !=
-                                                                  null &&
-                                                              _imagePathFromContent(
-                                                                    msg.content,
-                                                                  ) !=
-                                                                  null &&
-                                                              _imagePathFromContent(
-                                                                    msg.content,
-                                                                  ) !=
-                                                                  _beforeImagePath)
-                                                            _BeforeAfterImageSlider(
-                                                              beforePath:
-                                                                  _beforeImagePath!,
-                                                              afterPath:
-                                                                  _imagePathFromContent(
-                                                                    msg.content,
-                                                                  )!,
-                                                            ),
-                                                          _ImageCreationActions(
-                                                            onVary: () =>
-                                                                _varyGeneratedImage(
-                                                                  _imagePathFromContent(
-                                                                    msg.content,
+                                                                'Crie uma variação da imagem anterior com esta direção: ${_precedingUserPrompt(index)}',
+                                                              ),
+                                                              onEdit: () {
+                                                                final path =
+                                                                    _imagePathFromContent(
+                                                                      msg.content,
+                                                                    );
+                                                                _beforeImagePath =
+                                                                    path;
+                                                                unawaited(
+                                                                  _editGeneratedImage(
+                                                                    path,
+                                                                    'Edite a imagem anterior: ${_precedingUserPrompt(index)}',
                                                                   ),
-                                                                  'Crie uma variação da imagem anterior com esta direção: ${_precedingUserPrompt(index)}',
-                                                                ),
-                                                            onEdit: () {
-                                                              final path =
-                                                                  _imagePathFromContent(
-                                                                    msg.content,
-                                                                  );
-                                                              _beforeImagePath =
-                                                                  path;
-                                                              unawaited(
-                                                                _editGeneratedImage(
-                                                                  path,
-                                                                  'Edite a imagem anterior: ${_precedingUserPrompt(index)}',
-                                                                ),
-                                                              );
-                                                            },
-                                                            onRegenerate: () =>
-                                                                _sendImageFollowup(
-                                                                  _precedingUserPrompt(
-                                                                    index,
-                                                                  ),
-                                                                ),
-                                                            onViewPrompt: () => showDialog<void>(
-                                                              context: context,
-                                                              builder: (ctx) => AlertDialog(
-                                                                title:
-                                                                    const Text(
-                                                                      'Prompt da imagem',
+                                                                );
+                                                              },
+                                                              onRegenerate: () =>
+                                                                  _sendImageFollowup(
+                                                                    _precedingUserPrompt(
+                                                                      index,
                                                                     ),
-                                                                content:
-                                                                    SelectableText(
-                                                                      _precedingUserPrompt(
-                                                                        index,
+                                                                  ),
+                                                              onViewPrompt: () => showDialog<void>(
+                                                                context:
+                                                                    context,
+                                                                builder: (ctx) => AlertDialog(
+                                                                  title:
+                                                                      const Text(
+                                                                        'Prompt da imagem',
                                                                       ),
+                                                                  content:
+                                                                      SelectableText(
+                                                                        _precedingUserPrompt(
+                                                                          index,
+                                                                        ),
+                                                                      ),
+                                                                  actions: [
+                                                                    TextButton(
+                                                                      onPressed: () =>
+                                                                          Navigator.pop(
+                                                                            ctx,
+                                                                          ),
+                                                                      child:
+                                                                          const Text(
+                                                                            'Fechar',
+                                                                          ),
                                                                     ),
-                                                                actions: [
-                                                                  TextButton(
-                                                                    onPressed: () =>
-                                                                        Navigator.pop(
-                                                                          ctx,
+                                                                  ],
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          ],
+                                                          if (!isUser &&
+                                                              (msg.content
+                                                                      .contains(
+                                                                        'diff --git',
+                                                                      ) ||
+                                                                  RegExp(
+                                                                    r'^@@ .* @@',
+                                                                    multiLine:
+                                                                        true,
+                                                                  ).hasMatch(
+                                                                    msg.content,
+                                                                  )))
+                                                            _UnifiedDiffCard(
+                                                              content:
+                                                                  msg.content,
+                                                            ),
+                                                          if (!isUser &&
+                                                              (_artifactsByMessageId[msg
+                                                                          .id]
+                                                                      ?.isNotEmpty ??
+                                                                  false)) ...[
+                                                            const SizedBox(
+                                                              height: 12,
+                                                            ),
+                                                            ArtifactStatusList(
+                                                              artifacts:
+                                                                  _artifactsByMessageId[msg
+                                                                      .id]!,
+                                                              videoPaths:
+                                                                  _videoPathsByArtifactId,
+                                                              onPlayVideo:
+                                                                  _cacheVideoArtifact,
+                                                              onPreview:
+                                                                  _showGeneratedFilePreview,
+                                                              onDownload: (artifact) {
+                                                                final id =
+                                                                    artifact['artifact_id']
+                                                                        ?.toString() ??
+                                                                    '';
+                                                                final filename =
+                                                                    artifact['filename']
+                                                                        ?.toString() ??
+                                                                    'gamma_arquivo.zip';
+                                                                if (id
+                                                                    .isNotEmpty) {
+                                                                  _downloadGeneratedArtifact(
+                                                                    id,
+                                                                    filename,
+                                                                  );
+                                                                }
+                                                              },
+                                                            ),
+                                                          ],
+                                                          if (!isUser &&
+                                                              ((_activityByMessageId[msg
+                                                                              .id]
+                                                                          ?.isNotEmpty ??
+                                                                      false) ||
+                                                                  (_sourcesByMessageId[msg
+                                                                              .id]
+                                                                          ?.isNotEmpty ??
+                                                                      false) ||
+                                                                  (_isLoading &&
+                                                                      isLastAssistant &&
+                                                                      const <String>[
+                                                                        'searching',
+                                                                        'project_analyzing',
+                                                                        'image_analyzing',
+                                                                        'generating_image',
+                                                                        'video_analyzing',
+                                                                        'video_generating',
+                                                                        'video_downloading',
+                                                                      ].contains(
+                                                                        _streamPhase,
+                                                                      ))))
+                                                            _ActivityTimeline(
+                                                              key: ValueKey(
+                                                                'activity-${msg.id}',
+                                                              ),
+                                                              steps:
+                                                                  _activityByMessageId[msg
+                                                                      .id] ??
+                                                                  const [],
+                                                              sources:
+                                                                  _sourcesByMessageId[msg
+                                                                      .id] ??
+                                                                  const [],
+                                                              isRunning:
+                                                                  _isLoading &&
+                                                                  isLastAssistant,
+                                                              activeStep:
+                                                                  _isLoading &&
+                                                                      isLastAssistant
+                                                                  ? _chatStatusLabel
+                                                                  : null,
+                                                            ),
+                                                          if (!isUser &&
+                                                              !_isLoading &&
+                                                              _truncatedMessageIds
+                                                                  .contains(
+                                                                    msg.id,
+                                                                  ))
+                                                            Align(
+                                                              alignment: Alignment
+                                                                  .centerLeft,
+                                                              child: TextButton.icon(
+                                                                onPressed:
+                                                                    _continueResponse,
+                                                                icon: const Icon(
+                                                                  Icons
+                                                                      .more_horiz_rounded,
+                                                                  size: 18,
+                                                                ),
+                                                                label:
+                                                                    const Text(
+                                                                      'Continuar',
+                                                                    ),
+                                                              ),
+                                                            ),
+                                                          if (!isUser &&
+                                                              !_isLoading &&
+                                                              msg
+                                                                      .variants
+                                                                      .length >
+                                                                  1)
+                                                            Padding(
+                                                              padding:
+                                                                  const EdgeInsets.only(
+                                                                    top: 8,
+                                                                  ),
+                                                              child: Row(
+                                                                mainAxisSize:
+                                                                    MainAxisSize
+                                                                        .min,
+                                                                children: [
+                                                                  IconButton(
+                                                                    tooltip: 'Versão anterior',
+                                                                    constraints:
+                                                                        const BoxConstraints.tightFor(
+                                                                          width:
+                                                                              48,
+                                                                          height:
+                                                                              48,
                                                                         ),
-                                                                    child:
-                                                                        const Text(
-                                                                          'Fechar',
+                                                                    padding:
+                                                                        EdgeInsets
+                                                                            .zero,
+                                                                    onPressed:
+                                                                        msg.selectedVariantIndex >
+                                                                            0
+                                                                        ? () => _selectResponseVariant(
+                                                                            msg,
+                                                                            msg.selectedVariantIndex -
+                                                                                1,
+                                                                          )
+                                                                        : null,
+                                                                    icon: const Icon(
+                                                                      Icons
+                                                                          .chevron_left_rounded,
+                                                                      size: 20,
+                                                                    ),
+                                                                  ),
+                                                                  Text(
+                                                                    '${msg.selectedVariantIndex + 1}/${msg.variants.length}',
+                                                                    style: TextStyle(
+                                                                      color: context
+                                                                          .gama
+                                                                          .textMuted,
+                                                                      fontSize:
+                                                                          12,
+                                                                    ),
+                                                                  ),
+                                                                  IconButton(
+                                                                    tooltip: 'Próxima versão',
+                                                                    constraints:
+                                                                        const BoxConstraints.tightFor(
+                                                                          width:
+                                                                              48,
+                                                                          height:
+                                                                              48,
                                                                         ),
+                                                                    padding:
+                                                                        EdgeInsets
+                                                                            .zero,
+                                                                    onPressed:
+                                                                        msg.selectedVariantIndex <
+                                                                            msg.variants.length -
+                                                                                1
+                                                                        ? () => _selectResponseVariant(
+                                                                            msg,
+                                                                            msg.selectedVariantIndex +
+                                                                                1,
+                                                                          )
+                                                                        : null,
+                                                                    icon: const Icon(
+                                                                      Icons
+                                                                          .chevron_right_rounded,
+                                                                      size: 20,
+                                                                    ),
                                                                   ),
                                                                 ],
                                                               ),
                                                             ),
-                                                          ),
                                                         ],
-                                                        if (!isUser &&
-                                                            (msg.content
-                                                                    .contains(
-                                                                      'diff --git',
-                                                                    ) ||
-                                                                RegExp(
-                                                                  r'^@@ .* @@',
-                                                                  multiLine:
-                                                                      true,
-                                                                ).hasMatch(
-                                                                  msg.content,
-                                                                )))
-                                                          _UnifiedDiffCard(
-                                                            content:
-                                                                msg.content,
-                                                          ),
-                                                        if (!isUser &&
-                                                            (_artifactsByMessageId[msg
-                                                                        .id]
-                                                                    ?.isNotEmpty ??
-                                                                false)) ...[
-                                                          const SizedBox(
-                                                            height: 12,
-                                                          ),
-                                                          ArtifactStatusList(
-                                                            artifacts:
-                                                                _artifactsByMessageId[msg
-                                                                    .id]!,
-                                                            videoPaths:
-                                                                _videoPathsByArtifactId,
-                                                            onPlayVideo:
-                                                                _cacheVideoArtifact,
-                                                            onPreview:
-                                                                _showGeneratedFilePreview,
-                                                            onDownload: (artifact) {
-                                                              final id =
-                                                                  artifact['artifact_id']
-                                                                      ?.toString() ??
-                                                                  '';
-                                                              final filename =
-                                                                  artifact['filename']
-                                                                      ?.toString() ??
-                                                                  'gamma_arquivo.zip';
-                                                              if (id
-                                                                  .isNotEmpty) {
-                                                                _downloadGeneratedArtifact(
-                                                                  id,
-                                                                  filename,
-                                                                );
-                                                              }
-                                                            },
-                                                          ),
-                                                        ],
-                                                        if (!isUser &&
-                                                            ((_activityByMessageId[msg
-                                                                            .id]
-                                                                        ?.isNotEmpty ??
-                                                                    false) ||
-                                                                (_sourcesByMessageId[msg
-                                                                            .id]
-                                                                        ?.isNotEmpty ??
-                                                                    false)))
-                                                          _ActivityTimeline(
-                                                            key: ValueKey(
-                                                              'activity-${msg.id}',
-                                                            ),
-                                                            steps:
-                                                                _activityByMessageId[msg
-                                                                    .id] ??
-                                                                const [],
-                                                            sources:
-                                                                _sourcesByMessageId[msg
-                                                                    .id] ??
-                                                                const [],
-                                                            isRunning:
-                                                                _isLoading &&
-                                                                isLastAssistant,
-                                                          ),
-                                                        if (!isUser &&
-                                                            !_isLoading &&
-                                                            _truncatedMessageIds
-                                                                .contains(
-                                                                  msg.id,
-                                                                ))
-                                                          Align(
-                                                            alignment: Alignment
-                                                                .centerLeft,
-                                                            child: TextButton.icon(
-                                                              onPressed:
-                                                                  _continueResponse,
-                                                              icon: const Icon(
-                                                                Icons
-                                                                    .more_horiz_rounded,
-                                                                size: 18,
-                                                              ),
-                                                              label: const Text(
-                                                                'Continuar',
-                                                              ),
-                                                            ),
-                                                          ),
-                                                        if (!isUser &&
-                                                            !_isLoading &&
-                                                            msg
-                                                                    .variants
-                                                                    .length >
-                                                                1)
-                                                          Padding(
-                                                            padding:
-                                                                const EdgeInsets.only(
-                                                                  top: 8,
-                                                                ),
-                                                            child: Row(
-                                                              mainAxisSize:
-                                                                  MainAxisSize
-                                                                      .min,
-                                                              children: [
-                                                                IconButton(
-                                                                  tooltip: 'Versão anterior',
-                                                                  constraints:
-                                                                      const BoxConstraints.tightFor(
-                                                                        width:
-                                                                            48,
-                                                                        height:
-                                                                            48,
-                                                                      ),
-                                                                  padding:
-                                                                      EdgeInsets
-                                                                          .zero,
-                                                                  onPressed:
-                                                                      msg.selectedVariantIndex >
-                                                                          0
-                                                                      ? () => _selectResponseVariant(
-                                                                          msg,
-                                                                          msg.selectedVariantIndex -
-                                                                              1,
-                                                                        )
-                                                                      : null,
-                                                                  icon: const Icon(
-                                                                    Icons
-                                                                        .chevron_left_rounded,
-                                                                    size: 20,
-                                                                  ),
-                                                                ),
-                                                                Text(
-                                                                  '${msg.selectedVariantIndex + 1}/${msg.variants.length}',
-                                                                  style: TextStyle(
-                                                                    color: context
-                                                                        .gama
-                                                                        .textMuted,
-                                                                    fontSize:
-                                                                        12,
-                                                                  ),
-                                                                ),
-                                                                IconButton(
-                                                                  tooltip: 'Próxima versão',
-                                                                  constraints:
-                                                                      const BoxConstraints.tightFor(
-                                                                        width:
-                                                                            48,
-                                                                        height:
-                                                                            48,
-                                                                      ),
-                                                                  padding:
-                                                                      EdgeInsets
-                                                                          .zero,
-                                                                  onPressed:
-                                                                      msg.selectedVariantIndex <
-                                                                          msg.variants.length -
-                                                                              1
-                                                                      ? () => _selectResponseVariant(
-                                                                          msg,
-                                                                          msg.selectedVariantIndex +
-                                                                              1,
-                                                                        )
-                                                                      : null,
-                                                                  icon: const Icon(
-                                                                    Icons
-                                                                        .chevron_right_rounded,
-                                                                    size: 20,
-                                                                  ),
-                                                                ),
-                                                              ],
-                                                            ),
-                                                          ),
-                                                      ],
+                                                      ),
                                                     ),
-                                                  ),
-                                                  if (msg.content
-                                                      .trim()
-                                                      .isNotEmpty)
-                                                    _messageActions(
-                                                      msg,
-                                                      index,
-                                                      isLastAssistant,
-                                                    ),
-                                                  if (!isUser)
-                                                    const SizedBox(height: 12),
-                                                ],
+                                                    if (msg.content
+                                                        .trim()
+                                                        .isNotEmpty)
+                                                      _messageActions(
+                                                        msg,
+                                                        index,
+                                                        isLastAssistant,
+                                                      ),
+                                                    if (!isUser)
+                                                      const SizedBox(
+                                                        height: 12,
+                                                      ),
+                                                  ],
+                                                ),
                                               ),
                                             ),
                                           ),
@@ -4166,7 +4477,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       bottom: 14,
                       child: AnimatedOpacity(
                         opacity: 1,
-                        duration: const Duration(milliseconds: 150),
+                        duration: MediaQuery.of(context).disableAnimations
+                            ? Duration.zero
+                            : const Duration(milliseconds: 150),
                         child: FloatingActionButton.small(
                           heroTag: 'gama_scroll_to_bottom',
                           tooltip: 'Ir para o fim da conversa',
@@ -4346,6 +4659,7 @@ class _ChatScreenState extends State<ChatScreen> {
               mode: _mode,
               onAttach: _showAttachMenu,
               onToggleListen: _toggleListen,
+              onOpenVoice: widget.oficinaKind == null ? _openVoiceMode : null,
               onSend: _sendMessage,
               onSpeakSend: _sendMessageWithVoiceReply,
               onPasteImage: _pasteClipboardContent,
@@ -4627,21 +4941,19 @@ class _ActivityTimeline extends StatelessWidget {
   final List<String> steps;
   final List<Map<String, dynamic>> sources;
   final bool isRunning;
+  final String? activeStep;
 
   const _ActivityTimeline({
     super.key,
     required this.steps,
     required this.sources,
     required this.isRunning,
+    this.activeStep,
   });
 
   @override
   Widget build(BuildContext context) {
-    final title = sources.isNotEmpty
-        ? 'Pesquisou na web · ${sources.length} fontes'
-        : steps.isNotEmpty
-        ? steps.last
-        : 'Etapas da resposta';
+    final title = isRunning ? 'Atividade em andamento' : 'Etapas da resposta';
     return Container(
       margin: const EdgeInsets.only(top: 8),
       decoration: BoxDecoration(
@@ -4652,7 +4964,7 @@ class _ActivityTimeline extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          initiallyExpanded: isRunning,
+          initiallyExpanded: false,
           dense: true,
           tilePadding: const EdgeInsets.symmetric(horizontal: 10),
           childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
@@ -4670,6 +4982,33 @@ class _ActivityTimeline extends StatelessWidget {
             ),
           ),
           children: [
+            if (isRunning && activeStep != null && activeStep!.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.bolt_rounded,
+                        size: 15,
+                        color: context.gama.accent,
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          activeStep!,
+                          style: TextStyle(
+                            color: context.gama.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             for (final step in steps)
               Align(
                 alignment: Alignment.centerLeft,
@@ -4848,7 +5187,18 @@ class _ImageGenerationPlaceholderState
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1300),
-  )..repeat();
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.of(context).disableAnimations) {
+      _controller.stop();
+      _controller.value = 0.5;
+    } else if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
+  }
 
   @override
   void dispose() {
@@ -4926,7 +5276,18 @@ class _StreamingCursorState extends State<_StreamingCursor>
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 560),
-  )..repeat(reverse: true);
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.of(context).disableAnimations) {
+      _controller.stop();
+      _controller.value = 1;
+    } else if (!_controller.isAnimating) {
+      _controller.repeat(reverse: true);
+    }
+  }
 
   @override
   void dispose() {
@@ -4961,7 +5322,18 @@ class _TypingDotsState extends State<_TypingDots>
     _c = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
-    )..repeat();
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.of(context).disableAnimations) {
+      _c.stop();
+      _c.value = 0.5;
+    } else if (!_c.isAnimating) {
+      _c.repeat();
+    }
   }
 
   @override

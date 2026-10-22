@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'identity_service.dart';
+import '../utils/error_logger.dart';
 
 /// Login Google multiplataforma.
 ///
@@ -177,7 +178,8 @@ class AuthService {
           ).toLocal();
         }
       }
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       // Tokens válidos continuam utilizáveis por até 55 min se não der para
       // ler o exp localmente; o servidor segue sendo quem valida a assinatura.
     }
@@ -393,7 +395,9 @@ class AuthService {
     if (!isDesktop) {
       try {
         await _google.signOut();
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
     }
     // Não mantenha um token válido em memória depois do logout.
     _idToken = null;
@@ -427,7 +431,8 @@ class AuthService {
         photoUrl: account.photoUrl,
       );
       return true;
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return false;
     }
   }

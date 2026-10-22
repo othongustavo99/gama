@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/gama_colors.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/memory_service.dart';
+import '../utils/error_logger.dart';
 
 class MemoryScreen extends StatefulWidget {
   const MemoryScreen({super.key});
@@ -52,7 +53,8 @@ class _MemoryScreenState extends State<MemoryScreen> {
     try {
       await _service.updateFact(fact.id, text);
       _reload();
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -94,7 +96,8 @@ class _MemoryScreenState extends State<MemoryScreen> {
     try {
       await _service.addFact(text);
       _reload();
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Não foi possível salvar a memória.')),

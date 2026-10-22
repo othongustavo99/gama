@@ -13,7 +13,11 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/gama_colors.dart';
+import '../core/gama_page_route.dart';
+import '../screens/oficina_screen.dart';
+import '../screens/code_diff_screen.dart';
 import '../services/download_service.dart';
+import '../utils/error_logger.dart';
 
 class ParsedMessage {
   final String text;
@@ -372,15 +376,21 @@ class _FullscreenImageDialog extends StatelessWidget {
 class MessageContentView extends StatelessWidget {
   final String content;
   final bool isUser;
+  final bool streaming;
   final void Function(String? href)? onTapLink;
   final List<GeneratedImageData> additionalImages;
+  final String? referenceCode;
+  final String? referenceLanguage;
 
   const MessageContentView({
     super.key,
     required this.content,
     required this.isUser,
+    this.streaming = false,
     this.onTapLink,
     this.additionalImages = const [],
+    this.referenceCode,
+    this.referenceLanguage,
   });
 
   @override
@@ -496,7 +506,9 @@ class MessageContentView extends StatelessWidget {
                             mime: img.mime,
                           );
                           await DownloadService.instance.openPath(path);
-                        } catch (_) {}
+                        } catch (error, stack) {
+                          logSwallowed(error, stack);
+                        }
                       },
                       icon: const Icon(Icons.download_rounded, size: 18),
                       label: const Text('Salvar imagem'),
@@ -517,7 +529,8 @@ class MessageContentView extends StatelessWidget {
             ],
           ),
         );
-      } catch (_) {
+      } catch (error, stack) {
+        logSwallowed(error, stack);
         return const SizedBox.shrink();
       }
     }
@@ -552,6 +565,9 @@ class MessageContentView extends StatelessWidget {
             _MarkdownMessage(
               text: parsed.text,
               isUser: isUser,
+              streaming: streaming,
+              referenceCode: referenceCode,
+              referenceLanguage: referenceLanguage,
               textStyle: textStyle,
               onTapLink: onTapLink,
             ),
@@ -587,6 +603,8 @@ class MessageContentView extends StatelessWidget {
 class MemoizedMessageContentView extends StatefulWidget {
   final String content;
   final bool isUser;
+  final String? referenceCode;
+  final String? referenceLanguage;
   final void Function(String? href)? onTapLink;
   final List<GeneratedImageData> additionalImages;
 
@@ -594,6 +612,8 @@ class MemoizedMessageContentView extends StatefulWidget {
     super.key,
     required this.content,
     required this.isUser,
+    this.referenceCode,
+    this.referenceLanguage,
     this.onTapLink,
     this.additionalImages = const [],
   });
@@ -612,13 +632,17 @@ class _MemoizedMessageContentViewState
     isUser: widget.isUser,
     onTapLink: widget.onTapLink,
     additionalImages: widget.additionalImages,
+    referenceCode: widget.referenceCode,
+    referenceLanguage: widget.referenceLanguage,
   );
 
   @override
   void didUpdateWidget(covariant MemoizedMessageContentView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.content != widget.content ||
-        oldWidget.isUser != widget.isUser) {
+        oldWidget.isUser != widget.isUser ||
+        oldWidget.referenceCode != widget.referenceCode ||
+        oldWidget.referenceLanguage != widget.referenceLanguage) {
       _cachedContent = _createContent();
     }
   }
@@ -633,19 +657,29 @@ class _MemoizedMessageContentViewState
 class _MarkdownMessage extends StatelessWidget {
   final String text;
   final bool isUser;
+  final String? referenceCode;
+  final String? referenceLanguage;
+  final bool streaming;
   final TextStyle textStyle;
   final void Function(String? href)? onTapLink;
 
   const _MarkdownMessage({
     required this.text,
     required this.isUser,
+    required this.streaming,
+    this.referenceCode,
+    this.referenceLanguage,
     required this.textStyle,
     required this.onTapLink,
   });
 
   @override
   Widget build(BuildContext context) {
-    final parts = _splitCodeBlocks(text);
+    // Os blocos cercados por código já são cacheados. Durante o stream,
+    // também congela parágrafos de texto completos e independentes; somente
+    // o último trecho incompleto precisa passar pelo parser a cada frame.
+    final original = _splitCodeBlocks(text);
+    final parts = streaming ? _splitStableParagraphs(original) : original;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -657,6 +691,8 @@ class _MarkdownMessage extends StatelessWidget {
             ),
             part: parts[index],
             isUser: isUser,
+            referenceCode: referenceCode,
+            referenceLanguage: referenceLanguage,
             textStyle: textStyle,
             onTapLink: onTapLink,
           ),
@@ -737,6 +773,8 @@ class _MarkdownMessage extends StatelessWidget {
 class _MarkdownPartView extends StatefulWidget {
   final _CodePart part;
   final bool isUser;
+  final String? referenceCode;
+  final String? referenceLanguage;
   final TextStyle textStyle;
   final void Function(String? href)? onTapLink;
 
@@ -744,6 +782,8 @@ class _MarkdownPartView extends StatefulWidget {
     super.key,
     required this.part,
     required this.isUser,
+    this.referenceCode,
+    this.referenceLanguage,
     required this.textStyle,
     required this.onTapLink,
   });
@@ -766,6 +806,8 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
         oldPart.isOpenCode != newPart.isOpenCode ||
         oldWidget.isUser != widget.isUser ||
         oldWidget.textStyle != widget.textStyle ||
+        oldWidget.referenceCode != widget.referenceCode ||
+        oldWidget.referenceLanguage != widget.referenceLanguage ||
         oldWidget.onTapLink != widget.onTapLink) {
       _cachedChild = _buildChild();
     }
@@ -784,6 +826,8 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
             ),
             code: part.content,
             language: part.language,
+            referenceCode: widget.referenceCode,
+            referenceLanguage: widget.referenceLanguage,
             isUser: widget.isUser,
             textStyle: widget.textStyle,
           ),
@@ -843,6 +887,43 @@ class _CodePart {
     required this.content,
     this.language = '',
   });
+}
+
+// Divide apenas parágrafos fechados e estruturalmente independentes.
+// Não fragmenta listas, tabelas, blocos matemáticos, citações, HTML ou links
+// por referência: esses dependem do contexto entre linhas no Markdown.
+List<_CodePart> _splitStableParagraphs(List<_CodePart> parts) {
+  final output = <_CodePart>[];
+  final blank = RegExp(r'\r?\n[ \t]*\r?\n');
+  final structural = RegExp(
+    r'(?m)^(?:[ \t]{4}|\t|[ \t]{0,3}(?:[-+*][ \t]+|\d+[.)][ \t]+|>[ \t]?|#{1,6}[ \t]+|~~~|```|---[ \t]*$|\[.+\]:|<))',
+  );
+  for (final part in parts) {
+    if (part.isCode || part.isOpenCode || part.content.isEmpty) {
+      output.add(part);
+      continue;
+    }
+    final value = part.content;
+    var start = 0;
+    for (final boundary in blank.allMatches(value)) {
+      final segment = value.substring(start, boundary.end);
+      // Mantém no mesmo nó qualquer construção potencialmente multilinha.
+      if (segment.trim().isEmpty ||
+          structural.hasMatch(segment) ||
+          segment.contains('|') ||
+          segment.contains(r'$$') ||
+          segment.contains(r'\[') ||
+          segment.contains(r'\]')) {
+        continue;
+      }
+      output.add(_CodePart(isCode: false, content: segment));
+      start = boundary.end;
+    }
+    if (start < value.length) {
+      output.add(_CodePart(isCode: false, content: value.substring(start)));
+    }
+  }
+  return output;
 }
 
 List<_CodePart> _splitCodeBlocks(String text) {
@@ -932,6 +1013,8 @@ List<_CodePart> _splitCodeBlocks(String text) {
 class _CopyableCodeBlock extends StatefulWidget {
   final String code;
   final String language;
+  final String? referenceCode;
+  final String? referenceLanguage;
   final bool isUser;
   final TextStyle textStyle;
 
@@ -939,6 +1022,8 @@ class _CopyableCodeBlock extends StatefulWidget {
     super.key,
     required this.code,
     required this.language,
+    this.referenceCode,
+    this.referenceLanguage,
     required this.isUser,
     required this.textStyle,
   });
@@ -1060,7 +1145,8 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
       );
       _cacheHighlight(cacheKey, span);
       return span;
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       final span = TextSpan(text: widget.code, style: base);
       _cacheHighlight(cacheKey, span);
       return span;
@@ -1161,6 +1247,28 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
                   ),
                   color: _saved ? Colors.green : muted,
                 ),
+                if (!widget.isUser)
+                  IconButton(
+                    tooltip: 'Abrir código na Oficina',
+                    constraints: const BoxConstraints.tightFor(
+                      width: 44,
+                      height: 48,
+                    ),
+                    onPressed: () async {
+                      await HapticFeedback.selectionClick();
+                      if (!context.mounted) return;
+                      await Navigator.of(context).push(
+                        GamaPageRoute<void>(
+                          builder: (_) => OficinaScreen(
+                            initialCode: widget.code,
+                            initialLanguage: widget.language,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.handyman_outlined, size: 18),
+                    color: context.gama.accentBright,
+                  ),
                 IconButton(
                   tooltip: _copied ? 'Código copiado' : 'Copiar código',
                   constraints: const BoxConstraints.tightFor(
@@ -1192,6 +1300,38 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
               ),
             ),
           ),
+          if (!widget.isUser &&
+              widget.referenceCode != null &&
+              widget.referenceCode!.trim().isNotEmpty &&
+              (widget.referenceLanguage == null ||
+                  widget.referenceLanguage!.trim().isEmpty ||
+                  widget.language.trim().isEmpty ||
+                  _normalizeCodeLanguage(widget.referenceLanguage!) ==
+                      _normalizeCodeLanguage(widget.language)))
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () async {
+                  await HapticFeedback.selectionClick();
+                  if (!context.mounted) return;
+                  await Navigator.of(context).push(
+                    GamaPageRoute<void>(
+                      builder: (_) => CodeDiffScreen(
+                        original: widget.referenceCode!,
+                        proposed: widget.code,
+                        language: widget.language,
+                      ),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.difference_outlined, size: 16),
+                label: const Text('Comparar com original'),
+                style: TextButton.styleFrom(
+                  foregroundColor: context.gama.accent,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+              ),
+            ),
           if (_isLong && !_expanded)
             Align(
               alignment: Alignment.centerLeft,

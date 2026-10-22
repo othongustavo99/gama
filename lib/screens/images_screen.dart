@@ -106,8 +106,8 @@ class _ImagesScreenState extends State<ImagesScreen> {
                                             Icons.broken_image_outlined,
                                             color: context.gama.textMuted,
                                           ),
-                                      ),
-                                    )
+                                        ),
+                                      )
                                     : Center(
                                         child: Icon(
                                           Icons.image_not_supported_outlined,
@@ -131,9 +131,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
                                             it,
                                           )
                                         : null,
-                                    icon: const Icon(
-                                      Icons.download_outlined,
-                                    ),
+                                    icon: const Icon(Icons.download_outlined),
                                   ),
                                 ),
                               ),

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
 import '../core/design_tokens.dart';
 import '../models/conversation.dart';
@@ -18,10 +19,16 @@ import 'library_screen.dart';
 import 'plugins_screen.dart';
 import 'projects_screen.dart';
 import 'scheduled_screen.dart';
+import '../utils/error_logger.dart';
 
 /// Hub da Oficina: visual alinhado à chat screen, com 3 caminhos de criação.
 class OficinaScreen extends StatefulWidget {
-  const OficinaScreen({super.key});
+  /// Quando aberto a partir de um bloco de código, entra em Programar
+  /// com o código no rascunho (sem enviar automaticamente para o servidor).
+  final String? initialCode;
+  final String? initialLanguage;
+
+  const OficinaScreen({super.key, this.initialCode, this.initialLanguage});
 
   @override
   State<OficinaScreen> createState() => _OficinaScreenState();
@@ -34,6 +41,18 @@ class _OficinaScreenState extends State<OficinaScreen> {
   void initState() {
     super.initState();
     _libraryFuture = _loadLibrary();
+    if (widget.initialCode != null && widget.initialCode!.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final lang = widget.initialLanguage?.trim();
+        final title = (lang == null || lang.isEmpty)
+            ? 'código'
+            : 'código $lang';
+        final draft =
+            'Revise este $title, explique melhorias e sugira correções sem quebrar o comportamento atual:\n\n```$lang\n${widget.initialCode}\n```';
+        _openKind(context, OficinaKind.programar, prompt: draft);
+      });
+    }
   }
 
   Future<List<Map<String, dynamic>>> _loadLibrary() async {
@@ -46,7 +65,8 @@ class _OficinaScreenState extends State<OficinaScreen> {
           .toList()
           .reversed
           .toList();
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return const [];
     }
   }
@@ -62,12 +82,18 @@ class _OficinaScreenState extends State<OficinaScreen> {
     );
     if (!context.mounted) return;
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      GamaPageRoute<void>(
         builder: (_) => _OficinaScaffold(
           child: ChatScreen(
             conversationId: conv.id,
             oficinaKind: kind,
             initialPrompt: prompt,
+            codeComparisonBase: kind == OficinaKind.programar
+                ? widget.initialCode
+                : null,
+            codeComparisonLanguage: kind == OficinaKind.programar
+                ? widget.initialLanguage
+                : null,
             persistentSidebar: defaultTargetPlatform == TargetPlatform.windows,
           ),
         ),
@@ -84,7 +110,7 @@ class _OficinaScreenState extends State<OficinaScreen> {
     if (kind == null) return;
     if (!context.mounted) return;
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      GamaPageRoute<void>(
         builder: (_) => _OficinaScaffold(
           child: ChatScreen(
             conversationId: conversation.id,
@@ -370,7 +396,7 @@ class _OficinaScaffold extends StatelessWidget {
 
   void _open(BuildContext context, Widget screen, bool desktop) {
     if (!desktop) Navigator.pop(context);
-    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
+    Navigator.of(context).push(GamaPageRoute<void>(builder: (_) => screen));
   }
 
   /// Sai das rotas temporárias da Oficina para o chat principal. Com isso, a

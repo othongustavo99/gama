@@ -1,6 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'local_notification_service.dart';
+import '../utils/error_logger.dart';
 
 /// Fonte única para os toggles da tela Plugins.
 /// Mantém o formato de armazenamento já usado pelo app para não perder
@@ -58,7 +59,8 @@ class PluginSettingsService {
         await LocalNotificationService.instance.syncSavedReminders(
           enabled: enabled,
         );
-      } catch (_) {
+      } catch (error, stack) {
+        logSwallowed(error, stack);
         // Configuração da tela não pode falhar por incompatibilidade local.
       }
     }

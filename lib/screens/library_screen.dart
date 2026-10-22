@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
 import '../services/download_service.dart';
+import '../utils/error_logger.dart';
 
 /// Biblioteca local de anexos (metadados + arquivo persistido).
 class LibraryScreen extends StatefulWidget {
@@ -46,7 +47,8 @@ class LibraryScreen extends StatefulWidget {
             savedPath = dest;
           }
         }
-      } catch (_) {
+      } catch (error, stack) {
+        logSwallowed(error, stack);
         savedPath = null;
       }
     }
@@ -250,7 +252,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (await libDir.exists()) {
         await libDir.delete(recursive: true);
       }
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
     await prefs.setString('gama_library', '[]');
     setState(() => _items = []);
   }

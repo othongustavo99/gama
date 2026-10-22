@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
 import '../core/design_tokens.dart';
 import '../widgets/loading_skeleton.dart';
@@ -52,7 +53,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _push(Widget page) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+    Navigator.of(context).push(GamaPageRoute(builder: (_) => page));
   }
 
   /// Voltar Android:

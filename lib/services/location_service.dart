@@ -1,6 +1,8 @@
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../utils/error_logger.dart';
+
 class LocationService {
   LocationService._();
 
@@ -50,13 +52,15 @@ class LocationService {
           }
           if (parts.isNotEmpty) return parts.join(', ');
         }
-      } catch (_) {
+      } catch (error, stack) {
+        logSwallowed(error, stack);
         // Usa coordenadas arredondadas se a geocodificação não estiver disponível.
       }
 
       return 'coordenadas aproximadas ${position.latitude.toStringAsFixed(2)}, '
           '${position.longitude.toStringAsFixed(2)}';
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       // Permissão negada, GPS desligado ou falha não bloqueia o chat.
       return null;
     }

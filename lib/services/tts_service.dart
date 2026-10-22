@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import '../core/constants.dart';
 import 'auth_interceptor.dart';
 import 'settings_service.dart';
+import '../utils/error_logger.dart';
 
 class TtsService {
   TtsService._();
@@ -39,7 +40,9 @@ class TtsService {
     _cancelQueue = true;
     try {
       await _player.stop();
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
     _busy = false;
   }
 
@@ -317,7 +320,9 @@ class TtsService {
               )
             : '${res.data}';
         detail = raw.length > 280 ? raw.substring(0, 280) : raw;
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
       throw Exception(detail);
     }
 

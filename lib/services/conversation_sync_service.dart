@@ -11,6 +11,8 @@ import '../models/message.dart';
 import 'conversation_service.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
+import '../utils/error_logger.dart';
+import '../utils/conversation_sync_planner.dart';
 
 /// Sincroniza conversas Hive ↔ Railway (`/conversations`).
 /// O backend deriva a identidade do Bearer Google validado; `X-User-Id` fica
@@ -33,13 +35,18 @@ class ConversationSyncService {
   bool _syncingPendingGenerations = false;
   DateTime? _lastFullSync;
   static const _pendingGenerationsKey = 'gama_pending_generations';
+  static const _pendingDeletesPrefix = 'gama_pending_message_deletes_';
+  static const _remoteRevisionsPrefix = 'gama_sync_remote_revisions_v3_';
+  static const _uploadedSnapshotsPrefix = 'gama_sync_uploaded_snapshots_v3_';
+  Future<void> _pendingDeleteQueue = Future<void>.value();
 
   Future<bool> _hasGoogleSession() async {
     if (IdentityService.instance.provider != 'google') return false;
     try {
       final token = await AuthService.instance.bearerToken();
       return token != null && token.isNotEmpty;
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return false;
     }
   }
@@ -55,7 +62,10 @@ class ConversationSyncService {
     return _dio;
   }
 
-  /// Sincronização completa: puxa do servidor e envia o que o local tem de mais novo.
+  /// Sincronização eficiente e conservadora:
+  /// 1) lista metadados leves; 2) baixa somente as revisões alteradas;
+  /// 3) envia conversas locais só quando o snapshot divergiu do último PUT.
+  /// A versão sem syncRevision (backend antigo) sempre é baixada.
   Future<void> syncAll({bool force = false}) async {
     if (_syncing) return;
     if (!await _hasGoogleSession()) return;
@@ -68,16 +78,67 @@ class ConversationSyncService {
 
     _syncing = true;
     try {
-      final remote = await _pullRemote();
-      await _mergeRemoteIntoLocal(remote);
-      await _pushLocalToRemote();
+      await _flushPendingMessageDeletes();
+      final storedRemote = await _readSyncCache(_remoteRevisionsPrefix);
+      final storedUploaded = await _readSyncCache(_uploadedSnapshotsPrefix);
+      final local = ConversationService.instance;
+      // Não confie num checkpoint se os dados locais foram apagados.
+      final known = <String, String>{
+        for (final entry in storedRemote.entries)
+          if (!force && local.conversationById(entry.key) != null)
+            entry.key: entry.value,
+      };
+      final delta = await _pullRemoteChanges(known);
+      final revisions = delta.revisions;
+      final toMerge = delta.changed;
+      await _mergeRemoteIntoLocal(toMerge);
+
+      // Só persistir checkpoints após todos os envios concluírem sem erro.
+      final uploaded = await _pushChangedLocalToRemote(
+        force ? <String, String>{} : storedUploaded,
+        revisions,
+      );
+      await _writeSyncCache(_remoteRevisionsPrefix, revisions);
+      await _writeSyncCache(_uploadedSnapshotsPrefix, uploaded);
       _lastFullSync = DateTime.now();
-      ConversationService.instance.notifyListeners();
+      local.notifyListeners();
     } catch (e, st) {
       debugPrint('conversation sync: $e');
       debugPrintStack(stackTrace: st);
     } finally {
       _syncing = false;
+    }
+  }
+
+  String _syncCacheKey(String prefix) =>
+      '$prefix${IdentityService.instance.userId}';
+
+  Future<Map<String, String>> _readSyncCache(String prefix) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_syncCacheKey(prefix));
+    if (raw == null || raw.isEmpty) return <String, String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return <String, String>{};
+      return decoded.map(
+        (key, value) => MapEntry(key.toString(), value.toString()),
+      );
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'ler cache da sincronização');
+      return <String, String>{};
+    }
+  }
+
+  Future<void> _writeSyncCache(
+    String prefix,
+    Map<String, String> entries,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = _syncCacheKey(prefix);
+    if (entries.isEmpty) {
+      await prefs.remove(key);
+    } else {
+      await prefs.setString(key, jsonEncode(entries));
     }
   }
 
@@ -91,7 +152,8 @@ class ConversationSyncService {
       return decoded.map(
         (key, value) => MapEntry(key.toString(), value.toString()),
       );
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return <String, String>{};
     }
   }
@@ -158,7 +220,9 @@ class ConversationSyncService {
               .getMessages(entry.value)
               .where((item) => item.id == entry.key)
               .toList();
-          final message = matchingMessages.isEmpty ? null : matchingMessages.first;
+          final message = matchingMessages.isEmpty
+              ? null
+              : matchingMessages.first;
           if (message != null) {
             message.sourcesJson = (completed['sourcesJson'] ?? '').toString();
             message.isTruncated = completed['isTruncated'] == true;
@@ -189,13 +253,21 @@ class ConversationSyncService {
   }
 
   /// Envia uma conversa específica (após mensagem / rename / pin).
-  Future<void> pushConversation(String id) async {
-    if (!await _hasGoogleSession()) return;
+  Future<String?> pushConversation(
+    String id, {
+    bool reportFailure = false,
+  }) async {
+    if (!await _hasGoogleSession()) {
+      if (reportFailure) {
+        throw StateError('Sessão expirou durante a sincronização');
+      }
+      return null;
+    }
     final local = ConversationService.instance;
-    if (!local.conversationHasMessages(id)) return;
+    if (!local.conversationHasMessages(id)) return null;
 
     final conv = local.conversationById(id);
-    if (conv == null) return;
+    if (conv == null) return null;
 
     final messages = local.getMessages(id);
     try {
@@ -225,13 +297,19 @@ class ConversationSyncService {
           ],
         },
       );
-      if ((res.statusCode ?? 0) >= 400) {
-        debugPrint(
-          'push conversation $id failed: ${res.statusCode} ${res.data}',
-        );
+      final status = res.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        throw StateError('Falha ao enviar conversa $id: HTTP $status');
       }
-    } catch (e) {
-      debugPrint('push conversation $id: $e');
+      final payload = res.data;
+      final revision = payload is Map && payload['conversation'] is Map
+          ? (payload['conversation']['syncRevision'] ?? '').toString()
+          : '';
+      return revision.isEmpty ? null : revision;
+    } catch (e, stack) {
+      logSwallowed(e, stack, context: 'enviar conversa $id');
+      if (reportFailure) rethrow;
+      return null;
     }
   }
 
@@ -268,6 +346,7 @@ class ConversationSyncService {
           'title': conv.title,
           'isPinned': conv.isPinned,
           'updatedAt': conv.updatedAt.toUtc().toIso8601String(),
+          'mode': conv.mode,
         },
       );
       if ((res.statusCode ?? 0) >= 400) {
@@ -280,22 +359,99 @@ class ConversationSyncService {
     }
   }
 
+  /// Guarda exclusões até o servidor confirmá-las. Se estiver offline,
+  /// a próxima sincronização tentará novamente sem ressuscitar as mensagens.
   Future<void> deleteMessages(String conversationId, List<String> ids) async {
-    if (ids.isEmpty) return;
-    if (!await _hasGoogleSession()) return;
+    if (conversationId.isEmpty || ids.isEmpty) return;
+    if (IdentityService.instance.provider != 'google') return;
+    await _withDeleteQueue(() async {
+      final pending = await _readPendingMessageDeletes();
+      pending.putIfAbsent(conversationId, () => <String>{}).addAll(ids);
+      await _writePendingMessageDeletes(pending);
+    });
+    await _flushPendingMessageDeletes();
+  }
+
+  String get _pendingDeletesKey =>
+      '$_pendingDeletesPrefix${IdentityService.instance.userId}';
+
+  Future<Map<String, Set<String>>> _readPendingMessageDeletes() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pendingDeletesKey);
+    if (raw == null || raw.isEmpty) return <String, Set<String>>{};
     try {
-      final res = await _client().post(
-        '/conversations/$conversationId/messages/delete',
-        data: {'ids': ids},
-      );
-      if ((res.statusCode ?? 0) >= 400) {
-        debugPrint(
-          'delete remote messages $conversationId failed: ${res.statusCode} ${res.data}',
-        );
-      }
-    } catch (e) {
-      debugPrint('delete remote messages $conversationId: $e');
+      final json = jsonDecode(raw);
+      if (json is! Map) return <String, Set<String>>{};
+      return <String, Set<String>>{
+        for (final entry in json.entries)
+          if (entry.value is List)
+            entry.key.toString(): (entry.value as List)
+                .map((value) => value.toString())
+                .where((value) => value.isNotEmpty)
+                .toSet(),
+      };
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+      return <String, Set<String>>{};
     }
+  }
+
+  Future<void> _writePendingMessageDeletes(
+    Map<String, Set<String>> pending,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    pending.removeWhere((_, ids) => ids.isEmpty);
+    if (pending.isEmpty) {
+      await prefs.remove(_pendingDeletesKey);
+    } else {
+      await prefs.setString(
+        _pendingDeletesKey,
+        jsonEncode(pending.map((key, value) => MapEntry(key, value.toList()))),
+      );
+    }
+  }
+
+  /// Serializa alterações dos tombstones para duas exclusões simultâneas
+  /// nunca sobrescreverem uma à outra no SharedPreferences.
+  Future<void> _withDeleteQueue(Future<void> Function() action) {
+    final task = _pendingDeleteQueue.then((_) => action());
+    _pendingDeleteQueue = task.catchError((Object error, StackTrace stack) {
+      logSwallowed(error, stack);
+    });
+    return task;
+  }
+
+  Future<void> _flushPendingMessageDeletes() async {
+    if (!await _hasGoogleSession()) return;
+    await _withDeleteQueue(() async {
+      final pending = await _readPendingMessageDeletes();
+      for (final entry in pending.entries.toList()) {
+        final remaining = pending[entry.key];
+        if (remaining == null || remaining.isEmpty) continue;
+        // A API aceita até 500 IDs por chamada.
+        while (remaining.isNotEmpty) {
+          final batch = remaining.take(500).toList();
+          try {
+            final res = await _client().post(
+              '/conversations/${Uri.encodeComponent(entry.key)}/messages/delete',
+              data: {'ids': batch},
+            );
+            final status = res.statusCode ?? 0;
+            if ((status < 200 || status >= 300) && status != 404) {
+              debugPrint('pending deletes ${entry.key}: HTTP $status');
+              break;
+            }
+            // 404: a conversa já não existe no servidor; não há mensagem
+            // remota que precise ser excluída.
+            remaining.removeAll(batch);
+            await _writePendingMessageDeletes(pending);
+          } catch (error, stack) {
+            logSwallowed(error, stack);
+            break;
+          }
+        }
+      }
+    });
   }
 
   Map<String, dynamic> _messagePayload(Message m) => {
@@ -320,37 +476,115 @@ class ConversationSyncService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> _pullRemote() async {
+  /// Busca mudanças em uma única requisição. O fallback é para instalações
+  /// ainda usando a API da Fase 2: elas continuam sincronizando normalmente.
+  Future<_RemoteSyncDelta> _pullRemoteChanges(Map<String, String> known) async {
+    final response = await _client().post(
+      '/conversations/sync/pull',
+      data: {'known': known},
+    );
+    final status = response.statusCode ?? 0;
+    if (status == 404 || status == 405) {
+      return _pullRemoteChangesLegacy(known);
+    }
+    if (status < 200 || status >= 300 || response.data is! Map) {
+      throw StateError('Falha na sincronização incremental: HTTP $status');
+    }
+    final body = Map<String, dynamic>.from(response.data as Map);
+    final changed = parseRemoteConversations(status, body);
+    final rawRevisions = body['revisions'];
+    if (rawRevisions is! Map ||
+        rawRevisions.values.any((value) => value is! String)) {
+      throw const FormatException('Revisões ausentes na resposta da API');
+    }
+    return _RemoteSyncDelta(
+      changed,
+      rawRevisions.map(
+        (key, value) => MapEntry(key.toString(), value.toString()),
+      ),
+    );
+  }
+
+  Future<_RemoteSyncDelta> _pullRemoteChangesLegacy(
+    Map<String, String> known,
+  ) async {
     final res = await _client().get(
       '/conversations',
-      queryParameters: {'full': true},
+      queryParameters: {'full': false},
     );
-    final code = res.statusCode ?? 0;
-    if (code >= 400) {
-      debugPrint('pull conversations failed: $code ${res.data}');
-      return const [];
+    final index = parseRemoteConversations(res.statusCode, res.data);
+    final revisions = <String, String>{};
+    final changed = <Map<String, dynamic>>[];
+    for (final summary in index) {
+      final id = (summary['id'] ?? '').toString();
+      if (id.isEmpty) continue;
+      final revision = (summary['syncRevision'] ?? '').toString();
+      if (ConversationSyncPlanner.shouldDownload(
+        revision: revision,
+        lastSeenRevision: known[id],
+        existsLocally: known.containsKey(id),
+      )) {
+        changed.add(await _pullSingleConversation(id));
+      }
+      if (revision.isNotEmpty) revisions[id] = revision;
     }
-    final data = res.data is Map
-        ? Map<String, dynamic>.from(res.data as Map)
-        : <String, dynamic>{};
-    final list = data['conversations'] as List<dynamic>? ?? [];
-    return list
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
+    return _RemoteSyncDelta(changed, revisions);
+  }
+
+  Future<Map<String, dynamic>> _pullSingleConversation(String id) async {
+    final res = await _client().get(
+      '/conversations/${Uri.encodeComponent(id)}',
+    );
+    final status = res.statusCode ?? 0;
+    if (status < 200 || status >= 300 || res.data is! Map) {
+      throw StateError('Falha ao baixar conversa $id: HTTP $status');
+    }
+    final result = Map<String, dynamic>.from(res.data as Map);
+    if (result['id']?.toString() != id || result['messages'] is! List) {
+      throw const FormatException('Conversa remota incompleta');
+    }
+    return result;
+  }
+
+  /// Testável sem login: falhas de HTTP ou respostas malformadas não podem
+  /// ser tratadas como lista vazia (sincronização concluída com sucesso).
+  static List<Map<String, dynamic>> parseRemoteConversations(
+    int? statusCode,
+    dynamic payload,
+  ) {
+    final code = statusCode ?? 0;
+    if (code < 200 || code >= 300) {
+      throw StateError('Falha ao receber conversas: HTTP $code');
+    }
+    if (payload is! Map) {
+      throw const FormatException('Resposta de sincronização inválida');
+    }
+    final data = Map<String, dynamic>.from(payload);
+    if (data['conversations'] is! List) {
+      throw const FormatException('Lista de conversas ausente na resposta');
+    }
+    final list = data['conversations'] as List<dynamic>;
+    if (list.any((item) => item is! Map)) {
+      throw const FormatException('Conversa inválida no payload remoto');
+    }
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
   }
 
   Future<void> _mergeRemoteIntoLocal(List<Map<String, dynamic>> remote) async {
     final local = ConversationService.instance;
+    final pendingDeletes = await _readPendingMessageDeletes();
     for (final r in remote) {
       final id = (r['id'] ?? '').toString();
       if (id.isEmpty) continue;
 
       final remoteUpdated = _parseDate(r['updatedAt'] ?? r['updated_at']);
       final existing = local.conversationById(id);
-      final deletedIds = (r['deletedMessageIds'] as List<dynamic>? ?? const [])
-          .map((value) => value.toString())
-          .toSet();
+      final deletedIds = <String>{
+        ...(r['deletedMessageIds'] as List<dynamic>? ?? const []).map(
+          (value) => value.toString(),
+        ),
+        ...?pendingDeletes[id],
+      };
 
       if (existing != null) {
         final locallyDeleted = local
@@ -360,8 +594,8 @@ class ConversationSyncService {
         if (locallyDeleted.isNotEmpty) {
           await local.deleteMessages(locallyDeleted, sync: false);
         }
-        // Local mais novo → não sobrescreve; será enviado no push
-        if (existing.updatedAt.isAfter(remoteUpdated)) continue;
+        // Mesmo se o local for mais novo, importa mensagens novas de outros
+        // aparelhos; os campos conflitantes são resolvidos pelo updatedAt.
       }
 
       final title = (r['title'] ?? 'Nova conversa').toString();
@@ -375,6 +609,7 @@ class ConversationSyncService {
         title: title,
         isPinned: isPinned,
         mode: mode,
+        modeProvided: r.containsKey('mode'),
         createdAt: createdAt,
         updatedAt: remoteUpdated,
         messages: [
@@ -407,12 +642,36 @@ class ConversationSyncService {
     }
   }
 
-  Future<void> _pushLocalToRemote() async {
+  Future<Map<String, String>> _pushChangedLocalToRemote(
+    Map<String, String> previouslyUploaded,
+    Map<String, String> revisions,
+  ) async {
     final local = ConversationService.instance;
     final all = [...local.pinnedConversations, ...local.recentConversations];
-    for (final c in all) {
-      await pushConversation(c.id);
+    final uploaded = <String, String>{};
+    for (final conv in all) {
+      final messages = local.getMessages(conv.id);
+      if (messages.isEmpty) continue;
+      final digest = ConversationSyncPlanner.snapshotHash(
+        id: conv.id,
+        title: conv.title,
+        isPinned: conv.isPinned,
+        mode: conv.mode,
+        updatedAt: conv.updatedAt.toUtc().toIso8601String(),
+        messages: [for (final msg in messages) _messagePayload(msg)],
+      );
+      if (ConversationSyncPlanner.shouldUpload(
+        snapshot: digest,
+        lastUploadedSnapshot: previouslyUploaded[conv.id],
+      )) {
+        // Esta operação continua usando o merge por ID + tombstones
+        // implementado na Fase 1; uma falha cancela o checkpoint.
+        final revision = await pushConversation(conv.id, reportFailure: true);
+        if (revision != null) revisions[conv.id] = revision;
+      }
+      uploaded[conv.id] = digest;
     }
+    return uploaded;
   }
 
   static DateTime _parseDate(dynamic value) {
@@ -430,8 +689,15 @@ class ConversationSyncService {
     if (s.isEmpty) return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
     try {
       return DateTime.parse(s).toUtc();
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
     }
   }
+}
+
+class _RemoteSyncDelta {
+  final List<Map<String, dynamic>> changed;
+  final Map<String, String> revisions;
+  const _RemoteSyncDelta(this.changed, this.revisions);
 }

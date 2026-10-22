@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../utils/error_logger.dart';
+
 /// Agendamento local dos lembretes salvos na tela Agendado.
 /// As notificações não dependem do backend nem de o PC estar ligado.
 class LocalNotificationService {
@@ -42,7 +44,8 @@ class LocalNotificationService {
     try {
       final zone = await FlutterTimezone.getLocalTimezone();
       tz.setLocalLocation(tz.getLocation(zone.identifier));
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       // Fallback UTC: o agendamento continua válido caso o SO não exponha
       // o identificador de fuso por algum motivo.
       tz.setLocalLocation(tz.getLocation('UTC'));
@@ -89,7 +92,8 @@ class LocalNotificationService {
             true;
       }
       return true;
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return false;
     }
   }
@@ -172,7 +176,8 @@ class LocalNotificationService {
     final List<dynamic> reminders;
     try {
       reminders = raw == null ? <dynamic>[] : jsonDecode(raw) as List<dynamic>;
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return;
     }
 

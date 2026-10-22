@@ -6,6 +6,7 @@ import '../services/auth_service.dart';
 import '../services/identity_service.dart';
 import '../services/memory_service.dart';
 import 'home_screen.dart';
+import '../utils/error_logger.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -43,7 +44,9 @@ class _LoginScreenState extends State<LoginScreen> {
         // Unifica memória legada (google_<id>) → google_email_* entre Android/Windows
         try {
           await MemoryService().migrateIfNeeded();
-        } catch (_) {}
+        } catch (error, stack) {
+          logSwallowed(error, stack);
+        }
         await _goHome();
       } else {
         setState(() {

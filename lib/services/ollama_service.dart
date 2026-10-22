@@ -12,6 +12,7 @@ import 'location_service.dart';
 import 'settings_service.dart';
 import 'plugin_settings_service.dart';
 import 'context_manager.dart';
+import '../utils/error_logger.dart';
 
 class ChatStreamEvent {
   final String? token;
@@ -90,9 +91,7 @@ ChatApiException _friendlyDioException(DioException error) {
             : serverDetail);
   if (status == 401) {
     return ChatApiException(
-      boundedDetail ??
-          error.message ??
-          'A sessão Google expirou ou não pôde ser renovada. Entre novamente e tente de novo.',
+      boundedDetail ?? error.message ?? 'A sessão Google expirou ou não pôde ser renovada. Entre novamente e tente de novo.',
       retryable: false,
     );
   }
@@ -148,7 +147,8 @@ Future<ChatApiException> _friendlyDioExceptionAsync(DioException error) async {
       dynamic decoded;
       try {
         decoded = jsonDecode(body);
-      } catch (_) {
+      } catch (error, stack) {
+        logSwallowed(error, stack);
         decoded = body;
       }
       final response = error.response;
@@ -171,7 +171,9 @@ Future<ChatApiException> _friendlyDioExceptionAsync(DioException error) async {
           ),
         );
       }
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
   }
   return _friendlyDioException(error);
 }
@@ -222,7 +224,8 @@ class OllamaService {
       final title = (response.data as Map)['title']?.toString().trim();
       if (title == null || title.isEmpty) return null;
       return title;
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return null;
     }
   }
@@ -271,7 +274,8 @@ class OllamaService {
       return data['ollama'] == 'online' ||
           data['llm'] == 'online' ||
           data['status'] == 'ok';
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return false;
     }
   }
@@ -286,7 +290,8 @@ class OllamaService {
           sendTimeout: const Duration(seconds: 5),
         ),
       );
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       // Cancelamento local continua funcionando se o backend estiver offline.
     }
   }
@@ -314,6 +319,7 @@ class OllamaService {
     ).hasMatch(text);
     return !namesAnotherPlace;
   }
+
   Stream<ChatStreamEvent> chatStream({
     required List<Message> messages,
     String? model,
@@ -367,7 +373,8 @@ class OllamaService {
 
       final locationRequest = _latestUserMessageText(messages);
       if (!isOficina && _requestNeedsCurrentLocation(locationRequest)) {
-        final location = await LocationService.instance.currentLocationContext();
+        final location = await LocationService.instance
+            .currentLocationContext();
         if (location != null) {
           requestMessages.insert(0, {
             'role': 'system',
@@ -413,40 +420,51 @@ class OllamaService {
         throw Exception('Resposta de stream inválida da API');
       }
 
-      final lines = utf8.decoder.bind(body.stream);
-      var buffer = '';
-
-      await for (final chunk in lines) {
-        buffer += chunk;
-        final parts = buffer.split('\n');
-        buffer = parts.removeLast();
-
-        for (final line in parts) {
-          final trimmed = line.trim();
-          if (trimmed.isEmpty) continue;
-          await for (final event in _parseLine(trimmed)) {
-            yield event;
-            if (event.done) return;
-          }
-        }
-      }
-
-      final last = buffer.trim();
-      if (last.isNotEmpty) {
-        await for (final event in _parseLine(last)) {
-          yield event;
-          if (event.done) return;
-        }
-      }
+      yield* decodeNdjson(body.stream);
     } on DioException catch (e) {
       throw await _friendlyDioExceptionAsync(e);
     } on ChatApiException {
       rethrow;
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       throw const ChatApiException(
         'Ocorreu um erro ao receber a resposta. Tente novamente.',
       );
     }
+  }
+
+  /// Decodifica NDJSON e exige o marcador explícito de conclusão da API.
+  /// Se a rede cair depois de alguns tokens, o texto parcial é preservado
+  /// pelo ChatScreen como falha recuperável, e não como resposta completa.
+  /// Público apenas para permitir testes com chunks de rede simulados.
+  Stream<ChatStreamEvent> decodeNdjson(Stream<List<int>> bytes) async* {
+    final lines = utf8.decoder.bind(bytes);
+    var buffer = '';
+
+    Stream<ChatStreamEvent> decodeLine(String line) => _parseLine(line.trim());
+
+    await for (final chunk in lines) {
+      buffer += chunk;
+      final parts = buffer.split('\n');
+      buffer = parts.removeLast();
+      for (final line in parts) {
+        if (line.trim().isEmpty) continue;
+        await for (final event in decodeLine(line)) {
+          yield event;
+          if (event.done) return;
+        }
+      }
+    }
+    if (buffer.trim().isNotEmpty) {
+      await for (final event in decodeLine(buffer)) {
+        yield event;
+        if (event.done) return;
+      }
+    }
+    throw const ChatApiException(
+      'A conexão foi interrompida antes de a Gama concluir a resposta. '
+      'O texto recebido foi preservado; você pode tentar novamente.',
+    );
   }
 
   Stream<ChatStreamEvent> _parseLine(String trimmed) async* {
@@ -455,7 +473,8 @@ class OllamaService {
       final decoded = jsonDecode(trimmed);
       if (decoded is! Map) return;
       json = Map<String, dynamic>.from(decoded);
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       // Linhas auxiliares/eventuais keep-alives não são mensagens visíveis.
       return;
     }

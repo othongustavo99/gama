@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import '../core/gama_colors.dart';
+import '../services/identity_service.dart';
+import 'gama_orb.dart';
 import '../models/oficina_kind.dart';
 import '../services/attachment_service.dart';
 
@@ -9,6 +12,7 @@ enum EmptySuggestionAction {
   explain,
   brainstorm,
   summarizeAttachment,
+  describeAttachment,
   analyzeAttachment,
   extractTasks,
   editAttachment,
@@ -21,11 +25,13 @@ class EmptyState extends StatelessWidget {
   final void Function(EmptySuggestionAction action, String text) onSuggestion;
   final OficinaKind? oficinaKind;
   final List<AttachmentKind> attachmentKinds;
+  final ValueListenable<TextEditingValue>? draft;
 
   const EmptyState({
     super.key,
     required this.onSuggestion,
     required this.attachmentKinds,
+    this.draft,
     this.oficinaKind,
   });
 
@@ -45,7 +51,7 @@ class EmptyState extends StatelessWidget {
       case null:
         return switch (_attachmentKind) {
           AttachmentKind.image => const [
-            EmptySuggestionAction.analyzeAttachment,
+            EmptySuggestionAction.describeAttachment,
             EmptySuggestionAction.analyzeAttachment,
             EmptySuggestionAction.editAttachment,
           ],
@@ -215,7 +221,19 @@ class EmptyState extends StatelessWidget {
       case OficinaKind.programar:
         return oficinaKind!.emptyHeadline;
       case null:
-        return 'Sua assistente virtual';
+        final hour = DateTime.now().hour;
+        final hello = hour < 12
+            ? 'Bom dia'
+            : hour < 18
+            ? 'Boa tarde'
+            : 'Boa noite';
+        final name = IdentityService.instance.displayName
+            .trim()
+            .split(' ')
+            .first;
+        return name.isEmpty || name.toLowerCase() == 'usuário'
+            ? '$hello!'
+            : '$hello, $name';
     }
   }
 
@@ -255,43 +273,7 @@ class EmptyState extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                width: 94,
-                height: 94,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      context.gama.surfaceHover,
-                      context.gama.surfaceCard,
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(30),
-                  border: Border.all(color: context.gama.border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: context.gama.accent.withValues(alpha: 0.12),
-                      blurRadius: 36,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-                child: oficinaKind == null
-                    ? Image.asset(
-                        'assets/images/image3.png',
-                        fit: BoxFit.contain,
-                      )
-                    : Hero(
-                        tag: 'oficina-icon-${oficinaKind!.chatMode}',
-                        child: Icon(
-                          oficinaKind!.icon,
-                          size: 52,
-                          color: oficinaKind!.color(context.gama),
-                        ),
-                      ),
-              ),
+              GamaOrb(size: oficinaKind == null ? 128 : 106),
               const SizedBox(height: 22),
               Container(
                 padding: const EdgeInsets.symmetric(
@@ -321,15 +303,25 @@ class EmptyState extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 15),
-              Text(
-                _headline,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: context.gama.textPrimary,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.8,
-                  height: 1.12,
+              ShaderMask(
+                blendMode: BlendMode.srcIn,
+                shaderCallback: (bounds) => LinearGradient(
+                  colors: [
+                    context.gama.accentBright,
+                    context.gama.textPrimary,
+                    context.gama.accentCool,
+                  ],
+                ).createShader(bounds),
+                child: Text(
+                  _headline,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 27,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.8,
+                    height: 1.12,
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
@@ -343,80 +335,49 @@ class EmptyState extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 27),
-              ..._activeSuggestions.asMap().entries.map((entry) {
-                final index = entry.key;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Material(
-                    color: context.gama.surfaceCard,
-                    borderRadius: BorderRadius.circular(18),
-                    child: InkWell(
-                      onTap: () =>
-                          onSuggestion(_activeActions[index], entry.value),
-                      borderRadius: BorderRadius.circular(18),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.fromLTRB(13, 13, 14, 13),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: context.gama.borderSoft),
-                        ),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 42,
-                              height: 42,
-                              decoration: BoxDecoration(
-                                color: context.gama.accentSoft,
-                                borderRadius: BorderRadius.circular(13),
-                              ),
-                              child: Icon(
-                                _activeIcons[index],
-                                color: context.gama.accentBright,
-                                size: 20,
-                              ),
-                            ),
-                            const SizedBox(width: 13),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _activeTitles[index],
-                                    style: TextStyle(
-                                      color: context.gama.textPrimary,
-                                      fontSize: 13.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    _activeDescriptions[index],
-                                    style: TextStyle(
-                                      color: context.gama.textMuted,
-                                      fontSize: 12,
-                                      height: 1.35,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Icon(
-                              Icons.arrow_forward_rounded,
-                              color: context.gama.textMuted,
-                              size: 18,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }),
+              if (draft == null)
+                _suggestionChips(context)
+              else
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: draft!,
+                  builder: (context, value, _) => value.text.trim().isEmpty
+                      ? _suggestionChips(context)
+                      : const SizedBox.shrink(),
+                ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _suggestionChips(BuildContext context) {
+    final g = context.gama;
+    return Wrap(
+      spacing: 9,
+      runSpacing: 10,
+      alignment: WrapAlignment.center,
+      children: [
+        for (var i = 0; i < _activeSuggestions.length; i++)
+          ActionChip(
+            tooltip: _activeDescriptions[i],
+            avatar: Icon(_activeIcons[i], size: 17, color: g.accentBright),
+            label: Text(_activeTitles[i]),
+            onPressed: () =>
+                onSuggestion(_activeActions[i], _activeSuggestions[i]),
+            padding: const EdgeInsets.fromLTRB(9, 11, 13, 11),
+            labelStyle: TextStyle(
+              color: g.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+            side: BorderSide(color: g.border),
+            backgroundColor: g.surfaceCard,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+          ),
+      ],
     );
   }
 }

@@ -8,6 +8,7 @@ import '../core/gama_colors.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/local_notification_service.dart';
 import '../services/plugin_settings_service.dart';
+import '../utils/error_logger.dart';
 
 class _Reminder {
   final String id;
@@ -68,7 +69,9 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
             .whereType<Map>()
             .map((e) => _Reminder.fromJson(Map<String, dynamic>.from(e)))
             .toList();
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
     }
     list.sort((a, b) => a.when.compareTo(b.when));
     if (!mounted) return;
@@ -95,7 +98,9 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
       await LocalNotificationService.instance.syncSavedReminders(
         enabled: enabled,
       );
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
   }
 
   Future<void> _persist() async {
@@ -247,7 +252,9 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
           when: r.when,
         );
       }
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
   }
 
   Future<void> _remove(_Reminder r) async {
@@ -255,7 +262,9 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
     await _persist();
     try {
       await LocalNotificationService.instance.cancel(r.id);
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
   }
 
   static String _fmt(DateTime d) {

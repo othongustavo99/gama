@@ -15,6 +15,7 @@ import 'services/conversation_service.dart';
 import 'services/conversation_sync_service.dart';
 import 'services/settings_service.dart';
 import 'services/identity_service.dart';
+import 'services/temporary_file_service.dart';
 
 const _gamaDarkSystemUiOverlayStyle = SystemUiOverlayStyle(
   statusBarColor: Color(0xFF10141B),
@@ -51,6 +52,7 @@ Future<void> main() async {
     try {
       await Hive.close();
       await Hive.initFlutter();
+      await IdentityService.instance.init();
       await SettingsService.instance.init();
       await ConversationService.instance.init();
       startupError = null;
@@ -82,15 +84,19 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // A limpeza roda após o primeiro frame e jamais retarda a splash.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(TemporaryFileService.instance.cleanupAbandonedFiles());
+    });
     unawaited(ConversationSyncService.instance.syncPendingGenerations());
-    _pendingGenerationSyncTimer = Timer.periodic(
-      const Duration(seconds: 15),
-      (_) {
-        if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
-          unawaited(ConversationSyncService.instance.syncPendingGenerations());
-        }
-      },
-    );
+    _pendingGenerationSyncTimer = Timer.periodic(const Duration(seconds: 15), (
+      _,
+    ) {
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        unawaited(ConversationSyncService.instance.syncPendingGenerations());
+      }
+    });
   }
 
   @override
@@ -255,17 +261,9 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
           ],
           builder: (context, child) {
             final media = MediaQuery.of(context);
-            const overlayStyle = SystemUiOverlayStyle(
-              statusBarColor: Colors.transparent,
-              statusBarIconBrightness: Brightness.light,
-              systemNavigationBarColor: Colors.black,
-              systemNavigationBarIconBrightness: Brightness.light,
-              systemNavigationBarDividerColor: Colors.black,
-              systemNavigationBarContrastEnforced: false,
-            );
             final systemScale = media.textScaler.scale(1.0);
             return AnnotatedRegion<SystemUiOverlayStyle>(
-              value: overlayStyle,
+              value: _gamaDarkSystemUiOverlayStyle,
               child: MediaQuery(
                 data: media.copyWith(
                   textScaler: TextScaler.linear(systemScale * scale),

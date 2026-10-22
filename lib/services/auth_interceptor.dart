@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import '../core/constants.dart';
 import 'auth_service.dart';
 import 'identity_service.dart';
+import '../utils/error_logger.dart';
 
 /// Aplica os cabeçalhos comuns em cada requisição HTTP do app.
 /// O user id do cliente é apenas legado/diagnóstico; em produção, com
@@ -39,7 +40,8 @@ class GammaAuthInterceptor extends Interceptor {
       // Keep a server response (especially its useful 401 detail) so the
       // caller can distinguish an OAuth configuration issue from expiration.
       return error.response;
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       return null;
     }
   }
@@ -63,8 +65,7 @@ class GammaAuthInterceptor extends Interceptor {
     final detail = _serverDetail(response ?? error.response);
     return error.copyWith(
       response: response ?? error.response,
-      message: detail ??
-          'A sessão Google expirou ou não pôde ser renovada. Entre novamente e tente de novo.',
+      message: detail ?? 'A sessão Google expirou ou não pôde ser renovada. Entre novamente e tente de novo.',
     );
   }
 

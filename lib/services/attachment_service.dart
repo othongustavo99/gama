@@ -9,6 +9,7 @@ import '../core/constants.dart';
 import 'settings_service.dart';
 import 'identity_service.dart';
 import 'auth_interceptor.dart';
+import '../utils/error_logger.dart';
 
 enum AttachmentKind { text, zip, pdf, document, image, video, audio, other }
 
@@ -359,7 +360,8 @@ class AttachmentService {
         buf.writeln('```');
         total += content.length;
         files++;
-      } catch (_) {
+      } catch (error, stack) {
+        logSwallowed(error, stack);
         buf.writeln('\n(não leu: $name)');
       }
     }

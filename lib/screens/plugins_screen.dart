@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/gama_colors.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/plugin_settings_service.dart';
+import '../utils/error_logger.dart';
 
 /// Capacidade do sistema (ligada no backend ou local).
 class _Plugin {
@@ -130,7 +131,8 @@ class _PluginsScreenState extends State<PluginsScreen> {
           duration: const Duration(seconds: 2),
         ),
       );
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       if (mounted) setState(() => _toggles[id] = previous ?? true);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

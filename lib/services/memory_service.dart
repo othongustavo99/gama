@@ -4,6 +4,7 @@ import '../core/constants.dart';
 import 'auth_interceptor.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
+import '../utils/error_logger.dart';
 
 class MemoryFact {
   final String id;
@@ -84,7 +85,8 @@ class MemoryService {
         if (res.statusCode == 200) {
           // sucesso — continua tentando outras origens se houver
         }
-      } catch (_) {
+      } catch (error, stack) {
+        logSwallowed(error, stack);
         // silencioso: não bloqueia o app
       }
     }

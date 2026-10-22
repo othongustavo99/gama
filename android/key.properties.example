@@ -1,0 +1,7 @@
+# Copie para android/key.properties e substitua os valores.
+# NUNCA envie android/key.properties nem o arquivo .jks ao GitHub.
+# No Windows, use barras normais no caminho para evitar escapar barras invertidas.
+storeFile=C:/Users/SEU_USUARIO/gama-release.jks
+storePassword=COLOQUE_SUA_SENHA
+keyAlias=gama-release
+keyPassword=COLOQUE_SUA_SENHA

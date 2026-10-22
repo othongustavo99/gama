@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
+import '../widgets/gama_orb.dart';
 import '../services/auth_service.dart';
 import '../services/identity_service.dart';
 import 'home_screen.dart';
@@ -59,16 +60,7 @@ class _SplashScreenState extends State<SplashScreen> {
             bottom: 53,
             left: 0,
             right: 0,
-            child: Center(
-              child: SizedBox(
-                width: 30,
-                height: 30,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.6,
-                  color: context.gama.accent,
-                ),
-              ),
-            ),
+            child: Center(child: const GamaOrb(size: 84)),
           ),
         ],
       ),

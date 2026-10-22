@@ -13,6 +13,7 @@ import 'auth_service.dart';
 import 'auth_interceptor.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
+import '../utils/error_logger.dart';
 
 /// Salva texto ou imagens geradas no dispositivo (Android / Windows).
 class DownloadService {
@@ -29,7 +30,9 @@ class DownloadService {
           if (!await dl.exists()) await dl.create(recursive: true);
           return dl;
         }
-      } catch (_) {}
+      } catch (error, stack) {
+        logSwallowed(error, stack);
+      }
     }
     final docs = await getApplicationDocumentsDirectory();
     final dir = Directory(p.join(docs.path, 'GamaDownloads'));
@@ -146,7 +149,8 @@ class DownloadService {
         );
       }
       rethrow;
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       if (await partial.exists()) await partial.delete();
       rethrow;
     }
@@ -156,7 +160,9 @@ class DownloadService {
   Future<void> openPath(String path) async {
     try {
       await OpenFilex.open(path);
-    } catch (_) {}
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+    }
   }
 
   /// Opens a generated file through the platform's file-opening flow.
@@ -205,4 +211,3 @@ class DownloadService {
     await Clipboard.setData(ClipboardData(text: text));
   }
 }
-  

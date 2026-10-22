@@ -65,7 +65,6 @@ class SettingsService extends ChangeNotifier {
     return _prefs.getString(_keyFishVoiceId) ?? '';
   }
 
-
   double get fontScale {
     _ensureInitialized();
     final value = _prefs.getDouble(_keyFontScale) ?? 1.0;
@@ -112,7 +111,6 @@ class SettingsService extends ChangeNotifier {
     await _prefs.setString(_keyFishVoiceId, id.trim());
     notifyListeners();
   }
-
 
   Future<void> setFontScale(double value) async {
     _ensureInitialized();

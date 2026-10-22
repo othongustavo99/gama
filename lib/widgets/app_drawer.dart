@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
 import '../models/conversation.dart';
 import '../models/oficina_kind.dart';
@@ -9,6 +10,7 @@ import '../services/auth_service.dart';
 import '../screens/login_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/memory_screen.dart';
+import '../utils/error_logger.dart';
 
 class AppDrawer extends StatelessWidget {
   final VoidCallback onNewChat;
@@ -250,9 +252,8 @@ class AppDrawer extends StatelessWidget {
               label: 'Memória',
               onTap: () {
                 _close(context);
-                Navigator.of(
-                  context,
-                ).push(MaterialPageRoute(builder: (_) => const MemoryScreen()));
+                Navigator.of(context)
+                    .push(GamaPageRoute(builder: (_) => const MemoryScreen()));
               },
             ),
 
@@ -440,7 +441,7 @@ class AppDrawer extends StatelessWidget {
                   _close(context);
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                    GamaPageRoute(builder: (_) => const SettingsScreen()),
                   );
                 },
               ),
@@ -487,7 +488,8 @@ class AppDrawer extends StatelessWidget {
     _close(context);
     try {
       await AuthService.instance.signOut();
-    } catch (_) {
+    } catch (error, stack) {
+      logSwallowed(error, stack);
       await IdentityService.instance.signOutLocal();
     }
     if (!context.mounted) return;
