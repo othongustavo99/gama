@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -356,6 +357,14 @@ async def generate_image(
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(url, headers=headers, json=payload)
+
+            # O OpenRouter já apresentou "401 User not found" durante falhas
+            # transitórias na camada de autenticação. Repetimos uma vez, sem
+            # repetir erros permanentes ou qualquer chamada que já foi aceita.
+            if r.status_code == 401 and "user not found" in r.text.casefold():
+                await asyncio.sleep(0.6)
+                r = await client.post(url, headers=headers, json=payload)
+
             if r.status_code == 404 and not reference_images:
                 r = await client.post(
                     f"{settings.OPENROUTER_BASE_URL}/images/generations",
@@ -369,9 +378,26 @@ async def generate_image(
                 )
             if not r.is_success:
                 logger.warning("image gen fail %s: %s", r.status_code, r.text[:400])
+                if r.status_code == 401:
+                    detail = r.text.casefold()
+                    if "user not found" in detail:
+                        error = (
+                            "O OpenRouter recusou a autenticação da geração de imagem "
+                            "(HTTP 401: User not found). Confira se OPENROUTER_API_KEY "
+                            "no servidor é uma chave ativa da conta OpenRouter; se a "
+                            "chave estiver correta, tente novamente mais tarde."
+                        )
+                    else:
+                        error = (
+                            "O OpenRouter recusou a autenticação da geração de imagem "
+                            "(HTTP 401). Confira se OPENROUTER_API_KEY no servidor é "
+                            "uma chave ativa da conta OpenRouter."
+                        )
+                else:
+                    error = f"OpenRouter imagem HTTP {r.status_code}: {r.text[:240]}"
                 return {
                     "ok": False,
-                    "error": f"OpenRouter imagem HTTP {r.status_code}: {r.text[:240]}",
+                    "error": error,
                     "model": model_id,
                 }
             data = r.json()
