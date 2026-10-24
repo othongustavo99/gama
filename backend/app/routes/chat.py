@@ -827,6 +827,10 @@ async def chat(
     attachments_enabled = bool(plugin_flags.get("attachments", True))
     vision_enabled = bool(plugin_flags.get("vision", True))
     code_analyzer_enabled = bool(plugin_flags.get("code_analyzer", True))
+    # Modo ativo necessário tanto para o roteamento do modelo quanto para a
+    # Oficina. Sem essa definição, qualquer mensagem gera NameError em
+    # stream_with_meta(), inclusive uma saudação no modo Conversar.
+    chat_mode_raw = (request.chat_mode or "").strip().lower()
 
     if not request.messages:
         raise HTTPException(422, "messages vazio")
