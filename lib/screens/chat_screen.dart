@@ -96,6 +96,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Duration get _generationElapsed => _generationClock.value;
   String _imageAspectRatio = '1:1';
   String _imageStyle = 'Automático';
+  int _videoDuration = 5;
+  String _videoResolution = '480p';
+  String _videoAspectRatio = '16:9';
+  bool _videoGenerateAudio = true;
   String? _beforeImagePath;
   bool _isLoading = false;
   String _streamPhase = '';
@@ -1516,6 +1520,10 @@ class _ChatScreenState extends State<ChatScreen> {
       _voiceResponsePending ? 'Gamma ainda está respondendo' : _chatStatusLabel;
 
   String get _chatStatusLabel {
+    if (_streamPhase.startsWith('artifact_generating:')) {
+      final completed = _streamPhase.substring('artifact_generating:'.length);
+      return 'Gerando arquivos · $completed concluídos';
+    }
     switch (_streamPhase) {
       case 'searching':
         return _streamSearchQuery.isEmpty
@@ -1547,6 +1555,12 @@ class _ChatScreenState extends State<ChatScreen> {
         return 'Criando versão editada…';
       case 'video_improving':
         return 'Aprimorando vídeo…';
+      case 'artifact_preparing':
+        return 'Organizando arquivos solicitados…';
+      case 'artifact_generating':
+        return 'Gerando o conteúdo dos arquivos… · $_elapsedLabel';
+      case 'artifact_validating':
+        return 'Validando o pacote para download…';
       case 'thinking':
         return _generationElapsed.inSeconds < 3
             ? 'Analisando seu pedido…'
@@ -1576,6 +1590,9 @@ class _ChatScreenState extends State<ChatScreen> {
       'video_analyzing' => 'Analisou o vídeo',
       'video_editing' => 'Editou o vídeo',
       'video_improving' => 'Aprimorou o vídeo',
+      'artifact_preparing' => 'Preparou a entrega dos arquivos',
+      'artifact_generating' => 'Gerou arquivos',
+      'artifact_validating' => 'Validou o pacote gerado',
       _ => null,
     };
     if (label == null) return;
@@ -1698,25 +1715,34 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // Editar um turno antigo ainda cria um novo ramo linear: removem-se os turnos
-    // seguintes porque esta conversa ainda não modela ramificações completas.
-    final removed = List<Message>.from(_messages.skip(index));
-    await _service.deleteMessages(removed);
+    // Ramificação segura: preserva a conversa original e todos os turnos
+    // posteriores. O novo ramo recebe cópias das mensagens até a edição;
+    // ids novos garantem sincronização independente entre dispositivos.
+    final original = _service.conversationById(widget.conversationId);
+    final branch = await _service.createDetachedConversation(
+      title: 'Ramo · ${original?.title ?? 'Conversa'}',
+      mode: original?.mode,
+    );
+    await _service.copyMessagesToBranch(
+      sourceMessages: _messages.take(index).toList(),
+      targetConversationId: branch.id,
+    );
     if (!mounted) return;
-    setState(() {
-      for (final item in removed) {
-        _artifactsByMessageId.remove(item.id);
-        _sourcesByMessageId.remove(item.id);
-      }
-      _messages.removeRange(index, _messages.length);
-      _attachments
-        ..clear()
-        ..addAll(restored);
-      _attachmentProcessingFailed = false;
-      _chatErrorMessage = null;
-      _controller.text = edited.trim();
-    });
-    await _sendMessage();
+    if (restored.isNotEmpty) {
+      _snack('Ramo criado. Reanexe os arquivos do pedido editado antes de enviar.');
+    }
+    // Anexos não são transportados automaticamente para outro chat:
+    // o texto editado fica como rascunho, sem simular envio de anexos.
+    await Navigator.of(context).push(
+      GamaPageRoute<void>(
+        builder: (_) => ChatScreen(
+          conversationId: branch.id,
+          persistentSidebar: false,
+          oficinaKind: widget.oficinaKind,
+          initialPrompt: edited.trim(),
+        ),
+      ),
+    );
   }
 
   Future<void> _regenerateResponse(int assistantIndex) async {
@@ -2997,6 +3023,10 @@ class _ChatScreenState extends State<ChatScreen> {
         chatMode: resolvedChatMode,
         imageAspectRatio: oficina == OficinaKind.imagem ? _imageAspectRatio : null,
         imageStyle: oficina == OficinaKind.imagem ? _imageStyle : null,
+        videoDuration: oficina == OficinaKind.video ? _videoDuration : null,
+        videoResolution: oficina == OficinaKind.video ? _videoResolution : null,
+        videoAspectRatio: oficina == OficinaKind.video ? _videoAspectRatio : null,
+        videoGenerateAudio: oficina == OficinaKind.video ? _videoGenerateAudio : null,
         conversationId: widget.conversationId,
         assistantMessageId: assistantMessage.id,
       );
@@ -4899,6 +4929,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     },
               imageAspectRatio: _imageAspectRatio,
               imageStyle: _imageStyle,
+              videoDuration: _videoDuration,
+              videoResolution: _videoResolution,
+              videoAspectRatio: _videoAspectRatio,
+              videoGenerateAudio: _videoGenerateAudio,
+              onVideoDurationChanged: (v) => setState(() => _videoDuration = v),
+              onVideoResolutionChanged: (v) => setState(() => _videoResolution = v),
+              onVideoAspectRatioChanged: (v) => setState(() => _videoAspectRatio = v),
+              onVideoGenerateAudioChanged: (v) => setState(() => _videoGenerateAudio = v),
               onImageAspectRatioChanged: (value) =>
                   setState(() => _imageAspectRatio = value),
               onImageStyleChanged: (value) =>

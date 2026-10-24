@@ -334,6 +334,10 @@ class OllamaService {
     String? assistantMessageId,
     String? imageAspectRatio,
     String? imageStyle,
+    int? videoDuration,
+    String? videoResolution,
+    String? videoAspectRatio,
+    bool? videoGenerateAudio,
   }) async* {
     final selectedModel = model ?? SettingsService.instance.model;
     final dio = _client();
@@ -376,6 +380,14 @@ class OllamaService {
             'image_aspect_ratio': imageAspectRatio,
           if (chatMode == 'oficina_imagem' && imageStyle != null)
             'image_style': imageStyle,
+          if (chatMode == 'oficina_video' && videoDuration != null)
+            'video_duration': videoDuration,
+          if (chatMode == 'oficina_video' && videoResolution != null)
+            'video_resolution': videoResolution,
+          if (chatMode == 'oficina_video' && videoAspectRatio != null)
+            'video_aspect_ratio': videoAspectRatio,
+          if (chatMode == 'oficina_video' && videoGenerateAudio != null)
+            'video_generate_audio': videoGenerateAudio,
           if (conversationId != null && conversationId.isNotEmpty)
             'conversation_id': conversationId,
           if (assistantMessageId != null && assistantMessageId.isNotEmpty)

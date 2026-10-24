@@ -38,6 +38,14 @@ class ChatComposer extends StatelessWidget {
   final VoidCallback? onExitOficina;
   final String imageAspectRatio;
   final String imageStyle;
+  final int videoDuration;
+  final String videoResolution;
+  final String videoAspectRatio;
+  final bool videoGenerateAudio;
+  final ValueChanged<int>? onVideoDurationChanged;
+  final ValueChanged<String>? onVideoResolutionChanged;
+  final ValueChanged<String>? onVideoAspectRatioChanged;
+  final ValueChanged<bool>? onVideoGenerateAudioChanged;
   final ValueChanged<String>? onImageAspectRatioChanged;
   final ValueChanged<String>? onImageStyleChanged;
   final List<Widget> oficinaShortcuts;
@@ -67,6 +75,14 @@ class ChatComposer extends StatelessWidget {
     this.onExitOficina,
     this.imageAspectRatio = '1:1',
     this.imageStyle = 'Automático',
+    this.videoDuration = 5,
+    this.videoResolution = '480p',
+    this.videoAspectRatio = '16:9',
+    this.videoGenerateAudio = true,
+    this.onVideoDurationChanged,
+    this.onVideoResolutionChanged,
+    this.onVideoAspectRatioChanged,
+    this.onVideoGenerateAudioChanged,
     this.onImageAspectRatioChanged,
     this.onImageStyleChanged,
     this.oficinaShortcuts = const [],
@@ -231,6 +247,44 @@ class ChatComposer extends StatelessWidget {
                                         fontSize: 11,
                                       ),
                                     ),
+                                ],
+                              ),
+                            ),
+                          if (oficinaKind == OficinaKind.video)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Wrap(
+                                spacing: 7,
+                                runSpacing: 6,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  for (final seconds in const [5, 10, 15])
+                                    ChoiceChip(
+                                      label: Text('${seconds}s'),
+                                      selected: videoDuration == seconds,
+                                      onSelected: (_) => onVideoDurationChanged?.call(seconds),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  for (final res in const ['480p', '720p'])
+                                    ChoiceChip(
+                                      label: Text(res),
+                                      selected: videoResolution == res,
+                                      onSelected: (_) => onVideoResolutionChanged?.call(res),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  for (final ratio in const ['16:9', '9:16', '1:1'])
+                                    ChoiceChip(
+                                      label: Text(ratio),
+                                      selected: videoAspectRatio == ratio,
+                                      onSelected: (_) => onVideoAspectRatioChanged?.call(ratio),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  FilterChip(
+                                    label: const Text('Áudio'),
+                                    selected: videoGenerateAudio,
+                                    onSelected: onVideoGenerateAudioChanged,
+                                    visualDensity: VisualDensity.compact,
+                                  ),
                                 ],
                               ),
                             ),

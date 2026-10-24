@@ -384,6 +384,38 @@ class ConversationService extends ChangeNotifier {
     }
   }
 
+  /// Duplica o prefixo de uma conversa para um ramo independente. Não
+  /// altera nem exclui nenhuma mensagem da conversa de origem.
+  Future<void> copyMessagesToBranch({
+    required List<Message> sourceMessages,
+    required String targetConversationId,
+  }) async {
+    if (_conversationsBox.get(targetConversationId) == null) {
+      throw StateError('Ramo não encontrado');
+    }
+    for (final source in sourceMessages) {
+      final copy = Message(
+        id: const Uuid().v4(),
+        role: source.role,
+        content: source.content,
+        conversationId: targetConversationId,
+        timestamp: source.timestamp,
+        attachmentMetadataJson: source.attachmentMetadataJson,
+        variants: List<String>.from(source.variants),
+        selectedVariantIndex: source.selectedVariantIndex,
+        isTruncated: source.isTruncated,
+        sourcesJson: source.sourcesJson,
+        artifactsJson: source.artifactsJson,
+      );
+      await addMessage(copy, sync: false);
+    }
+    // Faz uma única sincronização com os metadados e o histórico completo.
+    // Evita publicar mensagens antes de existir a conversa remota.
+    if (sourceMessages.isNotEmpty) {
+      await ConversationSyncService.instance.pushConversation(targetConversationId);
+    }
+  }
+
   /// Remove um conjunto de mensagens e sincroniza a conversa uma única vez.
   /// Usado por editar/reenviar e regenerar a última resposta.
   Future<void> deleteMessages(

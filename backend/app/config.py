@@ -94,6 +94,12 @@ class Settings:
 
     VISION_MODEL = os.getenv("VISION_MODEL", _DEFAULT_MODEL).strip()
 
+    # Opcional: modelo barato para enriquecer briefings curtos de mídia.
+    GAMA_MEDIA_PROMPT_DIRECTOR_ENABLED = env_bool("GAMA_MEDIA_PROMPT_DIRECTOR_ENABLED", True)
+    GAMA_MEDIA_PROMPT_DIRECTOR_MODEL = os.getenv(
+        "GAMA_MEDIA_PROMPT_DIRECTOR_MODEL", "openai/gpt-5.4-nano"
+    ).strip()
+
     # Geração de vídeo assíncrona pela API de vídeos da OpenRouter.
     VIDEO_GEN_MODEL = os.getenv(
         "VIDEO_GEN_MODEL", "bytedance/seedance-2.0-mini"

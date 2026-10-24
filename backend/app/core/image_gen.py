@@ -291,11 +291,9 @@ def build_image_prompt(user_text: str, intent: Optional[ImageIntent] = None) -> 
             f"unless the user asked to change them. High quality, coherent result."
         )
 
-    # GENERATE (padrão)
-    return (
-        f"{cleaned}. High quality, detailed, coherent composition, "
-        f"natural lighting, no text overlays unless requested."
-    )
+    # GENERATE: não imponha iluminação natural, realismo ou ausência de texto.
+    # Um diretor opcional refina briefings curtos sem modificar o pedido original.
+    return cleaned
 
 
 def _clean_prompt(text: str, mode: str = "generate") -> str:

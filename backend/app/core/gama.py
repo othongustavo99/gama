@@ -214,6 +214,18 @@ class GamaCore:
             talk_layer=talk_layer if not oficina_mode else "",
             talk_mode=talk_mode if not oficina_mode else "",
             oficina_mode=oficina_mode,
+            artifacts_requested=bool(
+                re.search(r"(?i)\b(?:zip|pdf|download|arquivo\s+(?:para\s+)?baixar)\b", last_user or "")
+                and re.search(
+                    r"(?i)\b(?:crie|cria|criar|gere|gera|gerar|fa[cç]a|fazer|"
+                    r"envie|enviar|mande|mandar|devolva|devolver|me\s+d[eê]|"
+                    r"exporte|exportar|prepare|preparar|monte|montar|corrija|"
+                    r"corrigir|edite|editar|baixe|baixar|entregue|entregar)\b",
+                    last_user or "",
+                )
+                and not re.match(r"(?i)^\s*(?:como|o\s+que|explique|qual\s+o|ensine)", last_user or "")
+            ),
+            media_requested=oficina_mode in {"oficina_imagem", "oficina_video"},
         )
 
         # Resumo persistente da conversa (atualizado em background após cada resposta longa).

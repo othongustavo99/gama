@@ -32,10 +32,11 @@ from ..llm import LLMError
 from ..core.image_analyzer import analyze_images
 from ..core.document_builder import build_pdf, build_zip_from_files
 from ..core.file_bundle import chat_with_continuation, generate_files_per_file
-from ..core.conversation_session import load_session, session_key
+from ..core.conversation_session import load_session, save_session, session_key
 from ..core.code_analyzer.source_detector import parse_github_url
 from ..core.identity import current_user_id
 from ..core.media_quota import DailyQuotaExceeded, consume_daily_media_quota
+from ..core.media_prompt_director import refine_media_brief
 from ..core.video_gen import (
     VideoIntent,
     build_video_prompt,
@@ -1244,6 +1245,20 @@ async def chat(
                     if image_intent not in {ImageIntent.GENERATE, ImageIntent.EDIT, ImageIntent.IMPROVE}:
                         yield {"type": "result", "content": "Não identifiquei um pedido explícito de criar ou editar imagem. Peça essa ação diretamente para iniciar a geração."}
                         return
+                    previous_media = load_session(
+                        session_key(user_id, request.conversation_id, messages)
+                    ).get("last_image_request") or {}
+                    text_variation = bool(re.search(
+                        r"(?i)\b(?:outra\s+vers[aã]o|nova\s+vers[aã]o|varia[cç][aã]o|mais\s+escura?|mais\s+clara?)\b",
+                        last_user,
+                    ))
+                    if (image_intent in {ImageIntent.EDIT, ImageIntent.IMPROVE}
+                            and not has_image_refs and text_variation
+                            and previous_media.get("prompt")):
+                        # Só muda o briefing de uma nova imagem: sem pixels da
+                        # referência não se promete uma edição idêntica.
+                        image_intent = ImageIntent.GENERATE
+                        args["_variation_base"] = previous_media["prompt"]
                     if image_intent in {ImageIntent.EDIT, ImageIntent.IMPROVE} and not has_image_refs:
                         yield {"type": "result", "content": "Para editar ou melhorar, anexe a imagem de referência e envie o pedido novamente."}
                         return
@@ -1251,8 +1266,13 @@ async def chat(
                     # ser resumido pelo modelo ao preparar tool calls.
                     prompt = build_image_prompt(last_user, image_intent)[:8000]
                     image_style = str(getattr(request, "image_style", "") or "").strip()[:80]
+                    if args.get("_variation_base"):
+                        prompt = ("Partindo do briefing anterior: "
+                                  + str(args["_variation_base"])[:3200]
+                                  + "\nMudança solicitada agora: " + last_user[:1800])
                     if image_style and image_style.lower() not in {"automático", "automatico", "auto"}:
                         prompt += "\nEstilo solicitado: " + image_style + ". Preserve as demais instruções do usuário."
+                    prompt = await refine_media_brief(prompt, kind="image", style=image_style)
                     if not prompt:
                         yield {"type": "result", "content": "Descreva a imagem a gerar."}
                         return
@@ -1288,6 +1308,17 @@ async def chat(
                             "prompt": prompt[:200],
                         },
                     }
+                    try:
+                        key = session_key(user_id, request.conversation_id, messages)
+                        state = load_session(key)
+                        state["last_image_request"] = {
+                            "prompt": prompt[:4000],
+                            "aspect_ratio": request.image_aspect_ratio or args.get("aspect_ratio") or "1:1",
+                            "style": image_style,
+                        }
+                        save_session(state)
+                    except Exception:
+                        logger.warning("Unable to persist last image briefing")
                     yield {"type": "result", "content": "A imagem foi gerada e anexada à resposta."}
                     return
 
@@ -1345,6 +1376,14 @@ async def chat(
                             yield {"type": "result", "content": str(exc)}
                             return
                     options = parse_video_options(last_user)
+                    # Seletores estruturados da Oficina têm precedência sobre o
+                    # parser heurístico de texto e os argumentos do agente.
+                    is_video_office = chat_mode_raw == "oficina_video"
+                    selected_duration = (request.video_duration if is_video_office else None)
+                    selected_resolution = (request.video_resolution if is_video_office else None)
+                    selected_ratio = (request.video_aspect_ratio if is_video_office else None)
+                    selected_audio = (request.video_generate_audio if is_video_office else None)
+                    prompt = await refine_media_brief(prompt, kind="video")
                     stored_artifact = None
                     error = None
                     # Job salvo no Volume antes de chamar o provedor. Caso o
@@ -1355,12 +1394,13 @@ async def chat(
                     try:
                         async for event in generate_video_events(
                             prompt,
-                            duration=args.get("duration") or options["duration"],
-                            resolution=str(args.get("resolution") or options["resolution"]),
-                            aspect_ratio=str(args.get("aspect_ratio") or options["aspect_ratio"]),
+                            duration=selected_duration or args.get("duration") or options["duration"],
+                            resolution=str(selected_resolution or args.get("resolution") or options["resolution"]),
+                            aspect_ratio=str(selected_ratio or args.get("aspect_ratio") or options["aspect_ratio"]),
                             reference_images=refs or None,
                             reference_video_url=reference_video_url,
-                            generate_audio=bool(args.get("generate_audio", options["generate_audio"])),
+                            generate_audio=(selected_audio if selected_audio is not None
+                                            else bool(args.get("generate_audio", options["generate_audio"]))),
                         ):
                             if event.get("type") == "submitted":
                                 update_job(user_id, video_job_id,
@@ -1414,6 +1454,7 @@ async def chat(
                     file_format = str(args.get("format") or "zip").lower()
                     filename = str(args.get("filename") or ("gama_arquivo.pdf" if file_format == "pdf" else "gama_arquivos.zip"))[:120]
                     try:
+                        yield {"type": "phase", "phase": "artifact_preparing"}
                         if file_format == "pdf":
                             body = str(args.get("content") or "").strip()
                             if not body:
@@ -1434,6 +1475,7 @@ async def chat(
                                 file_messages = list(gama_messages or messages)
                                 instruction = str(args.get("instructions") or last_user).strip()
                                 file_messages.append({"role": "user", "content": f"Crie um ZIP com os arquivos completos pedidos. Instruções: {instruction[:4000]}"})
+                                yield {"type": "phase", "phase": "artifact_generating"}
                                 bundle = await _generate_files_for_download(
                                     model=active_model,
                                     prepared_messages=file_messages,
@@ -1443,6 +1485,7 @@ async def chat(
                             if not files:
                                 yield {"type": "result", "content": "Não consegui gerar arquivos válidos para o ZIP."}
                                 return
+                            yield {"type": "phase", "phase": "artifact_validating"}
                             built = build_zip_from_files(
                                 files,
                                 filename=filename if filename.lower().endswith(".zip") else f"{filename}.zip",
@@ -1624,6 +1667,8 @@ async def chat(
 
 
             # ── Arquivos para download a partir do bloco [[GAMA_FILES]] ──
+            if download_requested and not agent_file_created:
+                yield json.dumps({"gama_meta": {"phase": "artifact_preparing"}}, ensure_ascii=False) + "\n"
             try:
                 full_assistant = "".join(assistant_acc)
                 wants_zip = wants_zip_request
@@ -1646,6 +1691,7 @@ async def chat(
                     # dedicated, machine-readable file bundle when needed.
                     if (wants_zip or wants_pdf) and not files:
                         try:
+                            yield json.dumps({"gama_meta": {"phase": "artifact_generating"}}, ensure_ascii=False) + "\n"
                             bundle_text = await _generate_files_for_download(
                                 model=active_model,
                                 prepared_messages=gama_messages or messages,
@@ -1679,10 +1725,33 @@ async def chat(
                         if not files and (wants_zip or wants_pdf):
                             # Último recurso: um arquivo por chamada, em vez de um pacote gigante.
                             try:
-                                per_file = await generate_files_per_file(
+                                # Cada arquivo pode demandar uma chamada LLM demorada.
+                                # Emite progresso real por arquivo concluído, sem
+                                # inventar porcentagens nem exibir arquivo incompleto.
+                                progress_queue: asyncio.Queue[tuple[int, int, str]] = asyncio.Queue()
+                                task = asyncio.create_task(generate_files_per_file(
                                     _meta_chat_fn(active_model, app_settings.ARTIFACT_MAX_OUTPUT_TOKENS),
                                     _files_base_messages(gama_messages or messages, full_assistant),
-                                )
+                                    progress_callback=lambda n, total, path: progress_queue.put_nowait((n, total, path)),
+                                ))
+                                try:
+                                    while not task.done() or not progress_queue.empty():
+                                        try:
+                                            n, total, path = await asyncio.wait_for(progress_queue.get(), timeout=0.25)
+                                        except asyncio.TimeoutError:
+                                            continue
+                                        yield json.dumps({
+                                            "gama_meta": {
+                                                "phase": f"artifact_generating:{n}/{total}",
+                                                "files_completed": n,
+                                                "files_total": total,
+                                                "current_file": path[:120],
+                                            }
+                                        }, ensure_ascii=False) + "\n"
+                                    per_file = await task
+                                finally:
+                                    if not task.done():
+                                        task.cancel()
                                 if per_file["bundle"]:
                                     per_files = _filter_real_files(_parse_gama_files(per_file["bundle"]))
                                     if per_files:
@@ -1718,12 +1787,14 @@ async def chat(
                     artifact_meta = None
                     pdf_meta = None
                     if simple_flutter_files and wants_zip:
+                        yield json.dumps({"gama_meta": {"phase": "artifact_validating"}}, ensure_ascii=False) + "\n"
                         artifact_meta = build_zip_from_files(
                             simple_flutter_files,
                             filename="flutter_exemplo_simples.zip",
                             user_id=artifact_user,
                         )
                     elif files and (wants_zip or (not wants_pdf and "[[GAMA_FILES]]" in full_assistant)):
+                        yield json.dumps({"gama_meta": {"phase": "artifact_validating"}}, ensure_ascii=False) + "\n"
                         artifact_meta = _try_build_zip_from_assistant(
                             bundle_text,
                             user_id=artifact_user,

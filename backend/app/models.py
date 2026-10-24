@@ -33,6 +33,10 @@ class ChatRequest(BaseModel):
     # Preferências da Oficina e localização temporária (nunca credenciais).
     image_aspect_ratio: Optional[str] = None
     image_style: Optional[str] = None
+    video_duration: Optional[int] = Field(default=None, ge=4, le=15)
+    video_resolution: Optional[str] = None
+    video_aspect_ratio: Optional[str] = None
+    video_generate_audio: Optional[bool] = None
     location_context: Optional[str] = None
     # Capacidades selecionadas na tela Plugins do cliente. Chaves ausentes
     # preservam o comportamento padrão para clientes antigos.

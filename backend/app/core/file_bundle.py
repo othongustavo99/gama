@@ -104,6 +104,7 @@ def assemble_bundle(file_responses: list[str]) -> str:
 async def generate_files_per_file(
     chat_fn: ChatFn,
     base_messages: list[dict],
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, Any]:
     """Dois passos: lista os caminhos e gera cada arquivo em sua própria chamada.
 
@@ -116,23 +117,27 @@ async def generate_files_per_file(
 
     semaphore = asyncio.Semaphore(PER_FILE_CONCURRENCY)
     failed: list[str] = []
+    completed = 0
 
     async def _one(path: str) -> str:
+        nonlocal completed
         async with semaphore:
-            prompt = {"role": "user", "content": _FILE_PROMPT.format(path=path)}
-            result = await chat_with_continuation(chat_fn, base_messages + [prompt])
-            text = result["text"] or ""
-            # Aceita "path: X" ou heading markdown com o caminho
-            path_ok = (
-                f"path: {path}" in text
-                or f"path:{path}" in text
-                or f"`{path}`" in text
-                or f"# {path}" in text
-            )
-            if not path_ok:
-                failed.append(path)
-                return ""
-            return text
+            try:
+                prompt = {"role": "user", "content": _FILE_PROMPT.format(path=path)}
+                result = await chat_with_continuation(chat_fn, base_messages + [prompt])
+                text = result["text"] or ""
+                # Aceita "path: X" ou heading markdown com o caminho
+                path_ok = any(marker in text for marker in (
+                    f"path: {path}", f"path:{path}", f"`{path}`", f"# {path}",
+                ))
+                if not path_ok:
+                    failed.append(path)
+                    return ""
+                return text
+            finally:
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, len(paths), path)
 
     responses = await asyncio.gather(*(_one(p) for p in paths))
     return {
