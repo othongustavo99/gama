@@ -26,7 +26,7 @@ from typing import Any, AsyncIterator, Callable, Optional
 
 from ..config import settings
 from ..llm import LLMError
-from .memory import _stems, get_store, looks_sensitive
+from .memory import _stems, get_store, looks_sensitive, try_extract_memories, try_forget, fact_supported_by_user
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ def build_tools(
     image_enabled: bool = True,
     video_enabled: bool = True,
     file_enabled: bool = True,
+    memory_enabled: bool = True,
 ) -> list[dict]:
     def fn(name: str, desc: str, props: dict, required: list[str]) -> dict:
         return {
@@ -74,6 +75,9 @@ def build_tools(
            {"timezone": {"type": "string", "description": "fuso IANA, padrão America/Sao_Paulo"}}, []),
         fn("calculator", "Calcula uma expressão matemática com precisão (+ - * / // % ** , sqrt, log, sin, cos, tan, round, abs, min, max, pi, e).",
            {"expression": {"type": "string"}}, ["expression"]),
+    ]
+    if memory_enabled:
+        tools += [
         fn("remember",
            "Grava na memória de longo prazo um fato ESTÁVEL que o usuário acabou de revelar sobre si (ou uma regra de como ele quer ser atendido, prefixo 'Comportamento: '). "
            "Nunca grave senhas, chaves, documentos ou cartões.",
@@ -257,6 +261,31 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> tuple[str, di
         return f"Erro ao executar {name}: {str(exc)[:150]}", extras
 
 
+# Não confundir "como se cria um vídeo?" com "crie um vídeo".
+# Bloqueia apenas perguntas inequivocamente informativas; confirmações curtas
+# continuam liberadas para tarefas começadas em turnos anteriores.
+_INFO_ONLY = re.compile(
+    r"(?i)^\s*(?:me\s+)?(?:explique|explica|ensine|ensina|"
+    r"como\s+(?:eu\s+)?(?:fa[cç]o|crio|gero|edito|posso|criar|gerar|editar)|"
+    r"qual\s+(?:[ée]|a\s+diferen[cç]a)|quais\s+(?:s[aã]o|modelos)|"
+    r"o\s+que\s+(?:[ée]|acha)|vale\s+a\s+pena|"
+    r"analise|analisa|avalie|me\s+fale\s+sobre|how\s+to|what\s+is)\b"
+)
+
+
+def is_explanation_only(text: str) -> bool:
+    text = (text or "").strip()
+    if not text or len(text) > 1800:
+        return False
+    if not _INFO_ONLY.match(text):
+        return False
+    # "Explique e depois crie uma imagem" é um pedido genuíno de geração.
+    if re.search(r"(?i)\b(?:e\s+(?:depois\s+)?(?:crie|gere|fa[cç]a|edite|produza)|"
+                 r"tamb[eé]m\s+(?:crie|gere|fa[cç]a))\b", text):
+        return False
+    return True
+
+
 # --------------------------------------------------------------------------- loop
 
 async def run_agent(
@@ -271,13 +300,25 @@ async def run_agent(
     image_enabled: bool = True,
     video_enabled: bool = True,
     file_enabled: bool = True,
+    memory_enabled: bool = True,
     tool_handlers: Optional[dict[str, Callable[[dict], AsyncIterator[dict]]]] = None,
 ) -> AsyncIterator[dict]:
     """Eventos: phase | sources | token | memory_saved | memory_forgotten.
 
     Levanta ToolsUnsupported (antes de qualquer saída) se o modelo não aceitar tools.
     """
-    tools = build_tools(web_enabled, image_enabled=image_enabled, video_enabled=video_enabled, file_enabled=file_enabled)
+    tools = build_tools(
+        web_enabled, image_enabled=image_enabled, video_enabled=video_enabled,
+        file_enabled=file_enabled, memory_enabled=memory_enabled,
+    )
+    # Perguntas sobre COMO criar mídia/arquivos não são pedidos de geração.
+    # Follow-ups curtos mantêm as ferramentas para continuidade da tarefa.
+    if is_explanation_only(user_text):
+        tools = [tool for tool in tools if tool["function"]["name"] not in {
+            "generate_image", "generate_video", "create_file"
+        }]
+    if not try_forget(user_text):
+        tools = [tool for tool in tools if tool["function"]["name"] != "forget_memory"]
     msgs = llm.prepare_messages(messages)
     media_guidance = (
         "Interprete a intenção de entrega antes de responder. Se o pedido atual for uma ação explícita de criar, gerar, editar, melhorar ou alterar mídia/arquivo, use a ferramenta correspondente e preserve o briefing completo; pedidos de análise, opinião, explicação ou tutorial não autorizam geração. "
@@ -368,6 +409,18 @@ async def run_agent(
             else:
                 if c["name"] == "web_search":
                     yield {"type": "phase", "phase": "searching", "query": str(args.get("query") or "")[:200]}
+                # Nunca executar operação que não foi disponibilizada neste turno.
+                offered = {tool["function"]["name"] for tool in tools}
+                if c["name"] not in offered:
+                    result, extras = "Ferramenta não autorizada neste turno.", {}
+                    msgs.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+                    continue
+                if c["name"] == "remember" and not fact_supported_by_user(
+                    str(args.get("fact") or ""), user_text
+                ):
+                    result, extras = "Não gravei: fato não confirmado na fala atual do usuário.", {}
+                    msgs.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+                    continue
                 handler = (tool_handlers or {}).get(c["name"])
                 if handler:
                     result, extras = "", {}

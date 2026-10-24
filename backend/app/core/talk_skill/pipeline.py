@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from .mode import detect_talk_mode
+from .mode import detect_talk_mode, detect_response_depth
 from .prompts import (
     CONVERSATIONAL_LAYER,
     FOCUSED_LAYER,
@@ -47,8 +47,19 @@ def build_talk_layer(
     if voice_mode:
         parts.append(VOICE_LAYER)
 
+    depth = detect_response_depth(last_user, voice_mode=voice_mode)
+    if depth == "brief":
+        parts.append(
+            "PROFUNDIDADE DESTA RESPOSTA: concisa, responda primeiro ao essencial. "
+            "Não omita informações indispensáveis nem encurte código completo solicitado."
+        )
+    elif depth == "detailed":
+        parts.append(
+            "PROFUNDIDADE DESTA RESPOSTA: detalhada, cubra etapas, riscos, "
+            "exemplos e validação se forem pertinentes. Evite repetição."
+        )
     return mode, "\n\n".join(parts)
 
 
 # re-export para conveniência
-__all__ = ["build_talk_layer", "detect_talk_mode"]
+__all__ = ["build_talk_layer", "detect_talk_mode", "detect_response_depth"]

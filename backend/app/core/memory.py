@@ -517,7 +517,18 @@ class MemoryStore:
         pool = facts if facts is not None else [
             f for f in self.list_facts() if f["category"] not in CORE_CATEGORIES and f["category"] != "behavior"
         ]
-        if len(pool) <= self.INCLUDE_ALL_BELOW:
+        # Memórias pequenas seguem retrocompatíveis. Acima de 6 fatos,
+        # selecionar pelo assunto evita injetar detalhes pessoais sem utilidade
+        # a cada "oi"/pergunta sobre código. Perguntas explícitas sobre a
+        # própria memória continuam podendo recuperar o conjunto completo.
+        if len(pool) <= 6 or (
+            len(pool) <= self.INCLUDE_ALL_BELOW
+            and re.search(
+                r"(?i)(o que (?:voc[eê]|vc) (?:sabe|lembra).*(?:mim|sobre mim)|"
+                r"minhas mem[oó]rias|tudo (?:sobre|que sabe) (?:mim|de mim))",
+                query or "",
+            )
+        ):
             return sorted(pool, key=lambda f: (-f["importance"], f.get("created_at", "")))
 
         q = _stems(query)
@@ -540,7 +551,7 @@ class MemoryStore:
         scored.sort(key=lambda t: t[0], reverse=True)
 
         chosen = [f for _s, lex, f in scored if lex > 0][: self.RELEVANT_K]
-        baseline = [f for _s, _l, f in scored[:3] if f not in chosen]  # sempre alguns de maior valor
+        baseline = [f for _s, _l, f in scored[:2] if f not in chosen]  # pequenos lembretes estáveis
         return (chosen + baseline)[: self.RELEVANT_K]
 
     # ---- blocos de prompt ----------------------------------------------------
@@ -745,6 +756,8 @@ def try_extract_memories(user_text: str) -> List[str]:
         return []
     if text.count("```") >= 2 or text.startswith("Anexos para análise"):
         return []
+    if re.match(r"(?i)^(?:exemplo|hip[oó]tese|suponha|imagine|e se|em um exemplo)\s*[: ,]", text):
+        return []
     # perguntas nunca viram memória ("qual é o meu nome?")
     if _QUESTION_START.match(text) or text.rstrip().endswith("?"):
         return []
@@ -772,6 +785,41 @@ def try_extract_memories(user_text: str) -> List[str]:
         facts = _structured_facts(text)
 
     return [f for f in facts if not looks_sensitive(f)]
+
+
+_FIRST_PERSON_CLAIM = re.compile(
+    r"(?i)\b(?:eu|meu|minha|meus|minhas|sou|tenho|moro|vivo|"
+    r"prefiro|gosto|odeio|trabalho|estudo|chamo|nasci|"
+    r"lembre|memorize|guarde|grave|anote|salve|remember)\b"
+)
+
+
+def fact_supported_by_user(fact: str, user_text: str) -> bool:
+    """Barreira para extração por LLM/tools; evidência lexical, sem inferências.
+
+    Não é autorização para guardar dados sensíveis (validada em add_fact).
+    A gravação é conservadora: afirmações sem primeira pessoa ou pedido explícito
+    ficam fora da memória automática.
+    """
+    text = (user_text or "").strip()
+    fact = (fact or "").strip()
+    if not text or not fact or looks_sensitive(fact):
+        return False
+    if len(text) > 2000 or text.count("```") >= 2 or text.startswith("Anexos para análise"):
+        return False
+    if text.rstrip().endswith("?") or not _FIRST_PERSON_CLAIM.search(text):
+        return False
+    if try_forget(text):
+        return False
+    # Comportamento/fato gerado não pode inserir nome, localidade ou atributo
+    # sem evidência da mesma palavra na mensagem do usuário.
+    core = fact.split(":", 1)[-1]
+    fact_terms = _stems(core)
+    user_terms = _stems(text)
+    if not fact_terms or not user_terms:
+        return False
+    shared = len(fact_terms & user_terms)
+    return shared >= max(1, (len(fact_terms) + 1) // 2)
 
 
 def try_extract_memory(user_text: str) -> Optional[str]:
@@ -838,6 +886,9 @@ Regras rígidas:
 3. NÃO grave: resumo da conversa, código, perguntas, tarefas do dia, opiniões da IA.
 4. NÃO grave dados sensíveis (senhas, chaves, documentos, cartões).
 5. NÃO repita fatos já gravados (abaixo). Se não há nada novo e estável, responda exatamente [].
+6. Cada fato deve estar claramente afirmado pela própria pessoa na MENSAGEM DO USUÁRIO.
+   A resposta da assistente só dá contexto; não é fonte confiável para memória.
+   Ignore exemplos, hipóteses, texto citado, documentação e informações de terceiros.
 
 Fatos já gravados:
 {existing}
@@ -866,15 +917,17 @@ JSON array:"""
         out: List[Union[str, dict]] = []
         for item in data[:5]:
             if isinstance(item, str) and 3 <= len(item.strip()) <= 300:
-                out.append(item.strip())
+                if fact_supported_by_user(item, user_text):
+                    out.append(item.strip())
             elif isinstance(item, dict) and 3 <= len(str(item.get("text", "")).strip()) <= 300:
-                out.append(
-                    {
-                        "text": str(item["text"]).strip(),
-                        "category": item.get("category"),
-                        "importance": item.get("importance"),
-                    }
-                )
+                if fact_supported_by_user(str(item["text"]), user_text):
+                    out.append(
+                        {
+                            "text": str(item["text"]).strip(),
+                            "category": item.get("category"),
+                            "importance": item.get("importance"),
+                        }
+                    )
         return out
     except Exception:  # noqa: BLE001
         return []

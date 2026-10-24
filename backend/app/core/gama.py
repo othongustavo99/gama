@@ -188,8 +188,9 @@ class GamaCore:
             has_code_context=has_code_hint,
             has_project_context=has_project,
             has_web_block=bool(web_block),
-            # modelo leve (20b) favorece conversational se não houver tarefa técnica
-            force_mode=("conversational" if conversational_mode and not has_code_hint else None),
+            # O modo Conversar não impede respostas técnicas quando a pergunta
+            # é técnica. A Talk Skill avalia a intenção de cada turno.
+            force_mode=None,
         )
 
         system_prompt = build_system_prompt(

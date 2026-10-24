@@ -65,6 +65,17 @@ def detect_talk_mode(
     if _FOCUSED.search(text):
         return "focused"
 
+    # "sim", "manda", "continua" e "pode" são muitas vezes confirmações
+    # de uma tarefa técnica anterior. Não mude a intenção pela frase isolada.
+    if _SHORT_CASUAL.match(text) and messages:
+        earlier_users = [
+            str(m.get("content") or "")
+            for m in messages[-10:]
+            if m.get("role") == "user" and str(m.get("content") or "").strip() != text
+        ]
+        if any(_FOCUSED.search(old) or "```" in old for old in earlier_users[-3:]):
+            return "focused"
+
     if _CASUAL.search(text) or _SHORT_CASUAL.match(text):
         return "conversational"
 
@@ -99,3 +110,28 @@ def detect_talk_mode(
         return "conversational"
 
     return "focused"
+
+
+_DEPTH_DETAILED = re.compile(
+    r"(?i)\b(detalh(?:e|ado|adamente)|completo|a fundo|profundamente|passo a passo|"
+    r"an[aá]lise completa|explique tudo|tutorial|em profundidade|deep dive|in detail)\b"
+)
+_DEPTH_BRIEF = re.compile(
+    r"(?i)\b(resum[ao]|breve|curt[ao]|em poucas palavras|sem enrolar|"
+    r"direto ao ponto|bem r[aá]pido|s[oó] o essencial|tl;dr|succinct|briefly)\b"
+)
+
+
+def detect_response_depth(last_user: str, *, voice_mode: bool = False) -> str:
+    """Classificador conservador, sem chamada extra de modelo e sem custo adicional.
+
+    Retorna brief | detailed | normal. Preferência explícita sobre comprimento.
+    """
+    text = (last_user or "").strip()
+    if _DEPTH_DETAILED.search(text):
+        return "detailed"
+    if _DEPTH_BRIEF.search(text):
+        return "brief"
+    if voice_mode and len(text) < 160:
+        return "brief"
+    return "normal"

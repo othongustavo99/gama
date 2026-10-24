@@ -1481,6 +1481,7 @@ async def chat(
                         image_enabled=(bool(plugin_flags.get("image_gen", True)) and bool(getattr(app_settings, "IMAGE_GEN_ENABLED", True))),
                         video_enabled=(bool(plugin_flags.get("video_gen", True)) and bool(getattr(app_settings, "VIDEO_GEN_ENABLED", True))),
                         file_enabled=True,
+                        memory_enabled=memory_enabled,
                         tool_handlers={
                             "generate_image": agent_media_or_file_tool,
                             "generate_video": agent_media_or_file_tool,
