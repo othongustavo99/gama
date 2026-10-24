@@ -623,6 +623,22 @@ class MemoizedMessageContentView extends StatefulWidget {
       _MemoizedMessageContentViewState();
 }
 
+bool _sameGeneratedImages(
+  List<GeneratedImageData> previous,
+  List<GeneratedImageData> next,
+) {
+  if (identical(previous, next)) return true;
+  if (previous.length != next.length) return false;
+  for (var i = 0; i < previous.length; i++) {
+    if (previous[i].mime != next[i].mime ||
+        previous[i].filePath != next[i].filePath ||
+        previous[i].base64 != next[i].base64) {
+      return false;
+    }
+  }
+  return true;
+}
+
 class _MemoizedMessageContentViewState
     extends State<MemoizedMessageContentView> {
   late Widget _cachedContent = _createContent();
@@ -642,7 +658,8 @@ class _MemoizedMessageContentViewState
     if (oldWidget.content != widget.content ||
         oldWidget.isUser != widget.isUser ||
         oldWidget.referenceCode != widget.referenceCode ||
-        oldWidget.referenceLanguage != widget.referenceLanguage) {
+        oldWidget.referenceLanguage != widget.referenceLanguage ||
+        !_sameGeneratedImages(oldWidget.additionalImages, widget.additionalImages)) {
       _cachedContent = _createContent();
     }
   }
@@ -686,6 +703,7 @@ class _MarkdownMessage extends StatelessWidget {
       children: [
         for (var index = 0; index < parts.length; index++)
           _MarkdownPartView(
+            streaming: streaming,
             key: ValueKey(
               'message-part-$index-${parts[index].isCode}-${parts[index].isOpenCode}',
             ),
@@ -771,6 +789,7 @@ class _MarkdownMessage extends StatelessWidget {
 }
 
 class _MarkdownPartView extends StatefulWidget {
+  final bool streaming;
   final _CodePart part;
   final bool isUser;
   final String? referenceCode;
@@ -780,6 +799,7 @@ class _MarkdownPartView extends StatefulWidget {
 
   const _MarkdownPartView({
     super.key,
+    required this.streaming,
     required this.part,
     required this.isUser,
     this.referenceCode,
@@ -804,6 +824,7 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
         oldPart.language != newPart.language ||
         oldPart.isCode != newPart.isCode ||
         oldPart.isOpenCode != newPart.isOpenCode ||
+        oldWidget.streaming != widget.streaming ||
         oldWidget.isUser != widget.isUser ||
         oldWidget.textStyle != widget.textStyle ||
         oldWidget.referenceCode != widget.referenceCode ||
@@ -847,6 +868,13 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
       padding: const EdgeInsets.only(bottom: 2),
       child: MarkdownBody(
         data: MessageContentView._linkifyBareUrls(part.content),
+        // A resposta pode trazer links/imagens parciais. Não permita que
+        // o renderer padrão crie imagens gigantes ou decodifique data: URLs.
+        imageBuilder: (uri, title, alt) => _BoundedMarkdownImage(
+          uri: uri,
+          alt: alt,
+          streaming: widget.streaming,
+        ),
         inlineSyntaxes: [_TexMathInlineSyntax()],
         onTapLink: (linkText, href, title) {
           if (widget.onTapLink != null) {
@@ -873,6 +901,76 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
 
   @override
   Widget build(BuildContext context) => _cachedChild;
+}
+
+/// Mantém prévias de imagens do Markdown pequenas e previsíveis.
+/// Arquivos [gama_image_file] continuam usando o fluxo próprio de imagens.
+class _BoundedMarkdownImage extends StatelessWidget {
+  final Uri uri;
+  final String? alt;
+  final bool streaming;
+
+  const _BoundedMarkdownImage({
+    required this.uri,
+    required this.alt,
+    required this.streaming,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isRemote = uri.scheme == 'https' || uri.scheme == 'http';
+    final label = (alt ?? '').trim();
+
+    Widget status(String text, {IconData icon = Icons.image_outlined}) =>
+        Container(
+          height: 92,
+          constraints: const BoxConstraints(maxWidth: 340),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: context.gama.surfaceElevated,
+            border: Border.all(color: context.gama.borderSoft),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: context.gama.accent, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(text,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: context.gama.textSecondary, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        );
+
+    if (!isRemote) {
+      return status('Prévia não disponível para este endereço.');
+    }
+    if (streaming) {
+      return status(label.isEmpty
+          ? 'Imagem em preparação…'
+          : 'Imagem em preparação: $label');
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 340, maxHeight: 240),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          uri.toString(),
+          height: 220,
+          fit: BoxFit.contain,
+          loadingBuilder: (context, child, progress) => progress == null
+              ? child
+              : status('Carregando imagem…'),
+          errorBuilder: (_, __, ___) =>
+              status('Não foi possível carregar a imagem.'),
+        ),
+      ),
+    );
+  }
 }
 
 class _CodePart {

@@ -21,6 +21,7 @@ import '../core/gama_colors.dart';
 import 'voice_mode_screen.dart';
 import '../core/design_tokens.dart';
 import '../core/constants.dart';
+import '../core/image_reference_intent.dart';
 import '../models/message.dart';
 import '../models/oficina_kind.dart';
 import '../services/attachment_service.dart';
@@ -49,6 +50,7 @@ import '../utils/generation_session.dart';
 import '../utils/chat_history_window.dart';
 import '../utils/chat_scroll_policy.dart';
 import '../utils/chat_generation_clock.dart';
+import '../utils/stream_display_filter.dart';
 import 'package:flutter/rendering.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -118,6 +120,7 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime? _streamRevealFinishStarted;
   bool _messageKeyPruneScheduled = false;
   StringBuffer _streamRawText = StringBuffer();
+  final GamaStreamDisplayFilter _streamDisplayFilter = GamaStreamDisplayFilter();
   String _streamSearchQuery = '';
   bool _followStream = true;
   Timer? _voiceAutoSendTimer;
@@ -431,7 +434,10 @@ class _ChatScreenState extends State<ChatScreen> {
   // O texto original e a persistência não são modificados por este efeito.
   void _queueStreamText(String text) {
     _streamRawText.write(text);
-    if (text.isEmpty) return;
+    // Ferramentas retornam blocos internos grandes ([[GAMA_FILES]], base64).
+    // Eles precisam ser salvos, mas jamais renderizados como texto no chat.
+    final visible = _streamDisplayFilter.append(text);
+    if (visible.isEmpty) return;
     // Opção do sistema para reduzir movimento (TalkBack/acessibilidade).
     if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
       _streamRevealTimer?.cancel();
@@ -440,12 +446,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _streamRevealBudget = 0;
       final pending = String.fromCharCodes(_streamRevealQueue);
       _streamRevealQueue.clear();
-      _streamingText.value = '${_streamingText.value}$pending$text';
+      _streamingText.value = '${_streamingText.value}$pending$visible';
       if (_followStream) _scrollToBottom(followStream: true);
       return;
     }
 
-    _streamRevealQueue.addAll(text.runes);
+    _streamRevealQueue.addAll(visible.runes);
     if (_streamRevealTimer == null) {
       _streamRevealLastFrame = DateTime.now();
       _streamRevealBudget = 0;
@@ -708,24 +714,8 @@ class _ChatScreenState extends State<ChatScreen> {
     return match?.group(1)?.trim();
   }
 
-  bool _looksLikeImageEditRequest(String text) {
-    final hasEditAction = RegExp(
-      r'\b(edita|edite|editar|modifica|modifique|modificar|altera|altere|'
-      r'alterar|muda|mude|mudar|troca|troque|trocar|substitui|substitua|'
-      r'substituir|remove|remova|remover|retira|retire|retirar|adiciona|'
-      r'adicione|adicionar|inclui|inclua|incluir|transforma|transforme|'
-      r'transformar|varia|varie|variar|varia[cç][aã]o|vers[aã]o)\b',
-      caseSensitive: false,
-    ).hasMatch(text);
-    if (!hasEditAction) return false;
-
-    if (widget.oficinaKind == OficinaKind.imagem) return true;
-    return RegExp(
-      r'\b(imagem|foto|ilustra[cç][aã]o|desenho|arte|anterior|'
-      r'essa|este|esta|isso|aquilo|nela|nele|nessa|nesse|dela|dele)\b',
-      caseSensitive: false,
-    ).hasMatch(text);
-  }
+  bool _looksLikeImageEditRequest(String text) =>
+      ImageReferenceIntent.requiresPreviousImage(text);
 
   String? _latestGeneratedImagePath() {
     for (final message in _messages.reversed) {
@@ -1293,6 +1283,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _finishingStreamReveal = false;
       _streamRevealFinishStarted = null;
       _streamRawText = StringBuffer();
+      _streamDisplayFilter.reset();
       _streamingText.value = '';
       _streamSearchQuery = '';
       _isLoading = false;
@@ -2876,6 +2867,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _followStream = true;
     _streamSearchQuery = '';
     _streamRawText = StringBuffer();
+    _streamDisplayFilter.reset();
     _pendingGeneratedImages.clear();
     _assistantPersistence = null;
     _streamRevealTimer?.cancel();
@@ -5397,93 +5389,62 @@ class _BeforeAfterImageSliderState extends State<_BeforeAfterImageSlider> {
   );
 }
 
-class _ImageGenerationPlaceholder extends StatefulWidget {
+/// Indicador compacto: não ocupa uma tela inteira enquanto a imagem é gerada.
+/// Evita também ShaderMask sobre áreas grandes (inconsistente em alguns GPUs).
+class _ImageGenerationPlaceholder extends StatelessWidget {
   final String aspectRatio;
 
   const _ImageGenerationPlaceholder({required this.aspectRatio});
 
   @override
-  State<_ImageGenerationPlaceholder> createState() =>
-      _ImageGenerationPlaceholderState();
-}
-
-class _ImageGenerationPlaceholderState
-    extends State<_ImageGenerationPlaceholder>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1300),
-  );
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (MediaQuery.of(context).disableAnimations) {
-      _controller.stop();
-      _controller.value = 0.5;
-    } else if (!_controller.isAnimating) {
-      _controller.repeat();
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final ratio = switch (widget.aspectRatio) {
-      '16:9' => 16 / 9,
-      '9:16' => 9 / 16,
-      _ => 1.0,
-    };
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 360),
-      child: AspectRatio(
-        aspectRatio: ratio,
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, _) => DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              color: context.gama.surfaceCard,
-              border: Border.all(color: context.gama.border),
-            ),
-            child: ShaderMask(
-              shaderCallback: (bounds) => LinearGradient(
-                begin: Alignment(-1.5 + 3 * _controller.value, 0),
-                end: Alignment(-0.5 + 3 * _controller.value, 0),
-                colors: [
-                  Colors.white.withValues(alpha: 0.02),
-                  Colors.white.withValues(alpha: 0.22),
-                  Colors.white.withValues(alpha: 0.02),
-                ],
-              ).createShader(bounds),
-              blendMode: BlendMode.srcATop,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.auto_awesome_rounded,
-                      color: context.gama.accent,
-                      size: 28,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 17),
+        decoration: BoxDecoration(
+          color: context.gama.surfaceElevated,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: context.gama.borderSoft),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.auto_awesome_rounded,
+                    color: context.gama.accent, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Criando sua imagem…',
+                    style: TextStyle(
+                      color: context.gama.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Criando sua imagem…',
-                      style: TextStyle(
-                        color: context.gama.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
+                Text(
+                  aspectRatio,
+                  style: TextStyle(
+                    color: context.gama.textMuted,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 13),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: LinearProgressIndicator(
+                minHeight: 3,
+                backgroundColor: context.gama.borderSoft,
+                valueColor: AlwaysStoppedAnimation<Color>(context.gama.accent),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );

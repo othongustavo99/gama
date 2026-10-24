@@ -123,6 +123,24 @@ _ASK_ADVICE = re.compile(
     r"avalie\s+(?:a\s+)?qualidade|aponte\s+(?:os\s+)?problemas)\b",
 )
 
+# Uma variação *da imagem anterior* precisa da referência, mesmo quando
+# a frase começa com "crie". "Versão humana da Gamma" não se enquadra aqui.
+_REFERENCED_VARIANT = re.compile(
+    r"(?i)\b(?:vers[aã]o|varia[cç][aã]o|edi[cç][aã]o|c[oó]pia)\s+"
+    r"(?:nova\s+)?(?:dessa|desta|daquela|da|d[ae]\s+esta|d[ae]\s+essa)\s+"
+    r"(?:imagem|foto|ilustra[cç][aã]o|figura|arte|desenho)\b"
+)
+
+# Criar uma foto "em versão humana" é criação nova. Descritores como
+# "modifique o cabelo" dentro de um briefing novo não exigem imagem prévia.
+_CREATE_REQUEST = re.compile(
+    r"(?i)^\s*(?:(?:por favor|faz assim)[,.:!\s]*)*"
+    r"(?:(?:cria|crie|criar|gera|gere|gerar|desenha|desenhe|imagine|"
+    r"imagina|produza|create|generate|draw)\b|"
+    r"(?:fa[cç]a|faz)\s+(?:uma?\s+)?(?:imagem|foto|ilustra[cç][aã]o|"
+    r"desenho|arte|vers[aã]o)\b)"
+)
+
 _WEAK_GENERATE = re.compile(
     r"(?i)\b(imagem de|foto de|ilustração de|desenho de|picture of|image of)\b",
 )
@@ -139,6 +157,17 @@ def detect_image_intent(
     text = (user_text or "").strip()
     if len(text) < 4:
         return ImageRequest(intent=ImageIntent.NONE, prompt="", confidence=0.0)
+
+    if re.search(
+        r"(?i)\b(?:fa[cç]a|faz)\s+(?:uma?\s+)?"
+        r"(?:an[aá]lise|avalia[cç][aã]o|descri[cç][aã]o)\b",
+        text,
+    ):
+        return ImageRequest(
+            intent=ImageIntent.ANALYZE if has_attached_images else ImageIntent.NONE,
+            prompt=text if has_attached_images else "",
+            confidence=0.94 if has_attached_images else 0.0,
+        )
 
     # Perguntas conceituais sobre edição/geração ficam no chat normal; com imagem
     # anexada, a imagem pode ser analisada para orientar a resposta.
@@ -160,6 +189,20 @@ def detect_image_intent(
         text,
     ):
         return ImageRequest(intent=ImageIntent.ANALYZE, prompt=text, confidence=0.91)
+
+    # Referência explícita para variação anterior tem precedência mesmo se
+    # a pessoa disser "crie outra versão dessa imagem".
+    if _REFERENCED_VARIANT.search(text):
+        return ImageRequest(intent=ImageIntent.EDIT, prompt=text, confidence=0.94)
+
+    # Uma criação nova não pode virar edição porque o briefing contém termos
+    # como "mude", "adicione" ou "versão". Preserva referências explícitas.
+    if _CREATE_REQUEST.search(text) and not explicit_image_improvement:
+        return ImageRequest(
+            intent=ImageIntent.GENERATE,
+            prompt=_clean_prompt(text, mode="generate"),
+            confidence=0.90,
+        )
 
     # 1. Análise pura (só se tiver imagem anexada e não pedir edição/geração)
     if has_attached_images and _ANALYZE.search(text):

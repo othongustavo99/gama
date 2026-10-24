@@ -90,6 +90,7 @@ def build_system_prompt(
     voice_mode: bool = False,
     conversational_mode: bool = False,
     programming_mode: bool = False,
+    work_mode: bool = False,
     talk_layer: str = "",
     talk_mode: str = "",
     oficina_mode: str = "",
@@ -201,13 +202,30 @@ ASSISTÊNCIA TÉCNICA
 """
 
 
+    if work_mode and not oficina_mode:
+        extra += """
+
+MODO TRABALHAR — ASSISTÊNCIA UNIVERSAL (ativo)
+
+- Este modo define profundidade, raciocínio cuidadoso e qualidade da execução; NÃO define o assunto.
+- Converse normalmente sobre qualquer tema: ideias, ciência, vida cotidiana, história,
+  assuntos pessoais, cultura, negócios, tecnologia ou programação.
+- Siga a intenção do turno atual e a continuidade relevante. NÃO presuma que há
+  um projeto de software, NÃO cobre arquivos ou tarefas de programação e NÃO
+  traga um projeto antigo para uma conversa sobre outro assunto.
+- Para perguntas leves, responda naturalmente, sem insistir em tarefas.
+- Para solicitações complexas, seja minuciosa e prática na medida necessária.
+- Quando o usuário realmente pedir código, debug ou análise de projeto, mantenha
+  integralmente sua competência técnica, incluindo arquivos e artefatos.
+"""
+
     if programming_mode and not voice_mode:
         extra += """
 
-MODO PROGRAMAR (ativo)
+FOCO EM PROGRAMAÇÃO (somente para a tarefa técnica atual)
 
 Prioridade da resposta:
-1) Código primeiro — explicação curta depois (2–6 linhas).
+1) Se o usuário pedir código, entregue código primeiro; para explicações, análises e opiniões técnicas, responda no formato que melhor atende à pergunta.
 2) Sempre indique o path do arquivo quando houver projeto/contexto (ex.: `lib/foo.dart`).
 3) Antes de propor uma mudança, use os arquivos realmente recuperados para entender chamadas, tipos, dependências e convenções existentes. Preserve comportamento, APIs e arquitetura que não precisem mudar; faça a menor correção coerente e explique impactos relevantes.
 4) Prefira **arquivo completo colável** ou **diff unificado** (---/+++/@@) quando a mudança for localizada.

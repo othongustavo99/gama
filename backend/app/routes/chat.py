@@ -73,7 +73,8 @@ _OFFICE_NON_CREATION_RE = re.compile(
     r"descreva\b|critique\b|avalie\b|compare\b|sugira\b|ideias?\b|"
     r"quais ideias\b|me d[eê] ideias\b|oi\b|ol[aá]\b|bom dia\b|boa tarde\b|"
     r"boa noite\b|obrigad[oa]s?\b|valeu\b|tudo bem\b|tudo certo\b|"
-    r"voc[eê] est[aá] a[ií]\b|quem [eé] voc[eê]\b)"
+    r"voc[eê] est[aá] a[ií]\b|quem [eé] voc[eê]\b|"
+    r"fa[cç]a (?:uma? )?an[aá]lise\b|fa[cç]a (?:uma? )?avalia[cç][aã]o\b)"
 )
 _OFFICE_EDIT_ACTION_RE = re.compile(
     r"(?i)\b(edita|edite|editar|modifica|modifique|modificar|altera|altere|alterar|"
@@ -107,6 +108,13 @@ def _office_media_action(
         if _OFFICE_IMPROVE_ACTION_RE.search(cleaned):
             return "improve"
         if _OFFICE_EDIT_ACTION_RE.search(cleaned):
+            # "Transforme uma ideia em uma imagem" é criação, não edição de
+            # arquivo inexistente. Ações com referência mantêm a rota de edição.
+            if re.search(r"(?i)\btransform(?:a|e|ar)\b", cleaned) and not has_images and not re.search(
+                r"(?i)\b(?:esta|essa|desta|dessa|a)\s+(?:imagem|foto)\b|"
+                r"\b(?:imagem|foto)\s+(?:anterior|acima)\b", cleaned
+            ):
+                return "generate"
             # Preserve edit intent without a reference so the image handler can
             # ask for the missing image instead of falling through to generate.
             return "edit"

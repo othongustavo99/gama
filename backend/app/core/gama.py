@@ -17,6 +17,7 @@ from .code_analyzer.source_detector import (
     detect_level,
 )
 from .talk_skill import build_talk_layer
+from .work_intent import detect_work_intent
 try:
     from .conversation_session import (
         session_key,
@@ -160,26 +161,36 @@ class GamaCore:
         mode = (chat_mode or "").strip().lower()
         oficina_mode = mode if mode.startswith("oficina_") else ""
         conversational_mode = mode in {"conversar", "conversation", "conversational"} or (
-            "20b" in (model or "").lower() and mode not in {"programar", "oficina_programar"}
+            "20b" in (model or "").lower() and mode not in {"programar", "trabalhar", "oficina_programar"}
             and not oficina_mode
         )
-        programming_mode = mode in {"programar", "coding", "code", "oficina_programar"} or (
-            not conversational_mode and not voice_mode and not oficina_mode
-        )
-        # Oficina imagem/vídeo: não forçar programming_mode
+        working_mode = mode in {"programar", "trabalhar", "coding", "code"}
         if oficina_mode in {"oficina_imagem", "oficina_video"}:
-            programming_mode = False
             conversational_mode = False
 
-        # Sinais para a Talk Skill (antes de montar o system prompt)
-        has_project = bool(
-            extract_project_id(last_user) or extract_pdf_id(last_user)
+        # Trabalhar não é sinônimo de programação. O turno pode ser sobre
+        # qualquer assunto; as instruções técnicas entram apenas quando pedidas.
+        work_intent = detect_work_intent(
+            last_user,
+            messages=messages,
+            has_active_project=bool(session.get("active_project_id") or session.get("github_url")),
         )
+        programming_mode = bool(
+            (working_mode and not voice_mode and work_intent.code_task)
+            or oficina_mode == "oficina_programar"
+        )
+
+        # Só injete o Code Analyzer e o estado de projeto quando forem
+        # relevantes neste turno. O estado continua guardado para uso posterior.
+        project_relevant = bool(work_intent.project_context or force_deep_code_analysis)
         has_code_hint = bool(
-            has_project
+            work_intent.code_task
+            or extract_project_id(last_user)
+            or extract_pdf_id(last_user)
             or parse_github_url(last_user)
             or extract_inline_code(last_user)
         )
+        has_project = project_relevant
 
         talk_mode, talk_layer = build_talk_layer(
             last_user,
@@ -199,6 +210,7 @@ class GamaCore:
             voice_mode=voice_mode and not oficina_mode,
             conversational_mode=conversational_mode,
             programming_mode=programming_mode and not conversational_mode,
+            work_mode=working_mode,
             talk_layer=talk_layer if not oficina_mode else "",
             talk_mode=talk_mode if not oficina_mode else "",
             oficina_mode=oficina_mode,
@@ -238,7 +250,7 @@ class GamaCore:
             prepared.append({"role": "system", "content": url_block})
 
         # ── Code Analyzer ────────────────────────────────────────────────
-        if enable_code_analyzer:
+        if enable_code_analyzer and (project_relevant or bool(extract_inline_code(last_user))):
             try:
                 code_ctx = await self._code_analyzer_block(
                     last_user,
@@ -261,7 +273,7 @@ class GamaCore:
 
         # Estado da conversa (projeto, arquivos, ações) — sempre no system
         try:
-            sess_block = as_prompt_block(session)
+            sess_block = as_prompt_block(session) if project_relevant else ""
             if sess_block:
                 prepared.append({"role": "system", "content": sess_block})
             save_session(session)
