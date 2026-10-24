@@ -2803,12 +2803,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_voiceConversationMode) _speakNextReply = true;
     var rawText = _controller.text.trim();
     if ((rawText.isEmpty && _attachments.isEmpty) || _isLoading) return;
-    if (widget.oficinaKind == OficinaKind.imagem &&
-        rawText.isNotEmpty &&
-        !_looksLikeImageEditRequest(rawText)) {
-      rawText = '$rawText\n\nProporção: $_imageAspectRatio.';
-      if (_imageStyle != 'Automático') rawText += ' Estilo: $_imageStyle.';
-    }
 
     final pluginFlags = await PluginSettingsService.instance.load();
     if (_attachments.isNotEmpty && pluginFlags['attachments'] == false) {
@@ -3001,6 +2995,8 @@ class _ChatScreenState extends State<ChatScreen> {
         images: imagePayload.isEmpty ? null : imagePayload,
         voiceMode: willSpeak && oficina == null,
         chatMode: resolvedChatMode,
+        imageAspectRatio: oficina == OficinaKind.imagem ? _imageAspectRatio : null,
+        imageStyle: oficina == OficinaKind.imagem ? _imageStyle : null,
         conversationId: widget.conversationId,
         assistantMessageId: assistantMessage.id,
       );

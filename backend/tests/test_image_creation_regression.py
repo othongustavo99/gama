@@ -60,6 +60,36 @@ chat_route = importlib.import_module('app.routes.chat')
 
 
 class ImageCreationStreamRegressionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_oficina_uses_structured_aspect_ratio_and_style(self):
+        async def fake_llm_stream(*, model, messages):
+            yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}) + "\n"
+
+        request = ChatRequest(
+            model='openai/gpt-5.4-mini', chat_mode='oficina_imagem',
+            image_aspect_ratio='16:9', image_style='Neon',
+            messages=[ChatMessage(role='user', content='Crie uma cidade futurista')],
+            auto_memory=False,
+            plugins={"memory": False, "web_search": False, "image_gen": True},
+        )
+        generated = {"ok": True, "mime": "image/png", "base64": "iVBORw0KGgo=", "model": "fake"}
+        with (
+            patch.object(chat_route.app_settings, 'AGENT_TOOLS_ENABLED', False),
+            patch.object(chat_route.app_settings, 'IMAGE_GEN_ENABLED', True),
+            patch.object(chat_route.gama, 'build_messages', new=AsyncMock(return_value=(
+                [{"role": "user", "content": 'Crie uma cidade futurista'}], None, None, []
+            ))),
+            patch.object(chat_route.llm, 'stream_chat', new=fake_llm_stream),
+            patch.object(chat_route, 'generate_image', new=AsyncMock(return_value=generated)) as generate,
+            patch.object(chat_route, 'consume_daily_media_quota', return_value=None),
+            patch.object(chat_route, 'schedule_summary_refresh', return_value=None),
+        ):
+            response = await chat_route.chat(request, user_id='test-structured-image-user')
+            async for _ in response.body_iterator:
+                pass
+        self.assertEqual(generate.await_count, 1)
+        self.assertEqual(generate.await_args.kwargs['aspect_ratio'], '16:9')
+        self.assertIn('Neon', generate.await_args.args[0])
+
     async def test_oficina_text_to_image_nao_exige_anexo(self):
         async def fake_llm_stream(*, model, messages):
             yield json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}) + "\n"

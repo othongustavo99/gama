@@ -62,7 +62,14 @@ def normalize_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         # permite ampliar só a mensagem atual para pedidos com código/documentos.
         limit = CONTEXT_CURRENT_USER_CHARS if index == last_user else MAX_MSG_CHARS
         if len(content) > limit:
-            content = content[:limit] + "\n…[cortado pelo limite de contexto configurado]"
+            marker = "\n…[trecho intermediário omitido pelo limite de contexto configurado]\n"
+            if index == last_user:
+                # Se exceder 100k, indique corte explícito do pedido atual.
+                content = content[:limit] + "\n…[mensagem atual excedeu o limite; envie como anexo]"
+            else:
+                front = max(1, int(limit * 0.65))
+                back = max(1, limit - front)
+                content = content[:front] + marker + content[-back:]
         out.append({"role": m.get("role", "user"), "content": content})
     return out
 

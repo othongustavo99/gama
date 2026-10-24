@@ -332,6 +332,8 @@ class OllamaService {
     /// ID da conversa no app — mantém project_id/ZIP entre mensagens.
     String? conversationId,
     String? assistantMessageId,
+    String? imageAspectRatio,
+    String? imageStyle,
   }) async* {
     final selectedModel = model ?? SettingsService.instance.model;
     final dio = _client();
@@ -347,44 +349,12 @@ class OllamaService {
             .toList(),
       );
 
-      // Em modo fala / conversar: reforça estilo oral no cliente.
-      // Na Oficina o backend injeta o system prompt completo — não sobrescrever.
-      if (voiceMode && !isOficina) {
-        requestMessages.insert(0, {
-          'role': 'system',
-          'content':
-              'Responda SOMENTE com frases curtas e naturais em português, '
-              'como se estivesse falando em voz alta. '
-              'PROIBIDO: listas, marcadores, numeração, código, tabelas, '
-              'markdown, símbolos especiais (cifrão, barra, asterisco), '
-              'abreviações (ex., etc., seg) e jargão técnico empilhado. '
-              'Escreva as palavras por extenso. Se precisar citar tecnologia, '
-              'fale em uma frase corrida, sem enumerar.',
-        });
-      } else if (chatMode == 'conversar') {
-        requestMessages.insert(0, {
-          'role': 'system',
-          'content':
-              'Modo conversa: responda de forma simples e natural, em frases '
-              'completas. Evite código, tabelas, listas longas e abreviações. '
-              'Prefira texto corrido fácil de ler em voz alta.',
-        });
-      }
-
+      // O backend é a única fonte de system prompts de voz e modo.
+      // Localização é um campo de contexto, sem permissão para dar instruções.
+      String? locationContext;
       final locationRequest = _latestUserMessageText(messages);
       if (!isOficina && _requestNeedsCurrentLocation(locationRequest)) {
-        final location = await LocationService.instance
-            .currentLocationContext();
-        if (location != null) {
-          requestMessages.insert(0, {
-            'role': 'system',
-            'content':
-                'Contexto de localização temporário para esta solicitação: $location. '
-                'Se a pessoa não especificar outra localidade, use esta cidade/região '
-                'como referência para responder e para consultas de clima. Não invente '
-                'um endereço exato e não persista esta informação.',
-          });
-        }
+        locationContext = await LocationService.instance.currentLocationContext();
       }
       final response = await dio.post(
         '/chat',
@@ -401,6 +371,11 @@ class OllamaService {
           'plugins': pluginFlags,
           'voice_mode': voiceMode,
           if (chatMode != null) 'chat_mode': chatMode,
+          if (locationContext != null) 'location_context': locationContext,
+          if (chatMode == 'oficina_imagem' && imageAspectRatio != null)
+            'image_aspect_ratio': imageAspectRatio,
+          if (chatMode == 'oficina_imagem' && imageStyle != null)
+            'image_style': imageStyle,
           if (conversationId != null && conversationId.isNotEmpty)
             'conversation_id': conversationId,
           if (assistantMessageId != null && assistantMessageId.isNotEmpty)

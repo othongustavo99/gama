@@ -114,12 +114,9 @@ class GamaCore:
                     )
                     break
 
-        user_turns = sum(1 for item in messages if item.get("role") == "user")
-        memory_scan_every = max(1, int(getattr(settings, "MEMORY_LLM_SCAN_EVERY_TURNS", 5)))
-        explicit_memory_request = bool(re.search(r"\b(lembre|memorize|guarde|grave|anote|salve na memória)\b", last_user, re.I))
-        if enable_memory and auto_memory and last_user and (
-            explicit_memory_request or user_turns % memory_scan_every == 0
-        ):
+        # Extração determinística barata em TODOS os turnos; a chamada LLM
+        # de consolidação periódica continua separada até a Memória v3.
+        if enable_memory and auto_memory and last_user:
             try:
                 for extracted in try_extract_memories(last_user):
                     try:
@@ -201,7 +198,10 @@ class GamaCore:
             has_web_block=bool(web_block),
             # O modo Conversar não impede respostas técnicas quando a pergunta
             # é técnica. A Talk Skill avalia a intenção de cada turno.
-            force_mode=None,
+            force_mode=(
+                "conversational" if conversational_mode and not has_code_hint and not work_intent.code_task
+                else None
+            ),
         )
 
         system_prompt = build_system_prompt(

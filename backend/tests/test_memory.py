@@ -39,6 +39,8 @@ class MemoryV2Test(unittest.TestCase):
         self.assertEqual(texts(self.s), ["Não gosta de: café"])
 
     def test_corrupted_file_is_not_wiped(self):
+        # Compatibilidade da camada JSON v2: a fonte ativa da v3 é SQLite.
+        self.s = mem.MemoryStore(self.uid + '_legacy_corrupt')
         self.s.add_fact("Nome: Ana")
         self.s.add_fact("Mora em: Campinas")  # cria .bak com o estado anterior
         with open(self.s.path, "w") as f:
@@ -116,6 +118,8 @@ class MemoryV2Test(unittest.TestCase):
         self.assertIn("Gosta de: algo fixado", t)
 
     def test_v1_files_still_load(self):
+        # Testa o leitor do formato antigo independentemente da v3.
+        self.s = mem.MemoryStore(self.uid + '_legacy_v1')
         import json
         with open(self.s.path, "w", encoding="utf-8") as f:
             json.dump({"facts": [{"id": "a", "text": "Nome: Zé", "created_at": "2025-01-01T00:00:00+00:00", "source": "user"}]}, f)

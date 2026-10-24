@@ -18,12 +18,13 @@ class MessageSanitize {
 
   /// Limite duro por mensagem no histórico enviado à API (caracteres).
   static const int maxCharsPerMessage = 12000;
+  static const int maxCharsCurrentUser = 100000;
 
   /// Total aproximado máximo de caracteres no histórico (≈ tokens*4).
   static const int maxTotalChars =
       280000; // ~70k tokens de texto, folga vs 400k
 
-  static String forApi(String content) {
+  static String forApi(String content, {int maxChars = maxCharsPerMessage}) {
     var t = content;
     // Imagens geradas: não reenviar base64
     t = t.replaceAll(
@@ -43,8 +44,16 @@ class MessageSanitize {
       return '[projeto indexado]';
     });
     t = t.trim();
-    if (t.length > maxCharsPerMessage) {
-      t = '${t.substring(0, maxCharsPerMessage)}\n\n…[conteúdo antigo cortado para caber no contexto]';
+    if (t.length > maxChars) {
+      // Histórico antigo recebe cabeça e final; não deixa um arquivo entregue
+      // pela metade sem avisar. Mensagem atual preserva até 100 mil caracteres.
+      if (maxChars == maxCharsCurrentUser) {
+        t = '${t.substring(0, maxChars)}\n\n…[mensagem atual excedeu o limite; envie como anexo]';
+      } else {
+        final head = (maxChars * 0.65).round();
+        final tail = maxChars - head;
+        t = '${t.substring(0, head)}\n\n[trecho intermediário de mensagem/arquivo antigo omitido]\n\n${t.substring(t.length - tail)}';
+      }
     }
     return t;
   }
@@ -54,9 +63,16 @@ class MessageSanitize {
     List<Map<String, String>> messages,
   ) {
     final cleaned = <Map<String, String>>[];
-    for (final m in messages) {
+    final latestUser = messages.lastIndexWhere((m) => m['role'] == 'user');
+    for (var index = 0; index < messages.length; index++) {
+      final m = messages[index];
       final role = m['role'] ?? 'user';
-      final content = forApi(m['content'] ?? '');
+      // O servidor é a única fonte de instruções system.
+      if (role == 'system') continue;
+      final content = forApi(
+        m['content'] ?? '',
+        maxChars: index == latestUser ? maxCharsCurrentUser : maxCharsPerMessage,
+      );
       if (content.isEmpty) continue;
       cleaned.add({
         'role': role,

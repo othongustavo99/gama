@@ -512,25 +512,33 @@ class MemoryStore:
             return True
 
     def forget(self, phrase: str) -> List[dict]:
-        """Apaga fatos que correspondem à frase (ex.: 'moro em Campinas')."""
-        q = _stems(phrase)
-        if not q:
+        """Exclusão conservadora: só um fato inequivocamente identificado.
+
+        Se nenhum ou vários fatos corresponderem, não exclui. A confirmação
+        para escolhas múltiplas ficará para a interface da Memória v3.
+        """
+        phrase = (phrase or "").strip()
+        if not phrase or re.search(r"(?i)^(?:isso|isto|aquilo|tudo|esse|essa)$", phrase):
             return []
-        removed: List[dict] = []
+        norm_target = _norm(phrase)
+        norm_target = re.sub(r"\b(?:eu|meu|minha|meus|minhas|que|sou|estou|moro|em|no|na|de|da|do|sobre|o|a|um|uma)\b", " ", norm_target)
+        tokens = _stems(norm_target)
+        generic = {"projet", "nome", "apelid", "trabal", "profis", "memori", "empre", "app", "aplic", "fato", "prefer", "compor"}
+        if not tokens or tokens <= generic:
+            return []
         with _lock:
             data = self._read()
-            keep = []
-            for f in data["facts"]:
-                fs = _stems(str(f.get("text", "")))
-                matched = len(q & fs)
-                if matched >= 1 and matched / len(q) >= 0.5:
-                    removed.append(self._normalize(f))
-                else:
-                    keep.append(f)
-            if removed:
-                data["facts"] = keep
-                self._write(data)
-        return removed
+            candidates = []
+            for fact in data["facts"]:
+                fact_tokens = _stems(str(fact.get("text") or ""))
+                if tokens <= fact_tokens:
+                    candidates.append(fact)
+            if len(candidates) != 1:
+                return []
+            victim = candidates[0]
+            data["facts"] = [f for f in data["facts"] if f.get("id") != victim.get("id")]
+            self._write(data)
+            return [self._normalize(victim)]
 
     def clear(self) -> None:
         with _lock:
@@ -595,8 +603,8 @@ class MemoryStore:
         scored.sort(key=lambda t: t[0], reverse=True)
 
         chosen = [f for _s, lex, f in scored if lex > 0][: self.RELEVANT_K]
-        baseline = [f for _s, _l, f in scored[:2] if f not in chosen]  # pequenos lembretes estáveis
-        return (chosen + baseline)[: self.RELEVANT_K]
+        # Nada lexicalmente relacionado? Não injete fatos aleatórios.
+        return chosen[: self.RELEVANT_K]
 
     # ---- blocos de prompt ----------------------------------------------------
     @staticmethod
@@ -686,7 +694,7 @@ _EXPLICIT_REMEMBER = [
         r"(?:isso\s+|isto\s+|ai\s+|aí\s+)?(?:na\s+mem[oó]ria\s+)?(?:que\s+)?(.+)",
         re.IGNORECASE,
     ),
-    re.compile(r"\b(?:coloca|coloque|ponha|p[oõ]e|guarda|guarde)\s+na\s+mem[oó]ria\s+(?:que\s+)?(.+)", re.IGNORECASE),
+    re.compile(r"\b(?:coloca|coloque|ponha|p[oõ]e|guarda|guarde)\s+(?:isso\s+)?(?:na\s+mem[oó]ria|em\s+mem[oó]ria)\s*(?:que\s+)?(.+)", re.IGNORECASE),
     re.compile(r"\b(?:remember(?:\s+that)?|note\s+that)\s+(.+)", re.IGNORECASE),
 ]
 
@@ -727,7 +735,7 @@ _STRUCTURED = [
     (re.compile(r"\bmeu\s+nome(?:\s+completo)?\s+(?:é|e)\s+(" + _STOP_RE + ")", re.I),
      lambda m: "Nome: " + _titlecase_name(_clean(m.group(1)))),
     (re.compile(r"\b(?:me\s+chamo|pode\s+me\s+chamar\s+de|(?:eu\s+)?me\s+chamam\s+de|meu\s+apelido\s+(?:é|e))\s+(" + _STOP_RE + ")", re.I),
-     lambda m: "Nome: " + _titlecase_name(_clean(m.group(1)))),
+     lambda m: "Apelido: " + _titlecase_name(_clean(m.group(1)))),
     (re.compile(r"\b(?:tenho|estou\s+com)\s+(\d{1,3})\s+anos\b", re.I),
      lambda m: f"Idade: {m.group(1)} anos"),
     (re.compile(r"\bminha\s+idade\s+(?:é|e)\s+(\d{1,3})\b", re.I),
@@ -735,17 +743,23 @@ _STRUCTURED = [
     (re.compile(r"\b(?:nasci|nascido|nascida)\s+(?:em|no\s+dia|no\s+ano|na)\s+(" + _STOP_RE + ")", re.I),
      lambda m: "Nascimento: " + _clean(m.group(1))),
     (re.compile(r"\b(?:sou\s+(?:de|natural\s+de)|natural\s+de)\s+(" + _STOP_RE + ")", re.I),
-     lambda m: "Natural de: " + _clean(m.group(1))),
+     lambda m: "Natural de: " + re.sub(r"\s+(?:mesmo|mesma)$", "", _clean(m.group(1)), flags=re.I)),
     (re.compile(r"\b(?:moro|vivo|resido)\s+(?:em|no|na|nos|nas)\s+(" + _STOP_RE + ")", re.I),
      lambda m: "Mora em: " + _clean(m.group(1))),
     (re.compile(r"\b(?:sou|estou)\s+(casad[oa]|solteir[oa]|divorciad[oa]|vi[uú]v[oa]|namorando|noiv[oa])\b", re.I),
      lambda m: "Estado civil: " + m.group(1).lower()),
     (re.compile(r"\bminha\s+profiss[aã]o\s+(?:é|e)\s+(" + _STOP_RE + ")", re.I),
      lambda m: "Profissão: " + _clean(m.group(1))),
-    (re.compile(r"\btrabalho\s+(?:como|de|com)\s+(" + _STOP_RE + ")", re.I),
+    # "trabalho com Flutter" é stack, não profissão. Horários de trabalho
+    # não permitem inferir profissão.
+    (re.compile(r"\btrabalho\s+como\s+(" + _STOP_RE + ")", re.I),
      lambda m: "Profissão: " + _clean(m.group(1))),
-    (re.compile(r"\btrabalho\s+(?:na|no)\s+(?!minh|meu|ess|est|isso|aqui|tela|app\b|projeto)(" + _STOP_RE + ")", re.I),
-     lambda m: "Profissão: " + _clean(m.group(1))),
+    (re.compile(r"\b(?:trabalho\s+com|uso|utilizo)\s+(Flutter(?:\s+e\s+Dart)?|Dart|Python|React|Node\.?js|Kotlin|Swift|JavaScript|TypeScript)(?=\W|$)", re.I),
+     lambda m: "Stack: " + _clean(m.group(1))),
+    (re.compile(r"\b(?:estou\s+desenvolvendo|desenvolvo|criei)\s+(?:um|uma|o|a)?\s*(?:assistente|aplicativo|app|projeto|sistema)\s+chamad[oa]\s+(" + _STOP_RE + ")", re.I),
+     lambda m: "Projeto: " + re.split(r"\s+(?:em|com|usando)\s+(?:Flutter|Dart|Python|React|Node|Kotlin)\b", _clean(m.group(1)), maxsplit=1, flags=re.I)[0]),
+    (re.compile(r"\btrabalho\s+(?:na\s+empresa|no\s+grupo)\s+(" + _STOP_RE + ")", re.I),
+     lambda m: "Empresa: " + _clean(m.group(1))),
     (re.compile(
         r"\bsou\s+(?:um\s+|uma\s+)?((?:desenvolvedor|programador|engenheir|m[eé]dic|professor|advogad|"
         r"designer|analista|estudante|arquitet|contador|enfermeir|psic[oó]log|empreendedor|"
@@ -838,7 +852,7 @@ def try_extract_memories(user_text: str) -> List[str]:
 
 _FIRST_PERSON_CLAIM = re.compile(
     r"(?i)\b(?:eu|meu|minha|meus|minhas|sou|tenho|moro|vivo|"
-    r"prefiro|gosto|odeio|trabalho|estudo|chamo|nasci|"
+    r"prefiro|gosto|odeio|trabalho|estudo|chamo|nasci|estou|uso|utilizo|desenvolvo|criei|decidi|decidimos|combinamos|escolhi|"
     r"lembre|memorize|guarde|grave|anote|salve|remember)\b"
 )
 
@@ -888,8 +902,15 @@ def try_forget(user_text: str) -> Optional[str]:
     if not m:
         return None
     target = re.sub(r"\s+", " ", m.group(1)).strip(" .!,;")
+    # Verbos de apagar/remover são ambíguos fora do contexto da memória.
+    # "esqueça" sinaliza memória; "remova a dependência" sinaliza código.
+    action = re.search(r"(?i)\b(esque[cç]a|esquece|forget|apague|apaga|remova|remove|delete|exclua)\b", text)
+    if action and action.group(1).lower() not in {"esqueça", "esqueca", "esquece", "forget"} and not re.search(r"(?i)\bmem[oó]ria\b", text):
+        return None
+    if re.fullmatch(r"(?i)(?:isso|isto|aquilo|essa|esse|tudo)", target):
+        return None
     # "apague o arquivo X" / "delete essa função" não são pedidos de memória
-    if re.match(r"^(?:o\s+|a\s+)?(?:arquivo|pasta|fun[cç][aã]o|linha|c[oó]digo|conversa|mensagem|projeto|tabela|coluna)\b", target, re.I):
+    if re.match(r"^(?:o\s+|a\s+)?(?:arquivo|pasta|fun[cç][aã]o|linha|c[oó]digo|conversa|mensagem|tabela|coluna)\b", target, re.I):
         return None
     return target or None
 
@@ -897,11 +918,11 @@ def try_forget(user_text: str) -> Optional[str]:
 _PERSONAL_SIGNAL = re.compile(
     r"\b(eu|meu|minha|meus|minhas|sou|tenho|chamo|nome|idade|anos|nasci|nascimento|anivers[aá]rio|"
     r"natural|moro|vivo|resido|cidade|casado|casada|solteiro|solteira|namoro|namorando|esposa|esposo|"
-    r"marido|filho|filha|fam[ií]lia|trabalho|trabalha|profiss[aã]o|cargo|empresa|estudo|faculdade|"
+    r"marido|filho|filha|fam[ií]lia|trabalho|trabalha|estou|uso|utilizo|desenvolvo|criei|profiss[aã]o|cargo|empresa|estudo|faculdade|"
     r"curso|prefiro|gosto|odeio|favorita|favorito|hobby|hobbies|projeto|app|stack|linguagem|framework)\b",
     re.I,
 )
-_EXPLICIT_RE = re.compile(r"(lembre|grave|anote|mem[oó]ria|remember|note\s+that)", re.I)
+_EXPLICIT_RE = re.compile(r"(lembre|grave|anote|guarde|guarda|memorize|salve|mem[oó]ria|remember|note\s+that)", re.I)
 
 
 async def extract_facts_with_llm(
@@ -988,8 +1009,8 @@ def migrate_memory(from_user_id: str, to_user_id: str) -> dict:
     dst = _safe_user_id(to_user_id)
     if src == dst:
         return {"ok": True, "merged": 0, "from": src, "to": dst}
-    source = MemoryStore(user_id=src)
-    target = MemoryStore(user_id=dst)
+    source = get_store(user_id=src)
+    target = get_store(user_id=dst)
     merged = 0
     with _lock:
         src_data = source._read()
@@ -1014,7 +1035,10 @@ def migrate_memory(from_user_id: str, to_user_id: str) -> dict:
 
 
 def get_store(user_id: Optional[str] = None) -> MemoryStore:
-    return MemoryStore(user_id=user_id)
+    if os.getenv("GAMA_MEMORY_V3_ENABLED", "true").strip().lower() in {"0", "false", "off"}:
+        return MemoryStore(user_id=user_id)
+    from .memory_v3 import SQLiteMemoryStore
+    return SQLiteMemoryStore(user_id=user_id)
 
 
 # compat: store default (rotas antigas)

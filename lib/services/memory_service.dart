@@ -11,12 +11,18 @@ class MemoryFact {
   final String text;
   final String createdAt;
   final String source;
+  final bool pinned;
+  final String kind;
+  final String subject;
 
   MemoryFact({
     required this.id,
     required this.text,
     required this.createdAt,
     required this.source,
+    this.pinned = false,
+    this.kind = 'profile',
+    this.subject = '',
   });
 
   factory MemoryFact.fromJson(Map<String, dynamic> json) {
@@ -25,6 +31,9 @@ class MemoryFact {
       text: json['text']?.toString() ?? '',
       createdAt: json['created_at']?.toString() ?? '',
       source: json['source']?.toString() ?? 'user',
+      pinned: json['pinned'] == true,
+      kind: json['kind']?.toString() ?? 'profile',
+      subject: json['subject']?.toString() ?? '',
     );
   }
 }
@@ -113,9 +122,28 @@ class MemoryService {
     return MemoryFact.fromJson(Map<String, dynamic>.from(data['fact'] as Map));
   }
 
-  Future<void> deleteFact(String id) async {
-    await _dio().delete('/memory/$id');
+  Future<String?> deleteFact(String id) async {
+    final result = await _dio().delete('/memory/$id');
+    final data = result.data;
+    if (data is Map) return data['undo_event_id']?.toString();
+    return null;
   }
+
+  Future<MemoryFact> pinFact(String id, bool pinned) async {
+    final result = await _dio().patch('/memory/$id', data: {'pinned': pinned});
+    return MemoryFact.fromJson(Map<String, dynamic>.from(result.data['fact'] as Map));
+  }
+
+  Future<List<Map<String, dynamic>>> history() async {
+    final result = await _dio().get('/memory/history');
+    final list = result.data['history'] as List<dynamic>? ?? [];
+    return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<void> undo(String eventId) async {
+    await _dio().post('/memory/history/$eventId/undo');
+  }
+
 
   Future<void> clear() async {
     await _dio().delete('/memory');

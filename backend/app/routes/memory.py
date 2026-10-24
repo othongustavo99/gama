@@ -58,6 +58,31 @@ async def migrate(
     return {**result, "ok": True}
 
 
+
+
+@router.get("/history")
+async def memory_history(user_id: str = Depends(current_user_id)):
+    store = get_store(user_id)
+    return {"history": store.list_history() if hasattr(store, "list_history") else []}
+
+
+@router.post("/history/{event_id}/undo")
+async def undo_memory_change(event_id: str, user_id: str = Depends(current_user_id)):
+    store = get_store(user_id)
+    if not hasattr(store, "undo_event"):
+        raise HTTPException(409, "Memória v3 desativada")
+    try:
+        return store.undo_event(event_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/episodes")
+async def memory_episodes(q: str = Query(default="", max_length=300), user_id: str = Depends(current_user_id)):
+    store = get_store(user_id)
+    return {"episodes": store.search_episodes(q) if hasattr(store, "search_episodes") else []}
+
+
 @router.get("/prompt")
 async def memory_prompt(
     q: str = Query(default="", max_length=500),
@@ -109,7 +134,11 @@ async def delete_memory(fact_id: str, user_id: str = Depends(current_user_id)):
     store = get_store(user_id)
     if not store.remove_fact(fact_id):
         raise HTTPException(404, "Fato não encontrado")
-    return {"ok": True}
+    event_id = None
+    if hasattr(store, "list_history"):
+        recent = store.list_history(3)
+        event_id = next((e["event_id"] for e in recent if e["action"] == "DELETE" and e["fact_id"] == fact_id), None)
+    return {"ok": True, "undo_event_id": event_id}
 
 
 @router.delete("")

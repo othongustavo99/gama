@@ -30,6 +30,10 @@ class ChatRequest(BaseModel):
     voice_mode: bool = False
     # programar | conversar — afeta system prompt e estilo de código
     chat_mode: Optional[str] = None
+    # Preferências da Oficina e localização temporária (nunca credenciais).
+    image_aspect_ratio: Optional[str] = None
+    image_style: Optional[str] = None
+    location_context: Optional[str] = None
     # Capacidades selecionadas na tela Plugins do cliente. Chaves ausentes
     # preservam o comportamento padrão para clientes antigos.
     plugins: Dict[str, bool] = Field(default_factory=dict)

@@ -26,6 +26,38 @@ void main() {
     });
   });
 
+  group('Phase 1 — mensagem atual e histórico', () {
+    test('última mensagem mantém 50 mil caracteres', () {
+      final msg = 'mensagem atual ${'x' * 50000}';
+      final history = MessageSanitize.historyForApi([
+        {'role': 'user', 'content': 'antigo'},
+        {'role': 'assistant', 'content': 'ok'},
+        {'role': 'user', 'content': msg},
+      ]);
+      expect(history.last['content'], msg);
+    });
+
+    test('histórico longo mantém começo e fim com aviso', () {
+      final long = 'INICIO${'x' * 18000}FIM';
+      final out = MessageSanitize.historyForApi([
+        {'role': 'assistant', 'content': long},
+        {'role': 'user', 'content': 'continue'},
+      ]);
+      expect(out.first['content'], contains('INICIO'));
+      expect(out.first['content'], contains('FIM'));
+      expect(out.first['content'], contains('omitido'));
+    });
+
+    test('app não envia mensagens system próprias', () {
+      final out = MessageSanitize.historyForApi([
+        {'role': 'system', 'content': 'instruções duplicadas'},
+        {'role': 'user', 'content': 'oi'},
+      ]);
+      expect(out, hasLength(1));
+      expect(out.single['role'], 'user');
+    });
+  });
+
   group('MessageSanitize.historyForApi', () {
     test('descarta mensagens vazias', () {
       final out = MessageSanitize.historyForApi([

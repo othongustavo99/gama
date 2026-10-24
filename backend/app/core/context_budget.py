@@ -36,7 +36,7 @@ CONTEXT_SUMMARY_MAX_CHARS = _env_int("GAMA_CONTEXT_SUMMARY_MAX_CHARS", 2_500, mi
 # Mesmo valor atual (12k) para não elevar o gasto por padrão; pode ser ampliado
 # para tarefas com código/documentos longos e permanece abaixo do limite do LLM.
 CONTEXT_CURRENT_USER_CHARS = _env_int(
-    "GAMA_CONTEXT_MAX_CURRENT_USER_CHARS", MAX_MESSAGE_CHARS, minimum=256
+    "GAMA_CONTEXT_MAX_CURRENT_USER_CHARS", MAX_LAST_USER_CHARS, minimum=256
 )
 
 _TRUNCATION_MARKER = "\n\n…[trecho omitido para caber no contexto]"
@@ -50,7 +50,9 @@ def _strip_heavy_content(text: str, max_chars: int = MAX_MESSAGE_CHARS) -> str:
         return ""
     text = GAMA_IMAGE_RE.sub("\n[imagem gerada anteriormente]\n", text)
     if len(text) > max_chars:
-        text = text[:max_chars] + _TRUNCATION_MARKER
+        front = max(1, int(max_chars * 0.65))
+        back = max(1, max_chars - front)
+        text = text[:front] + _TRUNCATION_MARKER + text[-back:]
     return text
 
 
