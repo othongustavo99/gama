@@ -12,6 +12,7 @@ class VoiceModeScreen extends StatefulWidget {
   final bool Function() isListening;
   final bool Function()? isReconnecting;
   final bool Function() isSpeaking;
+  final bool Function()? isPreparingSpeech;
   final bool Function() isProcessing;
   final double Function() soundLevel;
   final String Function() transcript;
@@ -23,6 +24,7 @@ class VoiceModeScreen extends StatefulWidget {
     required this.isListening,
     this.isReconnecting,
     required this.isSpeaking,
+    this.isPreparingSpeech,
     required this.isProcessing,
     required this.soundLevel,
     required this.transcript,
@@ -104,6 +106,7 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
     final listening = widget.isListening();
     final reconnecting = widget.isReconnecting?.call() ?? false;
     final speaking = widget.isSpeaking();
+    final preparingSpeech = widget.isPreparingSpeech?.call() ?? false;
     final processing = widget.isProcessing();
     final text = widget.transcript().trim();
     final reduceMotion = MediaQuery.of(context).disableAnimations;
@@ -111,6 +114,8 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
         ? 'Gama está falando'
         : processing
         ? 'Gama está pensando'
+        : preparingSpeech
+        ? 'Preparando voz…'
         : listening
         ? 'Estou ouvindo'
         : reconnecting
@@ -161,6 +166,8 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
                             ? Icons.graphic_eq_rounded
                             : processing
                             ? Icons.auto_awesome_rounded
+                            : preparingSpeech
+                            ? Icons.hourglass_top_rounded
                             : Icons.mic_off_rounded,
                         color: palette.accent,
                         size: 17,
@@ -228,7 +235,7 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
                     },
                     primary: true,
                   ),
-                  if (speaking) ...[
+                  if (speaking || preparingSpeech || processing) ...[
                     const SizedBox(width: 22),
                     _VoiceAction(
                       icon: Icons.stop_rounded,

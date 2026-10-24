@@ -10,6 +10,7 @@ import '../core/constants.dart';
 import 'auth_interceptor.dart';
 import 'settings_service.dart';
 import '../utils/error_logger.dart';
+import '../utils/speech_sentence_accumulator.dart';
 
 class TtsService {
   TtsService._();
@@ -33,17 +34,38 @@ class TtsService {
 
   bool _busy = false;
   bool _cancelQueue = false;
+  Completer<void>? _playbackCancelled;
+  StreamingSpeechSession? _activeStreamingSession;
+  int _playbackEpoch = 0;
 
   bool get isBusy => _busy;
 
   Future<void> stop() async {
     _cancelQueue = true;
+    _playbackEpoch++;
+    _activeStreamingSession?._abort();
+    _activeStreamingSession = null;
+    final cancellation = _playbackCancelled;
+    if (cancellation != null && !cancellation.isCompleted) cancellation.complete();
     try {
       await _player.stop();
     } catch (error, stack) {
       logSwallowed(error, stack);
     }
     _busy = false;
+  }
+
+  /// Uma sessão por resposta em voz. A síntese começa assim que uma frase
+  /// chega, sem esperar o texto inteiro e sem reproduzir áudio em paralelo.
+  Future<StreamingSpeechSession> startStreamingSpeech({
+    FutureOr<void> Function(String chunk)? onChunkPlaybackStart,
+  }) async {
+    await stop();
+    _cancelQueue = false;
+    _busy = true;
+    final session = StreamingSpeechSession._(this, onChunkPlaybackStart);
+    _activeStreamingSession = session;
+    return session;
   }
 
   /// Prepara o texto para fala natural em português:
@@ -285,14 +307,29 @@ class TtsService {
     FutureOr<void> Function()? onPlaybackStart,
   }) async {
     if (_cancelQueue) return;
+    final epoch = _playbackEpoch;
+    final completion = Completer<void>();
+    final cancellation = Completer<void>();
+    _playbackCancelled = cancellation;
+    // Assine antes de iniciar o player; stop() pode acordar a fila mesmo
+    // quando o player não emite onPlayerComplete após interrupção.
+    final subscription = _player.onPlayerComplete.listen((_) {
+      if (!completion.isCompleted) completion.complete();
+    });
     try {
+      if (_cancelQueue || epoch != _playbackEpoch) return;
       await _player.play(BytesSource(bytes, mimeType: 'audio/mpeg'));
-      if (onPlaybackStart != null) {
-        await onPlaybackStart();
-      }
-      await _player.onPlayerComplete.first.timeout(const Duration(minutes: 5));
+      if (_cancelQueue || epoch != _playbackEpoch) return;
+      if (onPlaybackStart != null) await onPlaybackStart();
+      await Future.any([completion.future, cancellation.future])
+          .timeout(const Duration(minutes: 5));
     } on TimeoutException {
-      // Evita prender a fila indefinidamente se o player não reportar fim.
+      // Não mantém uma sessão travada se o player não sinalizar conclusão.
+    } finally {
+      await subscription.cancel();
+      if (identical(_playbackCancelled, cancellation)) {
+        _playbackCancelled = null;
+      }
     }
   }
 
@@ -343,19 +380,20 @@ class TtsService {
     if (clean.isEmpty) return;
     _busy = true;
     _cancelQueue = false;
+    final epoch = _playbackEpoch;
     try {
       final snippet = clean.length > 900
           ? '${clean.substring(0, 900)}…'
           : clean;
       final bytes = await _fetchAudio(snippet);
-      if (bytes == null || _cancelQueue) return;
+      if (bytes == null || _cancelQueue || epoch != _playbackEpoch) return;
       await _playBytes(bytes, onPlaybackStart: onPlaybackStart);
     } catch (e, st) {
       debugPrint('TTS erro: $e');
       debugPrintStack(stackTrace: st);
       rethrow;
     } finally {
-      _busy = false;
+      if (epoch == _playbackEpoch) _busy = false;
     }
   }
 
@@ -392,12 +430,13 @@ class TtsService {
 
     _cancelQueue = false;
     _busy = true;
+    final epoch = _playbackEpoch;
 
     try {
       Future<Uint8List?>? nextAudio;
 
       for (var i = 0; i < chunks.length; i++) {
-        if (_cancelQueue) break;
+        if (_cancelQueue || epoch != _playbackEpoch) break;
 
         // O próximo trecho é solicitado enquanto o atual ainda toca.
         nextAudio ??= _fetchAudio(chunks[i]);
@@ -405,7 +444,7 @@ class TtsService {
         nextAudio = null;
 
         final bytes = await currentFuture;
-        if (bytes == null || _cancelQueue) break;
+        if (bytes == null || _cancelQueue || epoch != _playbackEpoch) break;
 
         // Dispara a preparação do próximo áudio antes de começar a tocar o
         // atual. A chamada roda em paralelo sem bloquear a reprodução.
@@ -425,7 +464,107 @@ class TtsService {
       debugPrintStack(stackTrace: st);
       rethrow;
     } finally {
-      _busy = false;
+      if (epoch == _playbackEpoch) _busy = false;
+    }
+  }
+}
+
+
+/// Fila controlada e cancelável de síntese/reprodução incremental.
+/// Usada apenas durante uma resposta de voz, não compete com speakFull().
+class StreamingSpeechSession {
+  StreamingSpeechSession._(this._tts, this._onChunkStart) {
+    _worker = _run();
+  }
+
+  final TtsService _tts;
+  final FutureOr<void> Function(String chunk)? _onChunkStart;
+  final SpeechSentenceAccumulator _accumulator = SpeechSentenceAccumulator();
+  final List<String> _queue = [];
+  Completer<void>? _wake;
+  late final Future<void> _worker;
+  bool _closed = false;
+  bool _cancelled = false;
+  Object? _failure;
+  StackTrace? _failureStack;
+
+  bool get isCancelled => _cancelled;
+
+  void append(String token) {
+    if (_closed || _cancelled) return;
+    _queue.addAll(_accumulator.append(token));
+    _notify();
+  }
+
+  void _notify() {
+    final wake = _wake;
+    if (wake != null && !wake.isCompleted) wake.complete();
+    _wake = null;
+  }
+
+  void _abort() {
+    _cancelled = true;
+    _closed = true;
+    _queue.clear();
+    _accumulator.clear();
+    _notify();
+  }
+
+  Future<void> cancel() async {
+    if (_cancelled) return;
+    _abort();
+    if (identical(_tts._activeStreamingSession, this)) await _tts.stop();
+  }
+
+  /// Termina de falar o que falta. Não sintetiza uma segunda vez os trechos
+  /// já reproduzidos enquanto o modelo ainda gerava texto.
+  Future<void> finish() async {
+    if (!_closed && !_cancelled) {
+      _queue.addAll(_accumulator.finish());
+      _closed = true;
+      _notify();
+    }
+    await _worker;
+    if (_failure != null) {
+      Error.throwWithStackTrace(_failure!, _failureStack ?? StackTrace.current);
+    }
+  }
+
+  Future<void> _run() async {
+    try {
+      while (!_cancelled) {
+        if (_queue.isEmpty) {
+          if (_closed) break;
+          final wake = Completer<void>();
+          _wake = wake;
+          await wake.future;
+          continue;
+        }
+        final next = _queue.removeAt(0);
+        final clean = TtsService.plainForSpeech(next);
+        if (clean.isEmpty) continue;
+        for (final chunk in _tts._splitLongChunk(clean)) {
+          if (_cancelled) break;
+          final audio = await _tts._fetchAudio(chunk);
+          if (_cancelled || audio == null) break;
+          await _tts._playBytes(
+            audio,
+            onPlaybackStart: _onChunkStart == null
+                ? null
+                : () => _onChunkStart(chunk),
+          );
+        }
+      }
+    } catch (error, stack) {
+      _failure = error;
+      _failureStack = stack;
+      _cancelled = true;
+      _queue.clear();
+    } finally {
+      if (identical(_tts._activeStreamingSession, this)) {
+        _tts._activeStreamingSession = null;
+        _tts._busy = false;
+      }
     }
   }
 }

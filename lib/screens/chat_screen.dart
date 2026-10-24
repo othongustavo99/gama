@@ -139,7 +139,9 @@ class _ChatScreenState extends State<ChatScreen> {
           builder: (_) => VoiceModeScreen(
             isListening: () => _micArmed && _isListening,
             isReconnecting: () => _micArmed && !_isListening,
-            isSpeaking: () => _isSpeaking || TtsService.instance.isBusy,
+            isSpeaking: () => _isSpeaking,
+            isPreparingSpeech: () =>
+                !_isSpeaking && !_isLoading && TtsService.instance.isBusy,
             isProcessing: () => _isLoading,
             soundLevel: () => _voiceSoundLevel,
             transcript: () =>
@@ -200,6 +202,8 @@ class _ChatScreenState extends State<ChatScreen> {
   GamaMode _mode = GamaMode.programar;
   bool _speakNextReply = false;
   bool _ttsEarlyStarted = false;
+  StreamingSpeechSession? _liveSpeech;
+  final List<Future<void>> _pendingGeneratedImages = <Future<void>>[];
   bool _isSpeaking = false;
   String? _failedAssistantMessageId;
   String? _chatErrorMessage;
@@ -735,6 +739,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _toggleVoiceConversation() async {
+    if (_voiceConversationMode && _isLoading) {
+      await _stopGeneration();
+      if (mounted) {
+        _voiceMutedByUser = false;
+        unawaited(_resumeVoiceConversation());
+      }
+      return;
+    }
     if (_voiceConversationMode && (_isSpeaking || TtsService.instance.isBusy)) {
       // Interrupção por toque durante a reprodução: para a fala, mantém o
       // modo de voz ativo e reabre o microfone para a próxima mensagem.
@@ -2864,6 +2876,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _followStream = true;
     _streamSearchQuery = '';
     _streamRawText = StringBuffer();
+    _pendingGeneratedImages.clear();
     _assistantPersistence = null;
     _streamRevealTimer?.cancel();
     _streamRevealTimer = null;
@@ -2956,6 +2969,8 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       _voiceResponsePending = voiceRequested;
       _voiceResponseBuffer = '';
+      _voiceReplyDisplayMessageId = voiceRequested ? assistantMessage.id : null;
+      _voiceReplyDisplayedText.value = '';
     });
     try {
       await ConversationSyncService.instance.trackPendingGeneration(
@@ -2999,6 +3014,24 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       final generationEpoch = _generation.start();
+      // Apenas respostas explicitamente pedidas por voz usam TTS incremental.
+      // O TTS automático do chat de texto mantém a exibição normal.
+      if (voiceRequested && oficina == null && willSpeak) {
+        try {
+          _liveSpeech = await TtsService.instance.startStreamingSpeech(
+            onChunkPlaybackStart: (chunk) {
+              if (!mounted || !_generation.isCurrent(generationEpoch)) return;
+              if (!_isSpeaking) setState(() => _isSpeaking = true);
+              _voiceReplyDisplayedText.value =
+                  '${_voiceReplyDisplayedText.value}${_voiceReplyDisplayedText.value.isEmpty ? '' : ' '}$chunk';
+            },
+          );
+          _ttsEarlyStarted = true;
+        } catch (error, stack) {
+          logSwallowed(error, stack);
+          _liveSpeech = null;
+        }
+      }
       _streamSubscription = stream.listen(
         (event) {
           if (!_generation.isCurrent(generationEpoch)) return;
@@ -3023,6 +3056,7 @@ class _ChatScreenState extends State<ChatScreen> {
             if (token != null) {
               if (_voiceResponsePending) {
                 _voiceResponseBuffer += token;
+                _liveSpeech?.append(token);
               } else {
                 _streamRawText.write(token);
               }
@@ -3094,13 +3128,12 @@ class _ChatScreenState extends State<ChatScreen> {
           if (event.imageBase64 != null && event.imageBase64!.isNotEmpty) {
             final assistant = _messages.where((m) => m.isAssistant).toList();
             if (assistant.isNotEmpty) {
-              unawaited(
-                _storeGeneratedImage(
-                  data: event.imageBase64!,
-                  mime: event.imageMime ?? 'image/png',
-                  messageId: assistant.last.id,
-                ),
+              final imageStore = _storeGeneratedImage(
+                data: event.imageBase64!,
+                mime: event.imageMime ?? 'image/png',
+                messageId: assistant.last.id,
               );
+              _pendingGeneratedImages.add(imageStore);
             }
           }
 
@@ -3114,6 +3147,7 @@ class _ChatScreenState extends State<ChatScreen> {
             // Mantém a resposta fora da UI enquanto a Gama ainda está
             // gerando. O conteúdo será revelado quando o áudio começar.
             _voiceResponseBuffer += token;
+            _liveSpeech?.append(token);
           } else if (_messages.isNotEmpty && _messages.last.isAssistant) {
             _queueStreamText(token);
           }
@@ -3123,6 +3157,13 @@ class _ChatScreenState extends State<ChatScreen> {
           if (!_generation.isCurrent(generationEpoch)) return;
           _streamSubscription = null;
           final isVoiceReply = _voiceResponsePending;
+          // Evita corrida: a geração pode fechar enquanto a imagem ainda
+          // está sendo escrita no disco/Hive. Aguarde antes de consolidar.
+          if (_pendingGeneratedImages.isNotEmpty) {
+            await Future.wait(List<Future<void>>.from(_pendingGeneratedImages));
+            _pendingGeneratedImages.clear();
+          }
+          if (!_generation.isCurrent(generationEpoch)) return;
           _voiceResponseBuffer = _voiceResponseBuffer
               .replaceAll(
                 RegExp(
@@ -3169,6 +3210,9 @@ class _ChatScreenState extends State<ChatScreen> {
               : (_streamingText.value.trim().isNotEmpty ||
                     (latestAssistant?.content.trim().isNotEmpty ?? false));
           if (!hasResponse) {
+            final speech = _liveSpeech;
+            _liveSpeech = null;
+            if (speech != null) await speech.cancel();
             _stopGenerationClock();
             latestAssistant?.discardCurrentVariant();
             if (mounted) {
@@ -3210,7 +3254,9 @@ class _ChatScreenState extends State<ChatScreen> {
             if (isVoiceReply) {
               assistantToSave.content = responseText;
               _voiceReplyDisplayMessageId = assistantToSave.id;
-              _voiceReplyDisplayedText.value = '';
+              // A fala pode ter começado antes de o stream terminar.
+              // Não apague as frases que já foram reproduzidas.
+              if (_liveSpeech == null) _voiceReplyDisplayedText.value = '';
             }
             try {
               final pendingWrite = _assistantPersistence;
@@ -3230,7 +3276,18 @@ class _ChatScreenState extends State<ChatScreen> {
               // A resposta já está no Hive antes de iniciar qualquer TTS.
               if (!_generation.isCurrent(generationEpoch)) return;
               if (mounted) {
-                if (isVoiceReply) {
+                if (isVoiceReply && _liveSpeech != null) {
+                  final speech = _liveSpeech!;
+                  try {
+                    await speech.finish();
+                  } finally {
+                    if (identical(_liveSpeech, speech)) _liveSpeech = null;
+                    _speakNextReply = false;
+                    _voiceReplyDisplayMessageId = null;
+                    _voiceReplyDisplayedText.value = '';
+                    if (mounted) setState(() => _isSpeaking = false);
+                  }
+                } else if (isVoiceReply) {
                   await _maybeSpeak(responseText, revealWhileSpeaking: true);
                 } else {
                   await _maybeSpeak(responseText);
@@ -3302,6 +3359,9 @@ class _ChatScreenState extends State<ChatScreen> {
         },
         onError: (e) async {
           if (!_generation.isCurrent(generationEpoch)) return;
+          final speech = _liveSpeech;
+          _liveSpeech = null;
+          if (speech != null) await speech.cancel();
           _stopGenerationClock();
           _streamRevealTimer?.cancel();
           _streamRevealTimer = null;
@@ -3380,6 +3440,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _stopGeneration() async {
+    final speech = _liveSpeech;
+    _liveSpeech = null;
+    if (speech != null) await speech.cancel();
     // Invalida os eventos de rede antes de aguardar o cancelamento remoto.
     _generation.invalidate();
     _stopGenerationClock();
@@ -3420,6 +3483,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _voiceResponsePending = false;
     _voiceResponseBuffer = '';
+    _voiceReplyDisplayMessageId = null;
+    _voiceReplyDisplayedText.value = '';
     _speakNextReply = false;
     _isSpeaking = false;
     _chatErrorMessage = null;
@@ -3491,6 +3556,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    final speech = _liveSpeech;
+    _liveSpeech = null;
+    if (speech != null) unawaited(speech.cancel());
     SettingsService.instance.removeListener(_onModeSettingsChanged);
     _generation.invalidate();
     _generationClock.dispose();
@@ -4211,7 +4279,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                   .isEmpty &&
                                                               !isUser &&
                                                               _isLoading &&
-                                                              _voiceResponsePending)
+                                                              _voiceResponsePending &&
+                                                              _voiceReplyDisplayedText.value.isEmpty)
                                                             _timedStreamStatus()
                                                           else if (!isUser &&
                                                               isLastAssistant &&

@@ -43,6 +43,7 @@ from ..core.video_gen import (
     parse_video_options,
 )
 from ..core.document_builder.store import load_artifact, save_artifact
+from ..core.video_jobs import create_job, get_job, update_job
 from ..core.media_links import create_media_reference_url
 from ..core.code_analyzer.index_store import load_meta
 
@@ -1312,6 +1313,10 @@ async def chat(
                     options = parse_video_options(last_user)
                     stored_artifact = None
                     error = None
+                    # Job salvo no Volume antes de chamar o provedor. Caso o
+                    # processo reinicie, /media/video-jobs permite retomada.
+                    video_job = create_job(user_id, conversation_id=getattr(request, "conversation_id", None))
+                    video_job_id = video_job["job_id"]
                     yield {"type": "phase", "phase": "video_queued"}
                     try:
                         async for event in generate_video_events(
@@ -1323,8 +1328,16 @@ async def chat(
                             reference_video_url=reference_video_url,
                             generate_audio=bool(args.get("generate_audio", options["generate_audio"])),
                         ):
-                            if event.get("type") == "phase":
-                                yield {"type": "phase", "phase": event.get("phase") or "video_generating"}
+                            if event.get("type") == "submitted":
+                                update_job(user_id, video_job_id,
+                                    provider_job_id=event.get("provider_job_id"),
+                                    polling_url=event.get("polling_url"),
+                                    model=event.get("model"), status="processing",
+                                    phase="video_generating")
+                            elif event.get("type") == "phase":
+                                phase = event.get("phase") or "video_generating"
+                                update_job(user_id, video_job_id, phase=phase)
+                                yield {"type": "phase", "phase": phase}
                             elif event.get("type") == "error":
                                 error = str(event.get("error") or "O provedor não conseguiu gerar o vídeo.")[:500]
                             elif event.get("type") == "completed":
@@ -1343,6 +1356,9 @@ async def chat(
                                         "kind": "video",
                                         "size": saved.get("size", len(data)),
                                     }
+                                    update_job(user_id, video_job_id, status="completed",
+                                               phase="completed", artifact_id=saved["artifact_id"],
+                                               filename=saved["filename"])
                     except Exception as exc:
                         logger.exception("agent video tool failed")
                         error = str(exc)[:300]
@@ -1350,7 +1366,14 @@ async def chat(
                         yield {"type": "artifact", "artifact": stored_artifact}
                         yield {"type": "result", "content": f"Vídeo criado: {stored_artifact['filename']}. O arquivo está anexado à resposta."}
                     else:
-                        yield {"type": "result", "content": error or "O provedor não retornou um vídeo válido."}
+                        # Erro no polling/download após submissão pode ser
+                        # recuperável: mantenha o ID do provedor para retomar.
+                        submitted = bool((get_job(user_id, video_job_id) or {}).get("provider_job_id"))
+                        update_job(user_id, video_job_id,
+                            status="recoverable" if submitted else "failed",
+                            error=(error or "O provedor não retornou um vídeo válido.")[:300])
+                        yield {"type": "result", "content": (error or "O provedor não retornou um vídeo válido.") +
+                              " Consulte Biblioteca > Gerações de vídeo para verificar/retomar este trabalho; não faça outro pedido pago antes de conferir."}
                     return
 
                 if tool_name == "create_file":

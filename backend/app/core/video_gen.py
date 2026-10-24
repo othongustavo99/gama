@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from ..config import settings
+from .net_safety import safe_get, UnsafeURLError
 
 logger = logging.getLogger(__name__)
 DEFAULT_VIDEO_MODEL = "bytedance/seedance-2.0-mini"
@@ -255,7 +256,7 @@ async def generate_video_events(
     base = getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
     deadline = asyncio.get_running_loop().time() + max(60, min(timeout_seconds, 900))
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=20.0), follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=20.0), follow_redirects=False) as client:
             yield {"type": "phase", "phase": "video_queued"}
             response = await client.post(f"{base}/videos", headers=headers, json=payload)
             if response.status_code not in (200, 201, 202):
@@ -281,6 +282,8 @@ async def generate_video_events(
             ):
                 yield {"type": "error", "error": "O provedor retornou uma URL de acompanhamento inválida."}
                 return
+            yield {"type": "submitted", "provider_job_id": job_id,
+                   "polling_url": polling_url, "model": model_id}
             yield {"type": "phase", "phase": "video_generating"}
             poll_delay = 4.0
             latest: dict[str, Any] = job
@@ -326,20 +329,24 @@ async def generate_video_events(
             if video_parts.scheme != "https" or not video_parts.netloc:
                 yield {"type": "error", "error": "O provedor retornou uma URL de vídeo inválida."}
                 return
-            auth_headers = headers if video_parts.netloc.lower() == urlparse(base).netloc.lower() else None
-            content = await client.get(video_url, headers=auth_headers)
-            if content.status_code >= 400:
-                yield {"type": "error", "error": f"O vídeo foi gerado, mas não consegui baixá-lo do provedor de arquivos (HTTP {content.status_code})."}
+            # Valida DNS/IP e cada redirect antes de baixar. Nunca encaminha
+            # a chave da OpenRouter a hosts externos ou redirecionamentos.
+            final_url, content_status, content_type, data = await safe_get(
+                client, video_url, max_bytes=100 * 1024 * 1024, max_redirects=3
+            )
+            if content_status != 200 or len(data) >= 100 * 1024 * 1024:
+                yield {"type": "error", "error": "O vídeo foi concluído, mas o download falhou ou excedeu 100 MB. Você poderá retomar pela Biblioteca."}
                 return
-            data = content.content
             if len(data) < 128 or not (data[4:8] == b"ftyp" or data.startswith(b"\x1aE\xdf\xa3")):
                 yield {"type": "error", "error": "O provedor retornou um arquivo vazio ou em formato de vídeo não reconhecido; não salvei um artefato inválido."}
                 return
             usage = latest.get("usage") if isinstance(latest.get("usage"), dict) else {}
             cost = usage.get("cost")
-            yield {"type": "completed", "data": data, "model": model_id, "cost": cost, "duration": seconds, "resolution": res, "aspect_ratio": ratio, "generate_audio": bool(generate_audio), "content_type": content.headers.get("content-type", "video/mp4")}
+            yield {"type": "completed", "data": data, "model": model_id, "cost": cost, "duration": seconds, "resolution": res, "aspect_ratio": ratio, "generate_audio": bool(generate_audio), "content_type": content_type or "video/mp4"}
+    except UnsafeURLError:
+        yield {"type": "error", "error": "O provedor retornou um link de download inseguro. O trabalho pode ser consultado na Biblioteca."}
     except httpx.TimeoutException:
-        yield {"type": "error", "error": "A OpenRouter demorou demais para responder ao pedido de vídeo. Tente novamente."}
+        yield {"type": "error", "error": "A OpenRouter demorou demais para responder ao pedido de vídeo. Confira o trabalho na Biblioteca antes de tentar outra geração."}
     except httpx.HTTPError as exc:
         logger.warning("OpenRouter video HTTP error: %s", type(exc).__name__)
         yield {"type": "error", "error": "Falha de conexão com o serviço de vídeo. Confira a conexão e tente novamente."}

@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
 import '../services/download_service.dart';
+import '../widgets/video_jobs_panel.dart';
 import '../utils/error_logger.dart';
 
 /// Biblioteca local de anexos (metadados + arquivo persistido).
@@ -277,7 +278,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ),
         ],
       ),
-      body: _items.isEmpty
+      body: Column(children: [
+        VideoJobsPanel(onLibraryChanged: _load),
+        Expanded(child: _items.isEmpty
           ? Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
@@ -365,7 +368,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                 );
               },
-            ),
+            )),
+      ]),
     );
   }
 

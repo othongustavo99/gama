@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import mimetypes
+import asyncio
+from urllib.parse import urlparse
+import httpx
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -10,6 +13,9 @@ from fastapi.responses import FileResponse
 from ..core.document_builder.store import ArtifactStorageLimitError, load_artifact, save_artifact
 from ..core.identity import current_user_id
 from ..core.media_links import create_media_reference_url, validate_media_reference
+from ..core.video_jobs import get_job, list_jobs, public_job, update_job
+from ..core.net_safety import safe_get, UnsafeURLError
+from ..config import settings
 from ._upload import read_upload_limited
 
 router = APIRouter(prefix="/media", tags=["media"])
@@ -88,3 +94,90 @@ async def serve_reference_media(
         raise HTTPException(status_code=404, detail="Arquivo de mídia não encontrado")
     mime = str(info.get("mime") or info.get("content_type") or mimetypes.guess_type(path.name)[0] or "application/octet-stream")
     return FileResponse(path, media_type=mime, filename=path.name)
+
+
+@router.get("/video-jobs")
+async def video_jobs_list(user_id: str = Depends(current_user_id)):
+    """Jobs persistidos por usuário; útil após trocar de tela ou reiniciar app."""
+    return {"ok": True, "jobs": list_jobs(user_id)}
+
+
+@router.get("/video-jobs/{job_id}")
+async def video_job_detail(job_id: str, user_id: str = Depends(current_user_id)):
+    item = get_job(user_id, job_id)
+    if item is None:
+        raise HTTPException(404, "Trabalho não encontrado")
+    return {"ok": True, "job": public_job(item)}
+
+
+# Evita que duas chamadas de retomada iniciem downloads simultâneos neste
+# processo. O store também mantém o artefato concluído no Volume.
+_VIDEO_RESUME_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+@router.post("/video-jobs/{job_id}/resume")
+async def resume_video_job(job_id: str, user_id: str = Depends(current_user_id)):
+    """Consulta job existente na OpenRouter. Nunca inicia nova geração paga."""
+    item = get_job(user_id, job_id)
+    if item is None:
+        raise HTTPException(404, "Trabalho não encontrado")
+    lock_key = f"{user_id}:{job_id}"
+    lock = _VIDEO_RESUME_LOCKS.setdefault(lock_key, asyncio.Lock())
+    async with lock:
+        item = get_job(user_id, job_id)
+        if item is None:
+            raise HTTPException(404, "Trabalho não encontrado")
+        if item.get("status") == "completed":
+            return {"ok": True, "job": public_job(item)}
+        url = str(item.get("polling_url") or "")
+        base = str(getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")).rstrip("/")
+        pu, pb = urlparse(url), urlparse(base)
+        if not (pu.scheme == pb.scheme == "https" and
+                pu.netloc == pb.netloc and
+                pu.path.startswith(pb.path.rstrip("/") + "/videos/") and
+                not pu.username and not pu.password):
+            raise HTTPException(409, "O trabalho ainda não possui uma referência segura no provedor")
+        key = getattr(settings, "OPENROUTER_API_KEY", "")
+        if not key:
+            raise HTTPException(503, "Chave da OpenRouter não configurada")
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(40, connect=15), follow_redirects=False) as client:
+                response = await client.get(url, headers={"Authorization": f"Bearer {key}"})
+                if response.status_code != 200:
+                    raise HTTPException(502, f"Falha na consulta do provedor (HTTP {response.status_code})")
+                data = response.json()
+                state = str(data.get("status", "")).lower()
+                if state == "failed":
+                    item = update_job(user_id, job_id, status="failed", phase="failed",
+                                      error="A geração falhou no provedor")
+                elif state != "completed":
+                    item = update_job(user_id, job_id, status="processing", phase="video_generating")
+                else:
+                    links = data.get("unsigned_urls") or []
+                    if isinstance(links, str):
+                        links = [links]
+                    source = next((s for s in links if isinstance(s, str) and s.startswith("https://")), None)
+                    if source is None:
+                        raise HTTPException(502, "Vídeo concluído, mas sem link de arquivo válido")
+                    final_url, status, mime, content = await safe_get(
+                        client, source, max_bytes=100 * 1024 * 1024, max_redirects=3)
+                    if len(content) >= 100 * 1024 * 1024:
+                        raise HTTPException(413, "O vídeo excedeu 100 MB; não vou salvar um arquivo incompleto")
+                    if status != 200 or len(content) < 128 or not (
+                        content[4:8] == b"ftyp" or content.startswith(b"\x1aE\xdf\xa3")
+                    ):
+                        raise HTTPException(502, "Arquivo retornado pelo provedor é inválido")
+                    completed = get_job(user_id, job_id)
+                    if completed and completed.get("status") == "completed":
+                        return {"ok": True, "job": public_job(completed)}
+                    from ..core.document_builder.store import save_artifact
+                    saved = save_artifact(kind="video", filename="gama_video_gerado.mp4",
+                        data=content, user_id=user_id,
+                        meta={"model": item.get("model"), "recovered_job_id": job_id})
+                    item = update_job(user_id, job_id, status="completed", phase="completed",
+                                      artifact_id=saved["artifact_id"], filename=saved["filename"], error="")
+        except HTTPException:
+            raise
+        except (httpx.HTTPError, UnsafeURLError, ValueError, OSError) as exc:
+            raise HTTPException(503, "Não consegui retomar agora. Você pode tentar novamente sem gerar outro vídeo.") from exc
+        return {"ok": True, "job": public_job(item)}
