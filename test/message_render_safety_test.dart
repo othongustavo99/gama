@@ -17,7 +17,7 @@ void main() {
       isUser: false,
       streaming: true,
     )));
-    expect(find.textContaining('Imagem em preparação:'), findsOneWidget);
+    expect(find.textContaining('Criando uma prévia'), findsOneWidget);
     expect(find.byType(Image), findsNothing);
   });
 

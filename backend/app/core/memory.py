@@ -74,7 +74,7 @@ def _safe_user_id(user_id: Optional[str]) -> str:
 # --------------------------------------------------------------------------- taxonomia
 
 _LABEL_RE = re.compile(
-    r"^(Nome|Idade|Nascimento|Natural de|Mora em|Estado civil|Profissão|Cor favorita|"
+    r"^(Nome|Apelido|Como me chamar|Prefere ser chamado de|Idade|Nascimento|Natural de|Mora em|Estado civil|Profissão|Cor favorita|"
     r"Esposa|Esposo|Marido|Mulher|Namorado|Namorada|Filho|Filha|Irmão|Irmã|Mãe|Pai|"
     r"Empresa|Projeto|App|Aplicativo|Stack|Linguagem|Framework|Time|"
     r"Gosta de|Não gosta de|Prefere|Odeia|Comportamento)\s*:",
@@ -83,12 +83,13 @@ _LABEL_RE = re.compile(
 
 # Rótulos que só podem ter UM valor (novo valor substitui o antigo).
 SINGLE_VALUED = {
-    "nome", "idade", "nascimento", "natural de", "mora em", "estado civil",
+    "nome", "apelido", "como me chamar", "prefere ser chamado de", "idade", "nascimento", "natural de", "mora em", "estado civil",
     "profissão", "cor favorita", "empresa",
 }
 
 CATEGORY_BY_LABEL = {
-    "nome": "identity", "idade": "identity", "nascimento": "identity",
+    "nome": "identity", "apelido": "identity", "como me chamar": "identity",
+    "prefere ser chamado de": "identity", "idade": "identity", "nascimento": "identity",
     "natural de": "identity", "mora em": "identity", "estado civil": "identity",
     "profissão": "work", "empresa": "work", "stack": "work", "linguagem": "work",
     "framework": "work", "time": "work",
@@ -109,6 +110,49 @@ DEFAULT_IMPORTANCE = {
 
 VALID_CATEGORIES = set(DEFAULT_IMPORTANCE)
 CORE_CATEGORIES = {"identity", "work"}  # sempre no prompt (behavior tem bloco próprio)
+
+
+def _is_stable_addressing_preference(fact: dict) -> bool:
+    """Inclui preferências de tratamento antigas mesmo quando rotuladas como `note`.
+
+    Não promove preferências de assuntos, projetos ou preferências passageiras
+    indiscriminadamente para o system prompt de todas as conversas.
+    """
+    text = _norm(str(fact.get("text") or "")).strip()
+    label = _label_of(str(fact.get("text") or ""))
+    if label in {"apelido", "como me chamar", "prefere ser chamado de"}:
+        return True
+    # Inclui fatos antigos, inclusive anotados sem categoria explicitamente.
+    return bool(re.search(
+        r"(?:^|\b)(?:meu apelido|me chame|pode me chamar|me chama|"
+        r"prefiro que (?:voce|a gama) me chame|"
+        r"(?:prefere|preferencia|comportamento)\s*:\s*.*(?:me chamar|me chame|me trate|"
+        r"trate-me|se dirija a mim|me chamar de))\b",
+        text,
+    ))
+
+
+def _is_global_behavior_rule(fact: dict) -> bool:
+    """Regras de forma/estilo, inclusive registros antigos não categorizados."""
+    text = _norm(str(fact.get("text") or "")).strip()
+    if fact.get("category") == "behavior" or text.startswith("comportamento:"):
+        return True
+    if re.match(r"^(?:prefere|preferencia|quero que|gostaria que)\b", text):
+        return bool(re.search(
+            r"\b(?:responda|responde|respostas?|explicar|explique|"
+            r"fale|falar|seja|tom|linguagem|formal|informal|apelido|"
+            r"chame|chamar|tratamento|emojis?|lista|topicos|"
+            r"detalhad[oa]s?|curt[oa]s?)\b", text
+        ))
+    return False
+
+
+def _is_stable_core_fact(fact: dict) -> bool:
+    return bool(
+        fact.get("category") in CORE_CATEGORIES
+        or fact.get("pinned")
+        or _is_stable_addressing_preference(fact)
+    )
 
 
 def _label_of(text: str) -> Optional[str]:
@@ -515,7 +559,7 @@ class MemoryStore:
     def select_relevant(self, query: str, facts: Optional[List[dict]] = None) -> List[dict]:
         """Fatos não-core mais úteis para `query` (BM25 leve + importância + recência)."""
         pool = facts if facts is not None else [
-            f for f in self.list_facts() if f["category"] not in CORE_CATEGORIES and f["category"] != "behavior"
+            f for f in self.list_facts() if not _is_global_behavior_rule(f) and not _is_stable_core_fact(f)
         ]
         # Memórias pequenas seguem retrocompatíveis. Acima de 6 fatos,
         # selecionar pelo assunto evita injetar detalhes pessoais sem utilidade
@@ -561,13 +605,13 @@ class MemoryStore:
         for f in facts:
             line = f"- {f['text']}"
             if used + len(line) > max_chars:
-                break
+                continue
             lines.append(line)
             used += len(line) + 1
         return lines
 
     def behavior_block(self) -> str:
-        rules = [f for f in self.list_facts() if f["category"] == "behavior"]
+        rules = [f for f in self.list_facts() if _is_global_behavior_rule(f)]
         if not rules:
             return ""
         body = []
@@ -579,22 +623,27 @@ class MemoryStore:
     def core_block(self) -> str:
         """Parte ESTÁVEL (boa para cache de prompt): regras + identidade/trabalho."""
         facts = self.list_facts()
-        core = [f for f in facts if f["category"] in CORE_CATEGORIES or f.get("pinned")]
-        core = [f for f in core if f["category"] != "behavior"]
+        core = [f for f in facts if _is_stable_core_fact(f)]
+        core = [f for f in core if not _is_global_behavior_rule(f)]
         parts = []
         beh = self.behavior_block()
         if beh:
             parts.append(beh)
         if core:
-            core.sort(key=lambda f: (-f["importance"], f.get("created_at", "")))
-            parts.append(self._facts_header() + "\n".join(self._lines(core, 1200)))
+            # Apelidos e formas de tratamento sempre entram antes de fatos de
+            # trabalho, mesmo quando a memória atingiu o limite do bloco.
+            core.sort(key=lambda f: (
+                0 if _is_stable_addressing_preference(f) else 1,
+                -f["importance"], f.get("created_at", ""),
+            ))
+            parts.append(self._facts_header() + "\n".join(self._lines(core, 1800)))
         return "\n\n".join(parts)
 
     def relevant_block(self, query: str = "", *, exclude_ids: Optional[set] = None) -> tuple[str, List[str]]:
         """Parte DINÂMICA: fatos relevantes à pergunta. Retorna (bloco, ids usados)."""
         facts = [
             f for f in self.list_facts()
-            if f["category"] not in CORE_CATEGORIES and f["category"] != "behavior" and not f.get("pinned")
+            if not _is_global_behavior_rule(f) and not _is_stable_core_fact(f)
         ]
         if exclude_ids:
             facts = [f for f in facts if f["id"] not in exclude_ids]

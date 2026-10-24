@@ -18,6 +18,7 @@ import '../screens/oficina_screen.dart';
 import '../screens/code_diff_screen.dart';
 import '../services/download_service.dart';
 import '../utils/error_logger.dart';
+import '../utils/streaming_text_preview.dart';
 
 class ParsedMessage {
   final String text;
@@ -395,6 +396,23 @@ class MessageContentView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Durante a geração não precisamos interpretar Markdown parcial como
+    // imagens, fórmulas ou tabelas. Em determinados Androids isso produzia
+    // grandes áreas de renderização vazias e reconstruções custosas.
+    // A resposta final continua passando pelo renderer completo abaixo.
+    if (streaming && !isUser) {
+      final preview = streamingTextPreview(content);
+      return Text(
+        preview,
+        softWrap: true,
+        style: TextStyle(
+          color: context.gama.textPrimary,
+          fontSize: 15,
+          height: 1.55,
+          letterSpacing: 0.1,
+        ),
+      );
+    }
     final extracted = extractGamaImages(content);
     final parsed = isUser
         ? parseMessageContent(extracted.$1)
