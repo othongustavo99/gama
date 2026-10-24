@@ -82,6 +82,35 @@ class GamaPalette extends ThemeExtension<GamaPalette> {
     bubbleAssistant: Color(0xFF121821),
   );
 
+  /// Identidade cromática preservada; contraste específico para superfícies claras.
+  /// O balão do usuário permanece escuro para manter texto e ações legíveis.
+  factory GamaPalette.light() => const GamaPalette(
+    background: Color(0xFFF7F8FA),
+    surface: Color(0xFFFFFFFF),
+    surfaceElevated: Color(0xFFF2F4F7),
+    surfaceCard: Color(0xFFFAFBFC),
+    surfaceInput: Color(0xFFF3F5F8),
+    surfaceHover: Color(0xFFE9EDF3),
+    accent: Color(0xFFAF531C),
+    accentSoft: Color(0x18AF531C),
+    accentMuted: Color(0xFF934315),
+    accentGlow: Color(0x1AAF531C),
+    accentBright: Color(0xFFCC7334),
+    accentCool: Color(0xFF425FBA),
+    textPrimary: Color(0xFF1B2430),
+    textSecondary: Color(0xFF4C596B),
+    textMuted: Color(0xFF637083),
+    textHint: Color(0xFF6D7988),
+    border: Color(0xFFD5DDE6),
+    borderSoft: Color(0xFFE2E7EE),
+    divider: Color(0xFFE8ECF1),
+    error: Color(0xFFB42332),
+    success: Color(0xFF17764A),
+    bubbleUser: Color(0xFF633B28),
+    bubbleUserSoft: Color(0xFF754731),
+    bubbleAssistant: Color(0xFFFFFFFF),
+  );
+
   @override
   GamaPalette copyWith({
     Color? background,

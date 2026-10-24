@@ -17,8 +17,14 @@ from pathlib import Path
 from typing import Any
 
 from .validator import validate_path_safe
+from ..code_analyzer.cleaner import is_sensitive_file, should_skip_dir
 
 logger = logging.getLogger(__name__)
+
+
+def _excluded_path(path_rel: str) -> bool:
+    parts = Path(path_rel.replace("\\", "/")).parts
+    return is_sensitive_file(path_rel) or any(should_skip_dir(part) for part in parts[:-1])
 
 
 def _target_inside(root: Path, path_rel: str) -> Path:
@@ -66,7 +72,7 @@ def apply_edits(
         path_rel = (edit.get("path") or "").strip().replace("\\", "/")
         action = (edit.get("action") or "write").strip().lower()
 
-        if not validate_path_safe(path_rel):
+        if not validate_path_safe(path_rel) or _excluded_path(path_rel):
             errors.append(f"[{i}] path inseguro: {path_rel}")
             continue
 
@@ -162,7 +168,7 @@ def apply_edits(
     return {"applied": applied, "errors": errors, "ok": len(errors) == 0}
 
 
-def write_files(root: Path, files: dict[str, str]) -> list[str]:
+def write_files(root: Path, files: dict[str, str], *, strict: bool = False) -> list[str]:
     """Escreve vários arquivos de uma vez. Retorna paths escritos.
 
     Paths inseguros ou fora do workspace são ignorados e logados.
@@ -170,12 +176,16 @@ def write_files(root: Path, files: dict[str, str]) -> list[str]:
     written: list[str] = []
     for rel, content in (files or {}).items():
         rel = rel.strip().replace("\\", "/")
-        if not validate_path_safe(rel):
-            logger.warning("write_files: path inseguro ignorado: %r", rel)
+        if not validate_path_safe(rel) or _excluded_path(rel):
+            if strict:
+                raise ValueError(f"Arquivo extra recusado (caminho inseguro ou sensível): {rel}")
+            logger.warning("write_files: path inseguro/sensível ignorado: %r", rel)
             continue
         try:
             target = _target_inside(root, rel)
         except ValueError as exc:
+            if strict:
+                raise ValueError(f"Arquivo extra {rel} recusado: {exc}") from exc
             logger.warning("write_files: %s: %s", rel, exc)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)

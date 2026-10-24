@@ -5,6 +5,9 @@ import '../core/constants.dart';
 
 enum GamaMode { programar, conversar }
 
+/// Preferência persistida. Não afeta modelos, memória nem histórico.
+enum GamaAppearance { system, light, dark }
+
 class SettingsService extends ChangeNotifier {
   SettingsService._();
   static final SettingsService instance = SettingsService._();
@@ -16,6 +19,8 @@ class SettingsService extends ChangeNotifier {
   static const String _keyFishVoiceId = 'gama_fish_voice_id';
   static const String _keyFontScale = 'gama_font_scale';
   static const String _keyDeveloperMode = 'gama_developer_mode';
+  static const String _keyAppearance = 'gama_appearance';
+  static const String _keyReduceMotion = 'gama_reduce_motion';
 
   late SharedPreferences _prefs;
   bool _initialized = false;
@@ -72,6 +77,20 @@ class SettingsService extends ChangeNotifier {
     return value.clamp(0.85, 1.30).toDouble();
   }
 
+  GamaAppearance get appearance {
+    _ensureInitialized();
+    return switch (_prefs.getString(_keyAppearance)) {
+      'light' => GamaAppearance.light,
+      'dark' => GamaAppearance.dark,
+      _ => GamaAppearance.dark,
+    };
+  }
+
+  bool get reduceMotion {
+    _ensureInitialized();
+    return _prefs.getBool(_keyReduceMotion) ?? false;
+  }
+
   bool get developerMode {
     _ensureInitialized();
     return _prefs.getBool(_keyDeveloperMode) ?? false;
@@ -123,6 +142,18 @@ class SettingsService extends ChangeNotifier {
     _ensureInitialized();
     final safe = value.clamp(0.85, 1.30).toDouble();
     await _prefs.setDouble(_keyFontScale, safe);
+    notifyListeners();
+  }
+
+  Future<void> setAppearance(GamaAppearance value) async {
+    _ensureInitialized();
+    await _prefs.setString(_keyAppearance, value.name);
+    notifyListeners();
+  }
+
+  Future<void> setReduceMotion(bool value) async {
+    _ensureInitialized();
+    await _prefs.setBool(_keyReduceMotion, value);
     notifyListeners();
   }
 

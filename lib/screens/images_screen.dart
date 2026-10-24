@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
+import '../utils/error_logger.dart';
+import '../utils/library_filter.dart';
 import '../widgets/loading_skeleton.dart';
 import 'library_screen.dart';
 
+/// Galeria leve sobre a mesma Biblioteca; não cria cópias adicionais.
 class ImagesScreen extends StatefulWidget {
   const ImagesScreen({super.key});
 
@@ -16,7 +19,10 @@ class ImagesScreen extends StatefulWidget {
 }
 
 class _ImagesScreenState extends State<ImagesScreen> {
+  final TextEditingController _search = TextEditingController();
   List<Map<String, dynamic>> _items = [];
+  String _query = '';
+  String? _loadError;
   bool _loading = true;
 
   @override
@@ -25,136 +31,193 @@ class _ImagesScreenState extends State<ImagesScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('gama_library') ?? '[]';
-    final list = (jsonDecode(raw) as List)
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
-    if (!mounted) return;
-    setState(() {
-      _items = list
-          .where((e) => (e['kind']?.toString() ?? '') == 'image')
-          .toList()
-          .reversed
+    if (mounted) setState(() => _loading = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('gama_library') ?? '[]';
+      final list = (jsonDecode(raw) as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
           .toList();
-      _loading = false;
-    });
+      if (!mounted) return;
+      setState(() {
+        _items = filterLibraryItems(list.reversed,
+            category: LibraryCategory.images);
+        _loadError = null;
+      });
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+      if (mounted) setState(() => _loadError =
+          'Não foi possível ler a galeria. Os arquivos continuam preservados.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final filtered = filterLibraryItems(_items, query: _query);
     return Scaffold(
       backgroundColor: context.gama.background,
       appBar: AppBar(
         backgroundColor: context.gama.surface,
         title: const Text('Imagens'),
+        actions: [
+          IconButton(
+            tooltip: 'Atualizar imagens',
+            onPressed: _loading ? null : _load,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
       ),
       body: _loading
           ? const GamaSkeletonGrid(itemCount: 6)
-          : _items.isEmpty
-          ? Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'Nenhuma imagem gerada ou anexada ainda.\n'
-                  'Use o clipe no chat ou peça à Gama para criar uma imagem.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: context.gama.textMuted),
-                ),
-              ),
-            )
-          : GridView.builder(
-              padding: const EdgeInsets.all(16),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: 0.9,
-              ),
-              itemCount: _items.length,
-              itemBuilder: (_, i) {
-                final it = _items[i];
-                final path = it['path']?.toString();
-                final name = it['name']?.toString() ?? '';
-                final hasFile =
-                    path != null && path.isNotEmpty && File(path).existsSync();
-
-                return Material(
-                  color: context.gama.surfaceCard,
-                  borderRadius: BorderRadius.circular(14),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () => LibraryScreen.openEntry(context, it),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              ClipRRect(
-                                borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(14),
-                                ),
-                                child: hasFile
-                                    ? Image.file(
-                                        File(path!),
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) => Center(
-                                          child: Icon(
-                                            Icons.broken_image_outlined,
-                                            color: context.gama.textMuted,
-                                          ),
-                                        ),
-                                      )
-                                    : Center(
-                                        child: Icon(
-                                          Icons.image_not_supported_outlined,
-                                          color: context.gama.textMuted,
-                                        ),
-                                      ),
-                              ),
-                              Positioned(
-                                top: 6,
-                                right: 6,
-                                child: Material(
-                                  color: context.gama.surface.withValues(
-                                    alpha: 0.9,
-                                  ),
-                                  shape: const CircleBorder(),
-                                  child: IconButton(
-                                    tooltip: 'Baixar imagem',
-                                    onPressed: hasFile
-                                        ? () => LibraryScreen.downloadEntry(
-                                            context,
-                                            it,
-                                          )
-                                        : null,
-                                    icon: const Icon(Icons.download_outlined),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Text(
-                            name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: context.gama.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: TextField(
+                    controller: _search,
+                    onChanged: (value) => setState(() => _query = value),
+                    decoration: InputDecoration(
+                      hintText: 'Pesquisar imagens',
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      suffixIcon: _query.isEmpty ? null : IconButton(
+                        tooltip: 'Limpar pesquisa',
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: () => setState(() {
+                          _query = '';
+                          _search.clear();
+                        }),
+                      ),
+                      isDense: true,
                     ),
                   ),
-                );
-              },
+                ),
+                Expanded(
+                  child: _loadError != null
+                      ? Center(child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(_loadError!,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: context.gama.error)),
+                        ))
+                      : RefreshIndicator(
+                          onRefresh: _load,
+                          child: filtered.isEmpty
+                              ? ListView(children: [
+                                  SizedBox(
+                                    height: 250,
+                                    child: Center(child: Padding(
+                                      padding: const EdgeInsets.all(24),
+                                      child: Text(
+                                        _items.isEmpty
+                                            ? 'Nenhuma imagem por enquanto.\nAnexe ou crie uma imagem na Gamma.'
+                                            : 'Nenhuma imagem encontrada.',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(color: context.gama.textMuted),
+                                      ),
+                                    )),
+                                  ),
+                                ])
+                              : LayoutBuilder(builder: (context, constraints) {
+                                  final columns = (constraints.maxWidth / 190)
+                                      .floor().clamp(2, 6).toInt();
+                                  final thumbPixels = (constraints.maxWidth /
+                                          columns *
+                                          MediaQuery.devicePixelRatioOf(context))
+                                      .round().clamp(180, 900).toInt();
+                                  return GridView.builder(
+                                    physics: const AlwaysScrollableScrollPhysics(),
+                                    padding: const EdgeInsets.all(16),
+                                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: columns,
+                                      mainAxisSpacing: 12,
+                                      crossAxisSpacing: 12,
+                                      childAspectRatio: 0.9,
+                                    ),
+                                    itemCount: filtered.length,
+                                    itemBuilder: (context, index) {
+                                      final it = filtered[index];
+                                      final path = it['path']?.toString();
+                                      final name = it['name']?.toString() ?? 'Imagem';
+                                      final exists = path != null &&
+                                          path.isNotEmpty && File(path).existsSync();
+                                      return Material(
+                                        color: context.gama.surfaceCard,
+                                        borderRadius: BorderRadius.circular(14),
+                                        child: InkWell(
+                                          borderRadius: BorderRadius.circular(14),
+                                          onTap: exists
+                                              ? () => LibraryScreen.openEntry(context, it)
+                                              : null,
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                                            children: [
+                                              Expanded(child: Stack(
+                                                fit: StackFit.expand,
+                                                children: [
+                                                  ClipRRect(
+                                                    borderRadius: const BorderRadius.vertical(
+                                                      top: Radius.circular(14),
+                                                    ),
+                                                    child: exists
+                                                        ? Image.file(File(path!),
+                                                            cacheWidth: thumbPixels,
+                                                            fit: BoxFit.cover,
+                                                            semanticLabel: name,
+                                                            errorBuilder: (_, __, ___) =>
+                                                                Icon(Icons.broken_image_outlined,
+                                                                    color: context.gama.textMuted))
+                                                        : Center(child: Icon(
+                                                            Icons.image_not_supported_outlined,
+                                                            color: context.gama.textMuted,
+                                                          )),
+                                                  ),
+                                                  Positioned(
+                                                    top: 4, right: 4,
+                                                    child: Material(
+                                                      color: context.gama.surface.withValues(alpha: 0.92),
+                                                      shape: const CircleBorder(),
+                                                      child: IconButton(
+                                                        tooltip: 'Baixar $name',
+                                                        onPressed: exists
+                                                            ? () => LibraryScreen.downloadEntry(context, it)
+                                                            : null,
+                                                        icon: const Icon(Icons.download_outlined),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              )),
+                                              Padding(
+                                                padding: const EdgeInsets.all(10),
+                                                child: Text(name,
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    color: context.gama.textSecondary,
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  );
+                                }),
+                        ),
+                ),
+              ],
             ),
     );
   }

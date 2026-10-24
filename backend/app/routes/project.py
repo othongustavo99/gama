@@ -161,6 +161,29 @@ async def project_get(project_id: str, user_id: str = Depends(current_user_id)):
     return summary
 
 
+@router.get("/{project_id}/review-plan")
+async def project_review_plan(project_id: str, user_id: str = Depends(current_user_id)):
+    """Prévia honesta do orçamento da revisão profunda; não consome créditos LLM."""
+    meta = _require_project_owner(project_id, user_id)
+    from ..core.code_analyzer.deep_review import plan_review_batches
+
+    plan = plan_review_batches(meta)
+    selected = plan["selected_paths"]
+    omitted = plan["omitted_paths"]
+    return {
+        "ok": True,
+        "project_id": project_id,
+        "indexed_files": plan["total_indexed_files"],
+        "eligible_files": plan["eligible_files"],
+        "planned_passes": len(plan["batches"]),
+        "planned_files": len(selected),
+        "omitted_files": len(omitted),
+        "omitted_paths_sample": omitted[:40],
+        "status": "partial_planned" if omitted else "all_eligible_planned",
+        "note": "Plano de leitura, não uma revisão concluída. Arquivos podem faltar, ser recortados ou falhar durante a análise.",
+    }
+
+
 @router.post("/{project_id}/context")
 async def project_context(
     project_id: str,

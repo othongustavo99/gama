@@ -715,15 +715,15 @@ class _MarkdownMessage extends StatelessWidget {
       code: textStyle.copyWith(
         fontSize: 13,
         fontFamily: 'monospace',
-        color: isUser ? Colors.white : const Color(0xFFF4F4F5),
+        color: isUser ? Colors.white : palette.textPrimary,
         backgroundColor: isUser
             ? Colors.black.withValues(alpha: 0.24)
-            : const Color(0xFF28282D),
+            : palette.surfaceElevated,
       ),
       codeblockDecoration: BoxDecoration(
         color: isUser
             ? Colors.black.withValues(alpha: 0.22)
-            : const Color(0xFF0E0E10),
+            : palette.surfaceInput,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: isUser ? Colors.white.withValues(alpha: 0.12) : palette.border,

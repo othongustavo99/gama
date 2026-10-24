@@ -12,7 +12,7 @@ import '../screens/settings_screen.dart';
 import '../screens/memory_screen.dart';
 import '../utils/error_logger.dart';
 
-class AppDrawer extends StatelessWidget {
+class AppDrawer extends StatefulWidget {
   final VoidCallback onNewChat;
   final Function(String conversationId) onSelectConversation;
   final VoidCallback? onOpenImages;
@@ -36,6 +36,30 @@ class AppDrawer extends StatelessWidget {
     this.persistent = false,
   });
 
+  @override
+  State<AppDrawer> createState() => _AppDrawerState();
+}
+
+class _AppDrawerState extends State<AppDrawer> {
+  final TextEditingController _conversationSearchController = TextEditingController();
+  String conversationQuery = '';
+
+  VoidCallback get onNewChat => widget.onNewChat;
+  Function(String) get onSelectConversation => widget.onSelectConversation;
+  VoidCallback? get onOpenImages => widget.onOpenImages;
+  VoidCallback? get onOpenLibrary => widget.onOpenLibrary;
+  VoidCallback? get onOpenProjects => widget.onOpenProjects;
+  VoidCallback? get onOpenScheduled => widget.onOpenScheduled;
+  VoidCallback? get onOpenPlugins => widget.onOpenPlugins;
+  VoidCallback? get onOpenOficina => widget.onOpenOficina;
+  bool get persistent => widget.persistent;
+
+  @override
+  void dispose() {
+    _conversationSearchController.dispose();
+    super.dispose();
+  }
+
   void _close(BuildContext context) {
     if (!persistent) Navigator.pop(context);
   }
@@ -43,7 +67,6 @@ class AppDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final service = ConversationService.instance;
-    String conversationQuery = '';
 
     return Drawer(
       backgroundColor: context.gama.surface,
@@ -283,6 +306,8 @@ class AppDrawer extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
                           child: TextField(
+                            controller: _conversationSearchController,
+                            textInputAction: TextInputAction.search,
                             decoration: InputDecoration(
                               hintText: 'Buscar título ou mensagem',
                               prefixIcon: const Icon(
@@ -297,9 +322,10 @@ class AppDrawer extends StatelessWidget {
                                         Icons.close_rounded,
                                         size: 18,
                                       ),
-                                      onPressed: () => setLocalState(
-                                        () => conversationQuery = '',
-                                      ),
+                                      onPressed: () => setLocalState(() {
+                                        conversationQuery = '';
+                                        _conversationSearchController.clear();
+                                      }),
                                     ),
                               filled: true,
                               fillColor: context.gama.surfaceCard,

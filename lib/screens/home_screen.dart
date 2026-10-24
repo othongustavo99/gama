@@ -108,8 +108,10 @@ class _HomeScreenState extends State<HomeScreen> {
           final oficinaKind = OficinaKindX.fromChatMode(
             currentConversation?.mode,
           );
+          // Na janela estreita do Windows, prefira o drawer recolhível.
           final desktopSidebar =
-              defaultTargetPlatform == TargetPlatform.windows;
+              defaultTargetPlatform == TargetPlatform.windows &&
+              MediaQuery.sizeOf(context).width >= 820;
           final appDrawer = AppDrawer(
             persistent: desktopSidebar,
             onNewChat: () async {
@@ -152,7 +154,9 @@ class _HomeScreenState extends State<HomeScreen> {
             backgroundColor: context.gama.background,
             drawer: desktopSidebar ? null : appDrawer,
             body: AnimatedSwitcher(
-              duration: GamaMotion.standard,
+              duration: MediaQuery.of(context).disableAnimations
+                  ? Duration.zero
+                  : GamaMotion.standard,
               switchInCurve: GamaMotion.curve,
               switchOutCurve: Curves.easeInCubic,
               child: currentId == null

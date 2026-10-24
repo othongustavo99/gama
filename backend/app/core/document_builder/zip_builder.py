@@ -161,6 +161,7 @@ def build_zip_from_mapping(
     """Cria ZIP a partir de {path_relativo: conteúdo}."""
     buf = io.BytesIO()
     total = 0
+    normalized_names: set[str] = set()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for rel, content in files.items():
             if not validate_path_safe(rel):
@@ -169,13 +170,18 @@ def build_zip_from_mapping(
                 raise ValueError(
                     f"Arquivo sensível não pode ser incluído no ZIP gerado: {rel}"
                 )
+            normalized = rel.replace("\\", "/")
+            key = normalized.casefold()
+            if key in normalized_names:
+                raise ValueError(f"Caminhos duplicados ou incompatíveis com Windows: {rel}")
+            normalized_names.add(key)
             if isinstance(content, str):
                 raw = content.encode("utf-8")
             else:
                 raw = content
             if total + len(raw) > max_total:
                 raise ValueError("Conteúdo excede limite do ZIP")
-            zf.writestr(rel.replace("\\", "/"), raw)
+            zf.writestr(normalized, raw)
             total += len(raw)
     data = buf.getvalue()
     result = validate_zip(data)

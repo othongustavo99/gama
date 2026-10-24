@@ -104,6 +104,20 @@ def _scan_root_for(project_id: str, meta: dict[str, Any]) -> Path:
     return root / rel
 
 
+def _review_plan_preview(meta: dict[str, Any]) -> dict[str, Any]:
+    """Prévia de cobertura, sem executar ou cobrar chamadas ao modelo."""
+    from .deep_review import plan_review_batches
+
+    plan = plan_review_batches(meta)
+    return {
+        "eligible_files": plan["eligible_files"],
+        "planned_files": len(plan["selected_paths"]),
+        "omitted_files": len(plan["omitted_paths"]),
+        "planned_passes": len(plan["batches"]),
+        "note": "Planejamento, não evidência de que estes arquivos foram lidos ou revisados.",
+    }
+
+
 # ─── Ingest ───────────────────────────────────────────────────────────────
 
 
@@ -153,6 +167,7 @@ def ingest_zip(
         "frameworks": map_data["frameworks"],
         "languages": map_data["languages"],
         "sample_paths": [f["path"] for f in map_data["files"][:25]],
+        "review_plan": _review_plan_preview(meta),
     }
 
 
@@ -306,6 +321,7 @@ async def ingest_github(
         "frameworks": map_data["frameworks"],
         "languages": map_data["languages"],
         "sample_paths": [f["path"] for f in files[:25]],
+        "review_plan": _review_plan_preview(meta),
         "cached": False,
     }
 

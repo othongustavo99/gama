@@ -11,6 +11,7 @@ import '../core/gama_colors.dart';
 import '../services/download_service.dart';
 import '../widgets/video_jobs_panel.dart';
 import '../utils/error_logger.dart';
+import '../utils/library_filter.dart';
 
 /// Biblioteca local de anexos (metadados + arquivo persistido).
 class LibraryScreen extends StatefulWidget {
@@ -36,7 +37,7 @@ class LibraryScreen extends StatefulWidget {
         final safe = name.replaceAll(RegExp(r'[^\w\.\-]+'), '_');
         final dest = p.join(
           libDir.path,
-          '${DateTime.now().millisecondsSinceEpoch}_$safe',
+          '${DateTime.now().microsecondsSinceEpoch}_$safe',
         );
         if (sourceBytes != null) {
           await File(dest).writeAsBytes(sourceBytes, flush: true);
@@ -56,8 +57,11 @@ class LibraryScreen extends StatefulWidget {
 
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('gama_library') ?? '[]';
+    // Nunca substitui uma biblioteca existente se seus metadados estiverem
+    // ilegíveis. O conteúdo antigo precisa permanecer recuperável.
     final list = (jsonDecode(raw) as List)
-        .map((e) => Map<String, dynamic>.from(e as Map))
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
         .toList();
     list.add({
       'name': name,
@@ -67,8 +71,8 @@ class LibraryScreen extends StatefulWidget {
       'at': DateTime.now().toIso8601String(),
       if (conversationId != null) 'conversationId': conversationId,
     });
-    final trimmed = list.length > 100 ? list.sublist(list.length - 100) : list;
-    await prefs.setString('gama_library', jsonEncode(trimmed));
+    // Não descartar os metadados mais antigos (nem deixar arquivos órfãos).
+    await prefs.setString('gama_library', jsonEncode(list));
     return savedPath;
   }
 
@@ -227,7 +231,12 @@ class LibraryScreen extends StatefulWidget {
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
+  final TextEditingController _searchController = TextEditingController();
   List<Map<String, dynamic>> _items = [];
+  LibraryCategory _category = LibraryCategory.all;
+  String _query = '';
+  String? _loadError;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -235,141 +244,344 @@ class _LibraryScreenState extends State<LibraryScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('gama_library') ?? '[]';
-    final list = (jsonDecode(raw) as List)
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
-    setState(() => _items = list.reversed.toList());
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('gama_library') ?? '[]';
+      final list = (jsonDecode(raw) as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _items = list.reversed.toList();
+        _loadError = null;
+      });
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+      if (!mounted) return;
+      setState(() => _loadError =
+          'Não foi possível ler o índice da Biblioteca. Seus arquivos não foram apagados.');
+    }
+  }
+
+  void _snack(String text) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<bool> _confirm({
+    required String title,
+    required String explanation,
+    required String action,
+  }) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(title),
+            content: Text(explanation),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancelar'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: TextButton.styleFrom(foregroundColor: ctx.gama.error),
+                child: Text(action),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<void> _clear() async {
-    final prefs = await SharedPreferences.getInstance();
-    // apaga arquivos persistidos
+    if (_busy || _items.isEmpty || _loadError != null) return;
+    final confirmed = await _confirm(
+      title: 'Esvaziar a Biblioteca?',
+      explanation: 'Os arquivos locais registrados na Biblioteca serão apagados '
+          'do dispositivo. Suas conversas e os trabalhos armazenados no Railway '
+          'não serão apagados. Esta ação não pode ser desfeita.',
+      action: 'Esvaziar Biblioteca',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() => _busy = true);
     try {
+      final prefs = await SharedPreferences.getInstance();
       final dir = await getApplicationDocumentsDirectory();
       final libDir = Directory(p.join(dir.path, 'gama_library'));
-      if (await libDir.exists()) {
-        await libDir.delete(recursive: true);
+      if (await libDir.exists()) await libDir.delete(recursive: true);
+      if (!await prefs.setString('gama_library', '[]')) {
+        throw const FileSystemException('Falha ao atualizar o índice local');
+      }
+      if (mounted) {
+        setState(() => _items = []);
+        _snack('Biblioteca local esvaziada.');
       }
     } catch (error, stack) {
       logSwallowed(error, stack);
+      _snack('Não foi possível esvaziar a Biblioteca. Os metadados foram preservados quando possível.');
+      await _load();
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
-    await prefs.setString('gama_library', '[]');
-    setState(() => _items = []);
+  }
+
+  Future<void> _removeOne(Map<String, dynamic> entry) async {
+    if (_busy || _loadError != null) return;
+    final name = (entry['name'] ?? 'arquivo').toString();
+    if (!await _confirm(
+      title: 'Remover da Biblioteca?',
+      explanation: 'Remover “$name” da Biblioteca e excluir sua cópia local? '
+          'A conversa de origem não será apagada.',
+      action: 'Remover',
+    )) return;
+    if (!mounted) return;
+    setState(() => _busy = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final all = (jsonDecode(prefs.getString('gama_library') ?? '[]') as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      final path = entry['path']?.toString();
+      bool isSame(Map<String, dynamic> candidate) =>
+          candidate['name'] == entry['name'] &&
+          candidate['path'] == entry['path'] &&
+          candidate['at'] == entry['at'];
+      all.removeWhere(isSame);
+      if (!await prefs.setString('gama_library', jsonEncode(all))) {
+        throw const FileSystemException('Não foi possível salvar o índice');
+      }
+      var cleanupFailed = false;
+      if (path != null && path.isNotEmpty &&
+          !all.any((e) => e['path'] == path)) {
+        final root = await getApplicationDocumentsDirectory();
+        final ownedDir = p.join(root.path, 'gama_library');
+        // Nunca apagar diretamente arquivos anexados fora da pasta da Gamma.
+        if (p.isWithin(ownedDir, path)) {
+          try {
+            final copy = File(path);
+            if (await copy.exists()) await copy.delete();
+          } catch (error, stack) {
+            logSwallowed(error, stack);
+            cleanupFailed = true;
+          }
+        }
+      }
+      await _load();
+      _snack(cleanupFailed
+          ? 'Item removido, mas não consegui excluir a cópia do disco.'
+          : 'Item removido da Biblioteca.');
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+      _snack('Não foi possível remover o item. Tente novamente.');
+      await _load();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final filtered = filterLibraryItems(
+      _items,
+      category: _category,
+      query: _query,
+    );
     return Scaffold(
       backgroundColor: context.gama.background,
       appBar: AppBar(
         backgroundColor: context.gama.surface,
         title: const Text('Biblioteca'),
         actions: [
+          IconButton(
+            tooltip: 'Atualizar Biblioteca',
+            onPressed: _busy ? null : _load,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
           if (_items.isNotEmpty)
-            TextButton(
-              onPressed: _clear,
-              child: Text(
-                'Limpar',
-                style: TextStyle(color: context.gama.error),
-              ),
+            IconButton(
+              tooltip: 'Esvaziar Biblioteca',
+              onPressed: _busy || _loadError != null ? null : _clear,
+              icon: Icon(Icons.delete_sweep_outlined, color: context.gama.error),
             ),
         ],
       ),
-      body: Column(children: [
-        VideoJobsPanel(onLibraryChanged: _load),
-        Expanded(child: _items.isEmpty
-          ? Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'Nenhum anexo ainda.\n'
-                  'Use o clipe no chat (câmera, galeria ou arquivos).',
+      body: Column(
+        children: [
+          VideoJobsPanel(onLibraryChanged: _load),
+          if (_loadError != null)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(_loadError!,
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: context.gama.textMuted),
+                  style: TextStyle(color: context.gama.error)),
+            ),
+          if (_loadError == null) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: TextField(
+                controller: _searchController,
+                onChanged: (value) => setState(() => _query = value),
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: 'Buscar arquivos pelo nome',
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  suffixIcon: _query.isEmpty ? null : IconButton(
+                    tooltip: 'Limpar pesquisa',
+                    onPressed: () => setState(() {
+                      _query = '';
+                      _searchController.clear();
+                    }),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                  isDense: true,
                 ),
               ),
-            )
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: _items.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final it = _items[index];
-                final kind = it['kind']?.toString() ?? '';
-                final path = it['path']?.toString();
-                final hasFile =
-                    path != null && path.isNotEmpty && File(path).existsSync();
-                final canDownload =
-                    hasFile && (kind == 'image' || kind == 'video');
-
-                return Material(
-                  color: context.gama.surfaceCard,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => LibraryScreen.openEntry(context, it),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _icon(kind),
-                            color: context.gama.accent,
-                            size: 22,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  it['name']?.toString() ?? '',
-                                  style: TextStyle(
-                                    color: context.gama.textPrimary,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                Text(
-                                  '${it['kind']} · ${_fmtBytes(it['bytes'] as int? ?? 0)}'
-                                  '${hasFile ? '' : ' · (sem arquivo)'}',
-                                  style: TextStyle(
-                                    color: context.gama.textMuted,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (canDownload)
-                            IconButton(
-                              tooltip: kind == 'video'
-                                  ? 'Baixar vídeo'
-                                  : 'Baixar imagem',
-                              onPressed: () =>
-                                  LibraryScreen.downloadEntry(context, it),
-                              icon: const Icon(Icons.download_outlined),
-                            ),
-                          Icon(
-                            hasFile
-                                ? Icons.chevron_right_rounded
-                                : Icons.block_flipped,
-                            color: context.gama.textMuted,
-                            size: 20,
-                          ),
-                        ],
+            ),
+            SizedBox(
+              height: 48,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  for (final category in LibraryCategory.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: FilterChip(
+                        selected: _category == category,
+                        label: Text(category.label),
+                        onSelected: (_) => setState(() => _category = category),
                       ),
                     ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '${filtered.length} ${filtered.length == 1 ? 'arquivo' : 'arquivos'}',
+                  style: TextStyle(color: context.gama.textMuted, fontSize: 12),
+                ),
+              ),
+            ),
+          ],
+          Expanded(
+            child: _loadError != null
+                ? const SizedBox.shrink()
+                : RefreshIndicator(
+                    onRefresh: _load,
+                    child: filtered.isEmpty
+                        ? ListView(children: [
+                            SizedBox(
+                              height: 220,
+                              child: Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Text(
+                                    _items.isEmpty
+                                        ? 'Sua Biblioteca está vazia.\nAnexe arquivos no chat ou crie algo na Oficina.'
+                                        : 'Nenhum arquivo corresponde à busca ou filtro.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: context.gama.textMuted),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ])
+                        : ListView.separated(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                            itemCount: filtered.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 8),
+                            itemBuilder: (context, index) {
+                              final entry = filtered[index];
+                              final kind = entry['kind']?.toString() ?? '';
+                              final path = entry['path']?.toString();
+                              final hasFile = path != null &&
+                                  path.isNotEmpty && File(path).existsSync();
+                              final name = entry['name']?.toString() ?? 'Arquivo';
+                              final size = entry['bytes'] is num
+                                  ? (entry['bytes'] as num).toInt() : 0;
+                              return Material(
+                                color: context.gama.surfaceCard,
+                                borderRadius: BorderRadius.circular(12),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: hasFile
+                                      ? () => LibraryScreen.openEntry(context, entry)
+                                      : null,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 10,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(_icon(kind),
+                                            color: hasFile
+                                                ? context.gama.accent
+                                                : context.gama.textMuted,
+                                            size: 23),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(name,
+                                                  maxLines: 2,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    color: context.gama.textPrimary,
+                                                    fontWeight: FontWeight.w600,
+                                                  )),
+                                              const SizedBox(height: 3),
+                                              Text(
+                                                '${categoryForLibraryItem(entry).label} · ${_fmtBytes(size)}'
+                                                '${hasFile ? '' : ' · Indisponível neste dispositivo'}',
+                                                maxLines: 2,
+                                                style: TextStyle(
+                                                  color: context.gama.textMuted,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        if (hasFile)
+                                          IconButton(
+                                            tooltip: 'Salvar $name nos downloads',
+                                            onPressed: _busy ? null : () =>
+                                                LibraryScreen.downloadEntry(context, entry),
+                                            icon: const Icon(Icons.download_outlined),
+                                          ),
+                                        IconButton(
+                                          tooltip: 'Remover $name da Biblioteca',
+                                          onPressed: _busy ? null : () => _removeOne(entry),
+                                          icon: Icon(Icons.delete_outline_rounded,
+                                              color: context.gama.textMuted),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                   ),
-                );
-              },
-            )),
-      ]),
+          ),
+        ],
+      ),
     );
   }
 

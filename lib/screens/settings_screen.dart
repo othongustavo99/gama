@@ -27,6 +27,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _ttsAuto = false;
   double _fontScale = 1.0;
   bool _developerMode = false;
+  GamaAppearance _appearance = GamaAppearance.dark;
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -36,6 +38,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _ttsAuto = SettingsService.instance.ttsAuto;
     _fontScale = SettingsService.instance.fontScale;
     _developerMode = SettingsService.instance.developerMode;
+    _appearance = SettingsService.instance.appearance;
+    _reduceMotion = SettingsService.instance.reduceMotion;
   }
 
   @override
@@ -118,6 +122,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await SettingsService.instance.setTtsAuto(_ttsAuto);
     await SettingsService.instance.setFontScale(_fontScale);
     await SettingsService.instance.setDeveloperMode(_developerMode);
+    await SettingsService.instance.setAppearance(_appearance);
+    await SettingsService.instance.setReduceMotion(_reduceMotion);
 
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -292,23 +298,66 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 28),
           const _SectionTitle('Aparência e acessibilidade'),
           const SizedBox(height: 14),
-          DropdownButtonFormField<double>(
-            value: _fontScale,
+          DropdownButtonFormField<GamaAppearance>(
+            value: _appearance,
             decoration: const InputDecoration(
-              labelText: 'Tamanho do texto',
-              helperText: 'Ajusta o texto no aplicativo sem alterar o tamanho do sistema.',
+              labelText: 'Tema do aplicativo',
+              helperText: 'Automático acompanha o tema do Android ou Windows.',
             ),
             items: const [
-              DropdownMenuItem(value: 0.9, child: Text('Pequeno · 90%')),
-              DropdownMenuItem(value: 1.0, child: Text('Padrão · 100%')),
-              DropdownMenuItem(value: 1.1, child: Text('Grande · 110%')),
-              DropdownMenuItem(value: 1.2, child: Text('Muito grande · 120%')),
+              DropdownMenuItem(
+                value: GamaAppearance.system,
+                child: Text('Automático (sistema)'),
+              ),
+              DropdownMenuItem(
+                value: GamaAppearance.light,
+                child: Text('Claro'),
+              ),
+              DropdownMenuItem(
+                value: GamaAppearance.dark,
+                child: Text('Escuro'),
+              ),
             ],
             onChanged: (value) async {
               if (value == null) return;
-              setState(() => _fontScale = value);
-              await SettingsService.instance.setFontScale(value);
+              setState(() => _appearance = value);
+              await SettingsService.instance.setAppearance(value);
             },
+          ),
+          const SizedBox(height: 16),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Reduzir animações'),
+            subtitle: const Text(
+              'Diminui movimentos no chat e nas transições; também respeita o sistema.',
+            ),
+            value: _reduceMotion,
+            onChanged: (value) async {
+              setState(() => _reduceMotion = value);
+              await SettingsService.instance.setReduceMotion(value);
+            },
+          ),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Tamanho do texto'),
+              Text('${(_fontScale * 100).round()}%',
+                  style: TextStyle(color: context.gama.textSecondary)),
+            ],
+          ),
+          Slider.adaptive(
+            min: 0.85,
+            max: 1.30,
+            divisions: 9,
+            label: '${(_fontScale * 100).round()}%',
+            value: _fontScale.clamp(0.85, 1.30).toDouble(),
+            onChanged: (value) => setState(() => _fontScale = value),
+            onChangeEnd: SettingsService.instance.setFontScale,
+          ),
+          Text(
+            'Combina este ajuste com o tamanho de texto do sistema.',
+            style: TextStyle(color: context.gama.textMuted, fontSize: 12),
           ),
           const SizedBox(height: 28),
           const _SectionTitle('Desenvolvedor'),

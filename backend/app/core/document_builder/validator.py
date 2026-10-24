@@ -178,7 +178,7 @@ def validate_source_archive(
     checked_languages: dict[str, int] = {}
     source_candidates = 0
     unverified_count = 0
-    seen_candidates = 0
+    attempted_parser_files = 0
 
     # Extensões de código/configuração que merecem ser contadas mesmo quando
     # não há um compilador/parser da linguagem instalado no backend.
@@ -216,7 +216,6 @@ def validate_source_archive(
                 if not is_candidate:
                     continue
                 source_candidates += 1
-                seen_candidates += 1
 
                 if ext not in supported:
                     unverified_count += 1
@@ -226,14 +225,15 @@ def validate_source_archive(
                     })
                     continue
 
-                if len(checked) + unverified_count >= max_files:
+                if attempted_parser_files >= max_files:
                     unverified_count += 1
-                    skipped.append({"path": path, "reason": "limite de arquivos considerados na validação"})
+                    skipped.append({"path": path, "reason": "limite de arquivos com parser disponível atingido"})
                     continue
                 if info.file_size > max_file_bytes:
                     unverified_count += 1
                     skipped.append({"path": path, "reason": "arquivo grande demais para validação sintática"})
                     continue
+                attempted_parser_files += 1
 
                 try:
                     raw = archive.read(info)

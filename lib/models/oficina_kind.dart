@@ -125,16 +125,22 @@ extension OficinaKindX on OficinaKind {
         'Crie um app Flutter que: ',
       ),
       OficinaSuggestion(
-        'Analisar código',
-        'Anexe um ZIP ou cole o link do GitHub.',
+        'Auditoria profunda',
+        'Anexe ZIP ou GitHub para análise por módulos.',
+        Icons.fact_check_outlined,
+        'Faça uma revisão profunda deste projeto: mostre cobertura real, arquivos não lidos, achados com evidências e prioridades. Não presuma que analisou o que ficou de fora.',
+      ),
+      OficinaSuggestion(
+        'Corrigir e entregar ZIP',
+        'Corrija arquivos e prepare o pacote verificável.',
         Icons.folder_zip_outlined,
-        'Analise este projeto (anexe ZIP)',
+        'Analise o projeto anexado, identifique erros concretos e me entregue em ZIP os arquivos completos corrigidos. Informe quais arquivos mudaram, cobertura, validações feitas e o que ainda não foi testado. Preserve as funções existentes.',
       ),
       OficinaSuggestion(
         'Refatorar',
         'Cole o trecho ou anexe os arquivos.',
         Icons.auto_awesome_outlined,
-        'Refatore e melhore este código: ',
+        'Refatore este código, explique as mudanças e não altere contratos públicos sem necessidade: ',
       ),
     ],
   };

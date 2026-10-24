@@ -7,6 +7,7 @@ the regular chat response. Repository content is untrusted input.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -312,6 +313,8 @@ async def _analyze_batch(
     per_file_chars = max(2500, min(_env_int("GAMA_CODE_DEEP_FILE_MAX_CHARS", 12000, minimum=2000, maximum=40000), max_pass_chars // max(len(source_texts), 1)))
     blocks: list[str] = []
     truncated: list[str] = []
+    reviewed_paths: list[str] = []
+    source_hashes: dict[str, str] = {}
     remaining = max_pass_chars
     for path in paths:
         text = source_texts.get(path)
@@ -329,6 +332,8 @@ async def _analyze_batch(
             block = block[:remaining] + "\n[trecho da passagem truncado pelo orçamento]"
             truncated.append(path)
         blocks.append(block)
+        reviewed_paths.append(path)
+        source_hashes[path] = hashlib.sha256(text.encode('utf-8')).hexdigest()
         remaining -= len(block)
         if remaining < 1200:
             break
@@ -346,7 +351,7 @@ async def _analyze_batch(
         f"PASSAGEM {batch_number}/{total_batches} — subsistema: {category}\n"
         f"Objetivo original do usuário: {query[:2500]}\n"
         f"Paths previstos: {', '.join(paths)}\n"
-        f"Paths efetivamente lidos: {', '.join(source_texts)}\n"
+        f"Paths efetivamente enviados para análise: {', '.join(reviewed_paths)}\n"
         f"Paths truncados/recortados: {', '.join(dict.fromkeys(truncated)) or 'nenhum'}\n\n"
         "Analise este lote. Não assuma que viu o restante do projeto. Procure também referências entre os arquivos deste lote, "
         "mas marque como hipótese qualquer dependência cujo destino não esteja presente.\n\n"
@@ -369,7 +374,8 @@ async def _analyze_batch(
     return {
         "category": category,
         "paths": paths,
-        "read_paths": list(source_texts),
+        "read_paths": reviewed_paths,
+        "source_hashes": source_hashes,
         "findings": findings[:12000],
         "error": error,
         "truncated_paths": list(dict.fromkeys(truncated)),
@@ -416,15 +422,24 @@ async def run_deep_review(
     ])
 
     read_paths = list(dict.fromkeys(path for result in results for path in result["read_paths"]))
+    assessed_paths = list(dict.fromkeys(path for result in results if not result.get('error')
+                                     for path in result['read_paths']))
+    reviewed_hashes = {path: digest for result in results for path, digest
+                       in result.get('source_hashes', {}).items()}
     truncated_paths = list(dict.fromkeys(path for result in results for path in result["truncated_paths"]))
     failed_passes = sum(1 for result in results if result.get("error"))
     missing_paths = [path for path in plan["selected_paths"] if path not in set(read_paths)]
+    not_assessed_paths = [path for path in plan['selected_paths'] if path not in set(assessed_paths)]
     coverage = {
         "status": "partial" if plan["omitted_paths"] or truncated_paths or failed_passes or missing_paths else "reviewed_selected_files",
         "total_indexed_files": plan["total_indexed_files"],
         "eligible_text_files": plan["eligible_files"],
         "selected_files": len(plan["selected_paths"]),
         "read_files": len(read_paths),
+        "llm_assessed_files": len(assessed_paths),
+        "fully_presented_files": len(set(assessed_paths) - set(truncated_paths)),
+        "not_assessed_paths": not_assessed_paths[:80],
+        "source_hashes": dict(list(reviewed_hashes.items())[:200]),
         "truncated_files": len(truncated_paths),
         "failed_passes": failed_passes,
         "pass_count": len(results),
@@ -489,7 +504,7 @@ async def run_deep_review(
     lines = [
         "[CODE ANALYZER — REVISÃO PROFUNDA EM MÚLTIPLAS PASSAGENS]",
         f"Cobertura: {coverage['read_files']}/{coverage['eligible_text_files']} arquivos de texto elegíveis recuperados; "
-        f"passagens={coverage['pass_count']}; passagens com falha={failed_passes}; arquivos com recortes={len(truncated_paths)}; arquivos não lidos={len(missing_paths)}.",
+        f"avaliados pelo modelo={coverage['llm_assessed_files']}; passagens={coverage['pass_count']}; passagens com falha={failed_passes}; arquivos com recortes={len(truncated_paths)}; arquivos não lidos={len(missing_paths)}.",
         "Esta etapa analisou os arquivos listados em cada passagem. Não declare auditoria integral se o status for partial.",
     ]
     for index, result in enumerate(results, 1):

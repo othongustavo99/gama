@@ -175,10 +175,17 @@ class AttachmentService {
               'O servidor não retornou o ID do projeto indexado.',
             );
           }
+          final plan = summary['review_plan'];
+          final preview = plan is Map
+              ? 'Prévia de revisão profunda: ${plan['planned_files'] ?? 0} de '
+                  '${plan['eligible_files'] ?? 0} arquivos elegíveis planejados; '
+                  '${plan['omitted_files'] ?? 0} não selecionados. '
+                  'São estimativas de cobertura, não arquivos efetivamente analisados.'
+              : '';
           final body =
               '[project_id:$id]\n'
               'Projeto anexado: $name. Use o Code Analyzer com este project_id; '
-              'não peça o ZIP de novo.';
+              'não peça o ZIP de novo. $preview';
           return ProcessedAttachment(
             name: name,
             ext: ext,

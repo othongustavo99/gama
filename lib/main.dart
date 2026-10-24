@@ -17,6 +17,16 @@ import 'services/settings_service.dart';
 import 'services/identity_service.dart';
 import 'services/temporary_file_service.dart';
 
+const _gamaLightSystemUiOverlayStyle = SystemUiOverlayStyle(
+  statusBarColor: Color(0xFFFFFFFF),
+  statusBarIconBrightness: Brightness.dark,
+  statusBarBrightness: Brightness.light,
+  systemNavigationBarColor: Color(0xFFF7F8FA),
+  systemNavigationBarDividerColor: Color(0xFFF7F8FA),
+  systemNavigationBarIconBrightness: Brightness.dark,
+  systemNavigationBarContrastEnforced: false,
+);
+
 const _gamaDarkSystemUiOverlayStyle = SystemUiOverlayStyle(
   statusBarColor: Color(0xFF10141B),
   statusBarIconBrightness: Brightness.light,
@@ -113,14 +123,17 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  ThemeData _theme() {
-    final palette = GamaPalette.dark();
+  ThemeData _theme(Brightness brightness) {
+    final isDark = brightness == Brightness.dark;
+    final palette = isDark ? GamaPalette.dark() : GamaPalette.light();
     final background = palette.background;
     final surface = palette.surface;
     final textPrimary = palette.textPrimary;
     final textSecondary = palette.textSecondary;
     final border = palette.border;
-    final scheme = ColorScheme.dark(
+    final scheme = ColorScheme.fromSeed(
+      seedColor: palette.accent,
+      brightness: brightness,
       primary: palette.accent,
       secondary: palette.accentCool,
       surface: palette.surface,
@@ -130,14 +143,16 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
       onSurface: palette.textPrimary,
     );
     return ThemeData(
-      brightness: Brightness.dark,
+      brightness: brightness,
       useMaterial3: true,
       fontFamily: 'Inter',
       extensions: [palette],
       scaffoldBackgroundColor: background,
       colorScheme: scheme,
       appBarTheme: AppBarTheme(
-        systemOverlayStyle: _gamaDarkSystemUiOverlayStyle,
+        systemOverlayStyle: isDark
+            ? _gamaDarkSystemUiOverlayStyle
+            : _gamaLightSystemUiOverlayStyle,
         backgroundColor: surface,
         foregroundColor: textPrimary,
         elevation: 0,
@@ -245,13 +260,18 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
       animation: SettingsService.instance,
       builder: (context, _) {
         final scale = SettingsService.instance.fontScale;
-        final darkTheme = _theme();
+        final selectedAppearance = SettingsService.instance.appearance;
+        final selectedMode = switch (selectedAppearance) {
+          GamaAppearance.system => ThemeMode.system,
+          GamaAppearance.light => ThemeMode.light,
+          GamaAppearance.dark => ThemeMode.dark,
+        };
         return MaterialApp(
           title: 'Gama',
           debugShowCheckedModeBanner: false,
-          theme: darkTheme,
-          darkTheme: darkTheme,
-          themeMode: ThemeMode.dark,
+          theme: _theme(Brightness.light),
+          darkTheme: _theme(Brightness.dark),
+          themeMode: selectedMode,
           locale: const Locale('pt', 'BR'),
           supportedLocales: const [Locale('pt', 'BR'), Locale('en')],
           localizationsDelegates: const [
@@ -262,11 +282,16 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
           builder: (context, child) {
             final media = MediaQuery.of(context);
             final systemScale = media.textScaler.scale(1.0);
+            final isDark = Theme.of(context).brightness == Brightness.dark;
             return AnnotatedRegion<SystemUiOverlayStyle>(
-              value: _gamaDarkSystemUiOverlayStyle,
+              value: isDark
+                  ? _gamaDarkSystemUiOverlayStyle
+                  : _gamaLightSystemUiOverlayStyle,
               child: MediaQuery(
                 data: media.copyWith(
                   textScaler: TextScaler.linear(systemScale * scale),
+                  disableAnimations:
+                      media.disableAnimations || SettingsService.instance.reduceMotion,
                 ),
                 child: child ?? const SizedBox.shrink(),
               ),
