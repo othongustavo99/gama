@@ -29,13 +29,14 @@ class MessageAdapter extends TypeAdapter<Message> {
       // Comparar com true tolera campo ausente/nulo sem descartar a mensagem.
       isTruncated: fields[8] == true,
       sourcesJson: fields[9] as String? ?? '',
+      artifactsJson: fields[10] as String? ?? '',
     );
   }
 
   @override
   void write(BinaryWriter writer, Message obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(11)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -55,7 +56,9 @@ class MessageAdapter extends TypeAdapter<Message> {
       ..writeByte(8)
       ..write(obj.isTruncated)
       ..writeByte(9)
-      ..write(obj.sourcesJson);
+      ..write(obj.sourcesJson)
+      ..writeByte(10)
+      ..write(obj.artifactsJson);
   }
 
   @override

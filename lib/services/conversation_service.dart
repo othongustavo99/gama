@@ -182,7 +182,8 @@ class ConversationService extends ChangeNotifier {
               !listEquals(local.variants, remote.variants) ||
               local.selectedVariantIndex != remote.selectedVariantIndex ||
               local.isTruncated != remote.isTruncated ||
-              local.sourcesJson != remote.sourcesJson)) {
+              local.sourcesJson != remote.sourcesJson ||
+              local.artifactsJson != remote.artifactsJson)) {
         // Hive mantém a identidade da mensagem. Atualiza apenas os campos
         // mutáveis para não criar mensagens duplicadas na interface.
         local.content = remote.content;
@@ -191,6 +192,7 @@ class ConversationService extends ChangeNotifier {
         local.selectedVariantIndex = remote.selectedVariantIndex;
         local.isTruncated = remote.isTruncated;
         local.sourcesJson = remote.sourcesJson;
+        local.artifactsJson = remote.artifactsJson;
         await local.save();
         changed = true;
       }

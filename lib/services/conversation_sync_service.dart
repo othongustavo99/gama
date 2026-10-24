@@ -225,6 +225,7 @@ class ConversationSyncService {
               : matchingMessages.first;
           if (message != null) {
             message.sourcesJson = (completed['sourcesJson'] ?? '').toString();
+            message.artifactsJson = (completed['artifactsJson'] ?? '').toString();
             message.isTruncated = completed['isTruncated'] == true;
             await local.updateMessageContent(message, content, sync: false);
           } else {
@@ -236,6 +237,7 @@ class ConversationSyncService {
                 conversationId: entry.value,
                 timestamp: _parseDate(completed['timestamp']),
                 sourcesJson: (completed['sourcesJson'] ?? '').toString(),
+                artifactsJson: (completed['artifactsJson'] ?? '').toString(),
                 isTruncated: completed['isTruncated'] == true,
               ),
               sync: false,
@@ -293,6 +295,7 @@ class ConversationSyncService {
                 'selectedVariantIndex': m.selectedVariantIndex,
                 'isTruncated': m.isTruncated,
                 'sourcesJson': m.sourcesJson,
+                'artifactsJson': m.artifactsJson,
               },
           ],
         },
@@ -465,6 +468,7 @@ class ConversationSyncService {
     'selectedVariantIndex': m.selectedVariantIndex,
     'isTruncated': m.isTruncated,
     'sourcesJson': m.sourcesJson,
+    'artifactsJson': m.artifactsJson,
   };
 
   Future<void> deleteRemote(String id) async {
@@ -636,6 +640,7 @@ class ConversationSyncService {
                     0,
                 isTruncated: raw['isTruncated'] == true,
                 sourcesJson: (raw['sourcesJson'] ?? '').toString(),
+                artifactsJson: (raw['artifactsJson'] ?? '').toString(),
               ),
         ],
       );

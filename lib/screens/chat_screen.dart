@@ -46,6 +46,10 @@ import 'oficina_screen.dart';
 import '../utils/error_logger.dart';
 import '../utils/speech_recovery_policy.dart';
 import '../utils/generation_session.dart';
+import '../utils/chat_history_window.dart';
+import '../utils/chat_scroll_policy.dart';
+import '../utils/chat_generation_clock.dart';
+import 'package:flutter/rendering.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
@@ -82,11 +86,12 @@ class _ChatScreenState extends State<ChatScreen> {
   final MemoryService _memory = MemoryService();
 
   List<Message> _messages = [];
+  // Paginação de apresentação: mantém todas as mensagens no Hive e na API.
+  final ChatHistoryWindow _historyWindow = ChatHistoryWindow();
   String? _newMessageAnimationId;
   Timer? _clearMessagesTimer;
-  Timer? _generationTimer;
-  DateTime? _generationStartedAt;
-  Duration _generationElapsed = Duration.zero;
+  final ChatGenerationClock _generationClock = ChatGenerationClock();
+  Duration get _generationElapsed => _generationClock.value;
   String _imageAspectRatio = '1:1';
   String _imageStyle = 'Automático';
   String? _beforeImagePath;
@@ -96,6 +101,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, String> _videoPathsByArtifactId = {};
   DateTime? _lastAutoScrollAt;
   bool _scrollCallbackScheduled = false;
+  bool _pendingForceScroll = false;
   bool _showScrollToBottom = false;
   final ValueNotifier<String> _streamingText = ValueNotifier<String>('');
   final ValueNotifier<String> _voiceReplyDisplayedText = ValueNotifier<String>(
@@ -107,6 +113,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _streamRevealTimer;
   DateTime? _streamRevealLastFrame;
   double _streamRevealBudget = 0;
+  bool _finishingStreamReveal = false;
+  String _streamRevealFinalText = '';
+  DateTime? _streamRevealFinishStarted;
   bool _messageKeyPruneScheduled = false;
   StringBuffer _streamRawText = StringBuffer();
   String _streamSearchQuery = '';
@@ -194,6 +203,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isSpeaking = false;
   String? _failedAssistantMessageId;
   String? _chatErrorMessage;
+  bool _failedRequestRetryable = true;
   bool _firstTokenReceived = false;
   Message? _regeneratingAssistantMessage;
   Message? _regeneratingUserMessage;
@@ -211,6 +221,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _mode = SettingsService.instance.mode;
+    SettingsService.instance.addListener(_onModeSettingsChanged);
     if (widget.initialPrompt != null) _controller.text = widget.initialPrompt!;
     _loadMessages();
     _controller.addListener(_queueDraftSave);
@@ -219,6 +230,12 @@ class _ChatScreenState extends State<ChatScreen> {
     _initSpeech();
     _scrollController.addListener(_handleScrollChange);
     unawaited(_loadFeedback());
+  }
+
+  void _onModeSettingsChanged() {
+    if (!mounted || widget.oficinaKind != null) return;
+    final selected = SettingsService.instance.mode;
+    if (_mode != selected) setState(() => _mode = selected);
   }
 
   void _updateSlashSuggestions() {
@@ -357,25 +374,52 @@ class _ChatScreenState extends State<ChatScreen> {
   void _handleScrollChange() {
     if (!_scrollController.hasClients) return;
     final position = _scrollController.position;
-    final nearBottom = position.maxScrollExtent - position.pixels <= 140;
+    final nearBottom = ChatScrollPolicy.nearEnd(
+      position.pixels, position.maxScrollExtent,
+    );
+    _nearBottomCache = nearBottom;
+    if (nearBottom && _isLoading) _followStream = true;
     final show = !nearBottom;
     if (show == _showScrollToBottom) return;
     _showScrollToBottom = show;
-    _nearBottomCache = nearBottom;
     if (mounted) setState(() {});
   }
 
   bool _nearBottomCache = true;
 
   bool _handleListScrollNotification(ScrollNotification notification) {
-    if (notification is ScrollStartNotification &&
-        notification.dragDetails != null) {
+    // Touch drag, mouse wheel e trackpad devem interromper o auto-follow.
+    // Scroll programático para o fim não é uma interação do usuário.
+    final userDragging = notification is ScrollStartNotification &&
+        notification.dragDetails != null;
+    final userMovingUp = notification is UserScrollNotification &&
+        notification.direction == ScrollDirection.forward;
+    if (_isLoading && (userDragging || userMovingUp)) {
       _followStream = false;
-      if (!_showScrollToBottom && mounted) {
-        setState(() => _showScrollToBottom = true);
-      }
     }
     return false;
+  }
+
+  void _loadEarlierMessages() {
+    final total = _messages.length;
+    if (!_historyWindow.hasOlder(total)) return;
+    final position = _scrollController.hasClients
+        ? _scrollController.position
+        : null;
+    final previousOffset = position?.pixels ?? 0.0;
+    final previousMax = position?.maxScrollExtent ?? 0.0;
+    _followStream = false;
+    setState(() => _historyWindow.loadEarlier(total));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final updated = _scrollController.position;
+      _scrollController.jumpTo(ChatScrollPolicy.restoredOffset(
+        oldOffset: previousOffset,
+        oldMaxExtent: previousMax,
+        newMaxExtent: updated.maxScrollExtent,
+        minExtent: updated.minScrollExtent,
+      ));
+    });
   }
 
   // Revelação adaptativa a cada ~frame, limitada pelo tempo efetivamente
@@ -402,7 +446,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _streamRevealLastFrame = DateTime.now();
       _streamRevealBudget = 0;
       _streamRevealTimer = Timer.periodic(
-        const Duration(milliseconds: 16),
+        const Duration(milliseconds: 48),
         _revealStreamFrame,
       );
     }
@@ -414,6 +458,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _streamRevealTimer = null;
       _streamRevealLastFrame = null;
       _streamRevealBudget = 0;
+      if (_finishingStreamReveal && mounted) {
+        _streamingText.value = _streamRevealFinalText;
+        setState(() => _finishingStreamReveal = false);
+        if (_followStream) _scrollToBottom(followStream: true);
+      }
       return;
     }
     final now = DateTime.now();
@@ -432,7 +481,17 @@ class _ChatScreenState extends State<ChatScreen> {
         ? 170.0
         : 92.0;
     _streamRevealBudget += seconds * charsPerSecond;
-    final count = _streamRevealBudget.floor().clamp(0, 12).toInt();
+    // Ao concluir a requisição, drena a fila em até ~450 ms, mantendo
+    // a animação visível em vez de substituir todo o texto de uma vez.
+    final elapsedFinish = _streamRevealFinishStarted == null ? 0 :
+        now.difference(_streamRevealFinishStarted!).inMilliseconds;
+    final finishFrames = ((450 - elapsedFinish).clamp(48, 450) / 48).ceil();
+    final minimumFinishCount = _finishingStreamReveal
+        ? (pending / finishFrames).ceil()
+        : 0;
+    final count = _finishingStreamReveal
+        ? _streamRevealBudget.floor().clamp(minimumFinishCount, pending).toInt()
+        : _streamRevealBudget.floor().clamp(0, 24).toInt();
     if (count == 0) return;
     _streamRevealBudget -= count;
     final next = StringBuffer();
@@ -443,7 +502,16 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_followStream) _scrollToBottom(followStream: true);
   }
 
-  void _finishStreamReveal(String finalText) {
+  void _finishStreamReveal(String finalText, {bool animate = false}) {
+    if (animate && mounted && _streamRevealQueue.isNotEmpty &&
+        !(MediaQuery.maybeOf(context)?.disableAnimations ?? false)) {
+      _streamRevealFinalText = finalText;
+      _streamRevealFinishStarted = DateTime.now();
+      setState(() => _finishingStreamReveal = true);
+      return;
+    }
+    _finishingStreamReveal = false;
+    _streamRevealFinishStarted = null;
     _streamRevealTimer?.cancel();
     _streamRevealTimer = null;
     _streamRevealLastFrame = null;
@@ -607,26 +675,15 @@ class _ChatScreenState extends State<ChatScreen> {
     await _sendMessage();
   }
 
-  void _startGenerationClock() {
-    _generationTimer?.cancel();
-    _generationStartedAt = DateTime.now();
-    _generationElapsed = Duration.zero;
-    _generationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || _generationStartedAt == null) return;
-      setState(() {
-        _generationElapsed = DateTime.now().difference(_generationStartedAt!);
-      });
-    });
-  }
+  void _startGenerationClock() => _generationClock.start();
 
-  void _stopGenerationClock() {
-    _generationTimer?.cancel();
-    _generationTimer = null;
-    if (_generationStartedAt != null) {
-      _generationElapsed = DateTime.now().difference(_generationStartedAt!);
-    }
-    _generationStartedAt = null;
-  }
+  void _stopGenerationClock() => _generationClock.stop();
+
+  /// Um tick do contador reconstrói somente este pequeno indicador.
+  Widget _timedStreamStatus() => ValueListenableBuilder<Duration>(
+    valueListenable: _generationClock,
+    builder: (context, _, __) => ChatStatusIndicator(label: _streamStatusLabel),
+  );
 
   String get _elapsedLabel {
     final seconds = _generationElapsed.inSeconds;
@@ -1214,12 +1271,15 @@ class _ChatScreenState extends State<ChatScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.conversationId != widget.conversationId) {
       _generation.invalidate();
+      _stopGenerationClock();
       _streamSubscription?.cancel();
       _streamRevealTimer?.cancel();
       _streamRevealTimer = null;
       _streamRevealLastFrame = null;
       _streamRevealBudget = 0;
       _streamRevealQueue.clear();
+      _finishingStreamReveal = false;
+      _streamRevealFinishStarted = null;
       _streamRawText = StringBuffer();
       _streamingText.value = '';
       _streamSearchQuery = '';
@@ -1250,6 +1310,11 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _messages = _service.getMessages(widget.conversationId);
       _artifactsByMessageId.clear();
+      for (final message in _messages) {
+        if (message.artifacts.isNotEmpty) {
+          _artifactsByMessageId[message.id] = message.artifacts;
+        }
+      }
       _sourcesByMessageId.clear();
       _activityByMessageId.clear();
       _truncatedMessageIds
@@ -1265,6 +1330,9 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
       _messageKeys.clear();
+      _historyWindow.reset();
+      _followStream = true;
+      _nearBottomCache = true;
     });
     _scrollToBottom(force: true);
   }
@@ -1272,7 +1340,10 @@ class _ChatScreenState extends State<ChatScreen> {
   void _scrollToBottom({bool force = false, bool followStream = false}) {
     // O stream pode emitir dezenas de tokens por segundo. Coalescemos os
     // callbacks e limitamos animações automáticas para evitar trepidação.
-    if (_scrollCallbackScheduled) return;
+    if (_scrollCallbackScheduled) {
+      _pendingForceScroll = _pendingForceScroll || force;
+      return;
+    }
     if (!force) {
       final now = DateTime.now();
       final last = _lastAutoScrollAt;
@@ -1285,19 +1356,24 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollCallbackScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollCallbackScheduled = false;
-      if (!_scrollController.hasClients) return;
+      final effectiveForce = force || _pendingForceScroll;
+      _pendingForceScroll = false;
+      if (!mounted || !_scrollController.hasClients) return;
       final position = _scrollController.position;
-      if (force ||
-          followStream ||
-          _nearBottomCache ||
-          position.pixels >= position.maxScrollExtent - 120) {
-        _scrollController.animateTo(
-          position.maxScrollExtent,
-          duration: (MediaQuery.maybeOf(context)?.disableAnimations ?? false)
-              ? Duration.zero
-              : Duration(milliseconds: force ? 180 : 90),
-          curve: Curves.easeOut,
-        );
+      if (ChatScrollPolicy.shouldFollow(
+        forced: effectiveForce,
+        userFollowing: _followStream && (followStream || _nearBottomCache),
+      )) {
+        if (effectiveForce && !(MediaQuery.maybeOf(context)?.disableAnimations ?? false)) {
+          _scrollController.animateTo(
+            position.maxScrollExtent,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+          );
+        } else {
+          // Não empilhar dezenas de animações concorrentes por segundo.
+          _scrollController.jumpTo(position.maxScrollExtent);
+        }
       }
     });
   }
@@ -2404,7 +2480,7 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _mode = mode);
       await SettingsService.instance.setMode(mode);
       _snack(
-        'Modo alterado para ${mode == GamaMode.programar ? 'Programar' : 'Conversar'}',
+        'Modo alterado para ${mode == GamaMode.programar ? 'Trabalhar' : 'Conversar'}',
       );
       return true;
     }
@@ -2607,7 +2683,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _retryLastFailedRequest() async {
-    if (_isLoading || _failedAssistantMessageId == null) return;
+    if (_isLoading || !_failedRequestRetryable ||
+        _failedAssistantMessageId == null) return;
     final failedId = _failedAssistantMessageId!;
     final failedIndex = _messages.indexWhere((m) => m.id == failedId);
     if (failedIndex < 0) return;
@@ -2788,7 +2865,13 @@ class _ChatScreenState extends State<ChatScreen> {
     _streamSearchQuery = '';
     _streamRawText = StringBuffer();
     _assistantPersistence = null;
+    _streamRevealTimer?.cancel();
+    _streamRevealTimer = null;
+    _streamRevealLastFrame = null;
+    _streamRevealBudget = 0;
     _streamRevealQueue.clear();
+    _finishingStreamReveal = false;
+    _streamRevealFinishStarted = null;
     _streamingText.value = '';
 
     final isRegeneration =
@@ -2811,6 +2894,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _failedAssistantMessageId = null;
     _chatErrorMessage = null;
+    _failedRequestRetryable = true;
     _firstTokenReceived = false;
     final apiText = AttachmentService.buildMessageBody(rawText, pending);
     final displayText = AttachmentService.buildDisplayMessage(rawText, pending);
@@ -2903,7 +2987,7 @@ class _ChatScreenState extends State<ChatScreen> {
           : (_mode == GamaMode.conversar ? 'conversar' : 'programar');
       final resolvedModel = oficina == OficinaKind.programar
           ? AppConstants.modelOficinaProgramar
-          : null;
+          : SettingsService.modelForMode(_mode);
       final stream = _ollama.chatStream(
         messages: apiMessages,
         model: resolvedModel,
@@ -2989,8 +3073,21 @@ class _ChatScreenState extends State<ChatScreen> {
               _messages.last.id,
               () => <Map<String, dynamic>>[],
             );
-            artifacts.add(Map<String, dynamic>.from(event.artifact!));
-            setState(() {});
+            final incoming = Map<String, dynamic>.from(event.artifact!);
+            final artifactId = incoming['artifact_id']?.toString();
+            if (artifactId == null || artifactId.isEmpty ||
+                !artifacts.any((a) => a['artifact_id'] == artifactId)) {
+              artifacts.add(incoming);
+              _messages.last.artifacts = artifacts;
+              // Salva imediatamente se esta mensagem já estiver no Hive.
+              // Respostas novas são salvas completas em onDone/onError.
+              if (_messages.last.isInBox) {
+                unawaited(_service.updateMessageContent(
+                  _messages.last, _messages.last.content,
+                ));
+              }
+              setState(() {});
+            }
           }
 
           // Imagem gerada pelo backend (GPT Image 2.5 Sunburst)
@@ -3025,8 +3122,6 @@ class _ChatScreenState extends State<ChatScreen> {
         onDone: () async {
           if (!_generation.isCurrent(generationEpoch)) return;
           _streamSubscription = null;
-          _streamRevealTimer?.cancel();
-          _streamRevealTimer = null;
           final isVoiceReply = _voiceResponsePending;
           _voiceResponseBuffer = _voiceResponseBuffer
               .replaceAll(
@@ -3062,7 +3157,8 @@ class _ChatScreenState extends State<ChatScreen> {
               if (!isVoiceReply && completedText.isNotEmpty) completedText,
               ...generatedImageBlocks,
             ].join('\n\n');
-            _finishStreamReveal(isVoiceReply ? '' : completedText);
+            _finishStreamReveal(isVoiceReply ? '' : completedText,
+                animate: !isVoiceReply);
           }
           final latestAssistant =
               _messages.isNotEmpty && _messages.last.isAssistant
@@ -3210,6 +3306,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _streamRevealTimer?.cancel();
           _streamRevealTimer = null;
           _streamRevealQueue.clear();
+          _finishingStreamReveal = false;
           final friendly = e is ChatApiException
               ? e.message
               : 'A resposta foi interrompida. Verifique a conexão e tente novamente.';
@@ -3242,6 +3339,7 @@ class _ChatScreenState extends State<ChatScreen> {
             setState(() {
               _failedAssistantMessageId = failed?.id;
               _chatErrorMessage = friendly;
+              _failedRequestRetryable = e is! ChatApiException || e.retryable;
               _isLoading = false;
               _streamPhase = '';
               _voiceResponsePending = false;
@@ -3268,6 +3366,7 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _failedAssistantMessageId = failed?.id;
         _chatErrorMessage = friendly;
+        _failedRequestRetryable = e is! ChatApiException || e.retryable;
         _isLoading = false;
         _streamPhase = '';
         _voiceResponsePending = false;
@@ -3392,8 +3491,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    SettingsService.instance.removeListener(_onModeSettingsChanged);
     _generation.invalidate();
-    _generationTimer?.cancel();
+    _generationClock.dispose();
     _cancelSpeechRestart();
     _micArmed = false;
     try {
@@ -3578,18 +3678,68 @@ class _ChatScreenState extends State<ChatScreen> {
                             ],
                           ),
                         ),
-                        if (widget.oficinaKind == OficinaKind.programar)
+                        if (widget.oficinaKind == null)
+                          PopupMenuButton<GamaMode>(
+                            enabled: !_isLoading,
+                            tooltip: 'Selecionar modo de IA',
+                            onSelected: (value) async {
+                              if (_mode == value) return;
+                              setState(() => _mode = value);
+                              await SettingsService.instance.setMode(value);
+                            },
+                            itemBuilder: (context) => [
+                              const PopupMenuItem(
+                                value: GamaMode.conversar,
+                                child: ListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(Icons.chat_bubble_outline_rounded),
+                                  title: Text('Conversar'),
+                                  subtitle: Text('GPT-5.4 Mini'),
+                                ),
+                              ),
+                              const PopupMenuItem(
+                                value: GamaMode.programar,
+                                child: ListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(Icons.code_rounded),
+                                  title: Text('Trabalhar'),
+                                  subtitle: Text('GLM 5.3 Flash'),
+                                ),
+                              ),
+                            ],
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 12,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _mode == GamaMode.conversar
+                                        ? 'Conversar'
+                                        : 'Trabalhar',
+                                    style: TextStyle(
+                                      color: context.gama.textSecondary,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 2),
+                                  Icon(Icons.expand_more_rounded,
+                                      size: 16,
+                                      color: context.gama.textSecondary),
+                                ],
+                              ),
+                            ),
+                          )
+                        else if (widget.oficinaKind == OficinaKind.programar)
                           Padding(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 7,
+                              horizontal: 8, vertical: 7,
                             ),
-                            child: Text(
-                              widget.oficinaKind == OficinaKind.programar
-                                  ? 'GLM 5.3 Flash'
-                                  : 'GPT-5.4 Mini',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            child: Text('GLM 5.3 Flash',
                               style: TextStyle(
                                 color: context.gama.textSecondary,
                                 fontSize: 12,
@@ -3795,8 +3945,29 @@ class _ChatScreenState extends State<ChatScreen> {
                                   16,
                                   26,
                                 ),
-                                itemCount: _messages.length,
-                                itemBuilder: (context, index) {
+                                cacheExtent: 320,
+                                itemCount: _historyWindow.listLength(_messages.length),
+                                itemBuilder: (context, listIndex) {
+                                  if (listIndex == 0 &&
+                                      _historyWindow.hasOlder(_messages.length)) {
+                                    return Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(bottom: 14),
+                                        child: TextButton.icon(
+                                          onPressed: _loadEarlierMessages,
+                                          icon: const Icon(Icons.history_rounded, size: 18),
+                                          label: Text(
+                                            'Carregar mensagens anteriores (${_historyWindow.remaining(_messages.length)})',
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  // Mantém o índice REAL usado por editar,
+                                  // regenerar, anexos e histórico de fontes.
+                                  final index = _historyWindow.messageIndex(
+                                    listIndex, _messages.length,
+                                  );
                                   final msg = _messages[index];
                                   final isUser = msg.isUser;
                                   final isLastAssistant =
@@ -3975,7 +4146,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                   _chatErrorMessage!,
                                                               isError: true,
                                                               onRetry:
-                                                                  _isLoading
+                                                                  _isLoading || !_failedRequestRetryable
                                                                   ? null
                                                                   : _retryLastFailedRequest,
                                                               onContinue:
@@ -4013,10 +4184,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                         CrossAxisAlignment
                                                                             .start,
                                                                     children: [
-                                                                      ChatStatusIndicator(
-                                                                        label:
-                                                                            _streamStatusLabel,
-                                                                      ),
+                                                                      _timedStreamStatus(),
                                                                       _VideoGenerationProgress(
                                                                         phase:
                                                                             _streamPhase,
@@ -4037,23 +4205,17 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                       ),
                                                                     ],
                                                                   )
-                                                                : ChatStatusIndicator(
-                                                                    label:
-                                                                        _streamStatusLabel,
-                                                                  )
+                                                                : _timedStreamStatus()
                                                           else if (msg
                                                                   .content
                                                                   .isEmpty &&
                                                               !isUser &&
                                                               _isLoading &&
                                                               _voiceResponsePending)
-                                                            ChatStatusIndicator(
-                                                              label:
-                                                                  _streamStatusLabel,
-                                                            )
+                                                            _timedStreamStatus()
                                                           else if (!isUser &&
                                                               isLastAssistant &&
-                                                              _isLoading &&
+                                                              (_isLoading || _finishingStreamReveal) &&
                                                               !_voiceResponsePending &&
                                                               _firstTokenReceived)
                                                             ValueListenableBuilder<
@@ -4090,7 +4252,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                           onTapLink:
                                                                               _openLink,
                                                                         ),
-                                                                        const _StreamingCursor(),
+                                                                        if (!_finishingStreamReveal)
+                                                                          const _StreamingCursor(),
                                                                       ],
                                                                     ),
                                                             )
@@ -4307,26 +4470,17 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                       ].contains(
                                                                         _streamPhase,
                                                                       ))))
-                                                            _ActivityTimeline(
-                                                              key: ValueKey(
-                                                                'activity-${msg.id}',
+                                                            ValueListenableBuilder<Duration>(
+                                                              valueListenable: _generationClock,
+                                                              builder: (context, _, __) => _ActivityTimeline(
+                                                                key: ValueKey('activity-${msg.id}'),
+                                                                steps: _activityByMessageId[msg.id] ?? const [],
+                                                                sources: _sourcesByMessageId[msg.id] ?? const [],
+                                                                isRunning: _isLoading && isLastAssistant,
+                                                                activeStep: _isLoading && isLastAssistant
+                                                                    ? _chatStatusLabel
+                                                                    : null,
                                                               ),
-                                                              steps:
-                                                                  _activityByMessageId[msg
-                                                                      .id] ??
-                                                                  const [],
-                                                              sources:
-                                                                  _sourcesByMessageId[msg
-                                                                      .id] ??
-                                                                  const [],
-                                                              isRunning:
-                                                                  _isLoading &&
-                                                                  isLastAssistant,
-                                                              activeStep:
-                                                                  _isLoading &&
-                                                                      isLastAssistant
-                                                                  ? _chatStatusLabel
-                                                                  : null,
                                                             ),
                                                           if (!isUser &&
                                                               !_isLoading &&
@@ -4656,6 +4810,9 @@ class _ChatScreenState extends State<ChatScreen> {
               focusNode: _composerFocusNode,
               isLoading: _isLoading,
               isListening: _isListening,
+              hasAttachments: _attachments.isNotEmpty,
+              attachmentsReady: !_processingAttachment &&
+                  !_waitingForAttachment && !_attachmentProcessingFailed,
               mode: _mode,
               onAttach: _showAttachMenu,
               onToggleListen: _toggleListen,

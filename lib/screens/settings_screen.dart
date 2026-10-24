@@ -220,7 +220,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               Expanded(
                 child: _ModeChip(
-                  label: 'Programar',
+                  label: 'Trabalhar',
                   icon: Icons.code_rounded,
                   selected: _mode == GamaMode.programar,
                   onTap: () => setState(() => _mode = GamaMode.programar),
@@ -240,8 +240,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 8),
           Text(
             _mode == GamaMode.programar
-                ? 'Otimizado para código, debug e análise de projetos.'
-                : 'Otimizado para diálogo rápido e respostas faláveis (voz).',
+                ? 'GLM 5.3 Flash · código, debug e análise de projetos.'
+                : 'GPT-5.4 Mini · diálogo rápido e respostas naturais.',
             style: TextStyle(
               color: context.gama.textMuted,
               fontSize: 12,
@@ -262,11 +262,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               color: context.gama.accent,
             ),
             title: Text(
-              'GPT-5.4 Mini',
+              _mode == GamaMode.conversar
+                  ? 'GPT-5.4 Mini'
+                  : 'GLM 5.3 Flash',
               style: TextStyle(color: context.gama.textPrimary),
             ),
             subtitle: Text(
-              'O GLM é usado automaticamente ao abrir Oficina › Programar.',
+              'O modelo acompanha o modo. A Oficina usa o modelo da tarefa.',
               style: TextStyle(color: context.gama.textMuted, fontSize: 12),
             ),
           ),

@@ -39,20 +39,21 @@ class SettingsService extends ChangeNotifier {
     return _prefs.getString(_keyApiBaseUrl) ?? AppConstants.apiBaseUrl;
   }
 
-  /// Modelo efetivo. Prefere o valor salvo se estiver na lista do backend;
-  /// senão deriva do modo.
+  /// Modelo efetivo do modo principal. A Oficina seleciona seu próprio modelo.
   String get model {
     _ensureInitialized();
-    // O modelo comum é fixo; a Oficina Programar passa seu GLM diretamente
-    // na chamada, sem gravá-lo como modelo padrão da conta.
-    return AppConstants.defaultModel;
+    return modelForMode(mode);
   }
+
+  static String modelForMode(GamaMode mode) => mode == GamaMode.conversar
+      ? AppConstants.modelConversar
+      : AppConstants.modelProgramar;
 
   GamaMode get mode {
     _ensureInitialized();
     final v = _prefs.getString(_keyMode);
-    if (v == 'conversar') return GamaMode.conversar;
-    return GamaMode.programar;
+    if (v == 'programar' || v == 'trabalhar') return GamaMode.programar;
+    return GamaMode.conversar;
   }
 
   bool get ttsAuto {
@@ -86,8 +87,14 @@ class SettingsService extends ChangeNotifier {
 
   Future<void> setModel(String model) async {
     _ensureInitialized();
-    if (model.trim() != AppConstants.defaultModel) return;
-    await _prefs.setString(_keyModel, AppConstants.defaultModel);
+    final value = model.trim();
+    if (value != AppConstants.modelConversar &&
+        value != AppConstants.modelProgramar) return;
+    await _prefs.setString(_keyModel, value);
+    await _prefs.setString(
+      _keyMode,
+      value == AppConstants.modelConversar ? 'conversar' : 'programar',
+    );
     notifyListeners();
   }
 

@@ -259,6 +259,9 @@ class ConversationStore:
                 sources_json = m.get("sourcesJson")
                 if isinstance(sources_json, str) and len(sources_json) <= 100_000:
                     normalized_message["sourcesJson"] = sources_json
+                artifacts_json = m.get("artifactsJson")
+                if isinstance(artifacts_json, str) and len(artifacts_json) <= 100_000:
+                    normalized_message["artifactsJson"] = artifacts_json
                 messages.append(normalized_message)
 
         item = {
@@ -421,6 +424,9 @@ class ConversationStore:
         sources_json = m.get("sourcesJson")
         if isinstance(sources_json, str) and len(sources_json) <= 100_000:
             normalized["sourcesJson"] = sources_json
+        artifacts_json = m.get("artifactsJson")
+        if isinstance(artifacts_json, str) and len(artifacts_json) <= 100_000:
+            normalized["artifactsJson"] = artifacts_json
         return normalized
 
     def delete(self, conversation_id: str) -> bool:

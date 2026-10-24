@@ -438,25 +438,13 @@ class OllamaService {
   /// pelo ChatScreen como falha recuperável, e não como resposta completa.
   /// Público apenas para permitir testes com chunks de rede simulados.
   Stream<ChatStreamEvent> decodeNdjson(Stream<List<int>> bytes) async* {
-    final lines = utf8.decoder.bind(bytes);
-    var buffer = '';
-
-    Stream<ChatStreamEvent> decodeLine(String line) => _parseLine(line.trim());
-
-    await for (final chunk in lines) {
-      buffer += chunk;
-      final parts = buffer.split('\n');
-      buffer = parts.removeLast();
-      for (final line in parts) {
-        if (line.trim().isEmpty) continue;
-        await for (final event in decodeLine(line)) {
-          yield event;
-          if (event.done) return;
-        }
-      }
-    }
-    if (buffer.trim().isNotEmpty) {
-      await for (final event in decodeLine(buffer)) {
+    // LineSplitter mantém internamente apenas a linha ainda incompleta,
+    // evitando concatenar e dividir repetidamente todo o stream.
+    // Trata UTF-8 dividido entre chunks e uma última linha sem newline.
+    final lines = utf8.decoder.bind(bytes).transform(const LineSplitter());
+    await for (final line in lines) {
+      if (line.trim().isEmpty) continue;
+      await for (final event in _parseLine(line.trim())) {
         yield event;
         if (event.done) return;
       }

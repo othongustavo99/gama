@@ -39,7 +39,7 @@ class Settings:
         os.getenv("APP_NAME", "Gama"),
     ).strip()
 
-    # Modelo único padrão (GPT-5.4 Mini via OpenRouter)
+    # Modelo padrão geral; trabalhar/programar seleciona CODING_MODEL.
     _DEFAULT_MODEL = "openai/gpt-5.4-mini"
 
     OPENROUTER_DEFAULT_MODEL = os.getenv(
@@ -55,7 +55,7 @@ class Settings:
     ]
 
     CONVERSATION_MODEL = os.getenv("CONVERSATION_MODEL", _DEFAULT_MODEL).strip()
-    CODING_MODEL = os.getenv("CODING_MODEL", _DEFAULT_MODEL).strip()
+    CODING_MODEL = os.getenv("CODING_MODEL", "z-ai/glm-5.3-flash").strip()
     # Oficina · Programar (GLM Flash no OpenRouter). Sobrescreva via env se o slug mudar.
     OFICINA_CODING_MODEL = os.getenv(
         "OFICINA_CODING_MODEL",

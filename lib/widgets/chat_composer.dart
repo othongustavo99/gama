@@ -18,6 +18,8 @@ class ChatComposer extends StatelessWidget {
   final TextEditingController controller;
   final bool isLoading;
   final bool isListening;
+  final bool hasAttachments;
+  final bool attachmentsReady;
   final GamaMode mode;
   final VoidCallback onAttach;
   final VoidCallback onToggleListen;
@@ -45,6 +47,8 @@ class ChatComposer extends StatelessWidget {
     required this.controller,
     required this.isLoading,
     required this.isListening,
+    this.hasAttachments = false,
+    this.attachmentsReady = true,
     required this.mode,
     required this.onAttach,
     required this.onToggleListen,
@@ -75,7 +79,8 @@ class ChatComposer extends StatelessWidget {
           defaultTargetPlatform == TargetPlatform.linux);
 
   void _submitIfPossible() {
-    if (!isLoading && controller.text.trim().isNotEmpty) {
+    if (!isLoading && attachmentsReady &&
+        (controller.text.trim().isNotEmpty || hasAttachments)) {
       onSend();
     }
   }
@@ -95,7 +100,7 @@ class ChatComposer extends StatelessWidget {
               ('/memoria ', 'Salvar um fato na memória'),
               ('/limpar', 'Limpar esta conversa'),
               if (oficinaKind == null) ...[
-                ('/modo programar', 'Mudar para Programar'),
+                ('/modo programar', 'Mudar para Trabalhar'),
                 ('/modo conversar', 'Mudar para Conversar'),
               ],
             ]
@@ -434,7 +439,8 @@ class ChatComposer extends StatelessWidget {
                               ValueListenableBuilder<TextEditingValue>(
                                 valueListenable: controller,
                                 builder: (context, value, _) {
-                                  final canSend = value.text.trim().isNotEmpty;
+                                  final canSend = attachmentsReady &&
+                                      (value.text.trim().isNotEmpty || hasAttachments);
                                   return Tooltip(
                                     message: isLoading
                                         ? 'Parar geração'

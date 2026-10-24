@@ -26,12 +26,10 @@ class AppConstants {
   /// Modelo usado pela Oficina para tarefas de programação.
   static const String modelOficinaProgramar = 'z-ai/glm-5.3-flash';
 
-  static const String defaultModel = modelProgramar;
+  static const String defaultModel = modelConversar;
 
-  // Modelos padrão usados apenas como fallback quando o servidor está offline.
-  // A lista real vem do endpoint /models; não repetimos dois modos como se
-  // fossem modelos diferentes.
-  static const List<String> availableModels = [defaultModel];
+  // Modelos conhecidos no app; o catálogo remoto continua disponível em /models.
+  static const List<String> availableModels = [modelConversar, modelProgramar];
 
   static const Map<String, String> modelLabels = {
     'openai/gpt-5.4-mini': 'GPT-5.4 Mini',
@@ -39,7 +37,7 @@ class AppConstants {
     'google/gemini-2.0-flash-001': 'Gemini 2.0 Flash',
     'deepseek/deepseek-chat': 'DeepSeek Chat',
     'qwen/qwen-2.5-coder-32b-instruct': 'Qwen 2.5 Coder',
-    'z-ai/glm-5.3-flash': 'GLM 5.3 Flash (Oficina)',
+    'z-ai/glm-5.3-flash': 'GLM 5.3 Flash',
     'z-ai/glm-4.5-air': 'GLM 4.5 Air',
   };
 

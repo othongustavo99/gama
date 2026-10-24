@@ -52,6 +52,20 @@ gama = GamaCore()
 _background_memory_tasks: set[asyncio.Task] = set()
 _background_generation_tasks: dict[tuple[str, str], tuple[asyncio.Task, asyncio.Event]] = {}
 
+
+def _safe_artifacts_json(artifacts: list[dict]) -> str:
+    """Never truncate JSON; remote sync rejects metadata > 100 KB."""
+    if not artifacts:
+        return ""
+    encoded = json.dumps(artifacts[-30:], ensure_ascii=False)
+    if len(encoded) <= 100_000:
+        return encoded
+    compact = [
+        {k: artifact[k] for k in ("artifact_id", "kind", "filename", "duration_seconds", "resolution") if k in artifact}
+        for artifact in artifacts[-30:]
+    ]
+    return json.dumps(compact, ensure_ascii=False)[:100_000] if len(json.dumps(compact, ensure_ascii=False)) <= 100_000 else ""
+
 _OFFICE_NON_CREATION_RE = re.compile(
     r"(?i)^\s*(?:como\b|por que\b|porque\b|o que (?:e|é|s[aã]o|acontece)\b|"
     r"qual(?:is)?\b|explique\b|me ensine\b|tutorial\b|analise\b|an[aá]lise\b|"
@@ -757,6 +771,24 @@ def _attached_project_id(messages: list[dict]) -> str | None:
     return None
 
 
+def _resolve_chat_model(requested: str | None, chat_mode: str | None) -> str:
+    """Centralizes provider model choice for every chat mode.
+
+    Normal chat uses the selected mode's configured model; Oficina keeps
+    control of its own model and specialized vision routing remains downstream.
+    """
+    mode = (chat_mode or "").strip().lower()
+    if mode in {"oficina_programar", "oficina_codigo", "oficina_code"}:
+        model = app_settings.OFICINA_CODING_MODEL or requested
+    elif mode in {"programar", "trabalhar"}:
+        model = app_settings.CODING_MODEL
+    elif mode == "conversar":
+        model = app_settings.CONVERSATION_MODEL
+    else:
+        model = requested
+    return llm.resolve_model(model)
+
+
 @router.get("/models")
 async def list_models():
     models = await llm.list_models()
@@ -822,13 +854,7 @@ async def chat(
         {"role": message.get("role", "user"), "content": message.get("content", "")}
         for message in messages
     ]
-    model = llm.resolve_model(request.model)
-    # Oficina · Programar: força o modelo GLM Flash (configurável via OFICINA_CODING_MODEL).
-    chat_mode_raw = (getattr(request, "chat_mode", None) or "").strip().lower()
-    if chat_mode_raw in {"oficina_programar", "oficina_codigo", "oficina_code"}:
-        oficina_model = (getattr(app_settings, "OFICINA_CODING_MODEL", None) or "").strip()
-        if oficina_model:
-            model = llm.resolve_model(oficina_model)
+    model = _resolve_chat_model(request.model, getattr(request, "chat_mode", None))
 
     last_user = ""
     if messages and messages[-1].get("role") == "user":
@@ -1820,6 +1846,7 @@ async def chat(
             response_parts: list[str] = []
             image_blocks: list[str] = []
             sources: list = []
+            artifacts: list[dict] = []
             try:
                 async for chunk in stream_with_meta():
                     for line in chunk.splitlines():
@@ -1835,6 +1862,10 @@ async def chat(
                         event_sources = meta.get("sources")
                         if isinstance(event_sources, list):
                             sources = event_sources
+                        event_artifact = meta.get("artifact")
+                        if isinstance(event_artifact, dict) and event_artifact.get("artifact_id"):
+                            if not any(a.get("artifact_id") == event_artifact["artifact_id"] for a in artifacts):
+                                artifacts.append(event_artifact)
                         image = meta.get("image")
                         if isinstance(image, dict) and image.get("data"):
                             mime = str(image.get("mime") or "image/png").replace("\n", "")
@@ -1882,6 +1913,7 @@ async def chat(
                                     "conversationId": conversation_id,
                                     "timestamp": timestamp,
                                     "sourcesJson": json.dumps(sources, ensure_ascii=False) if sources else "",
+                                    "artifactsJson": _safe_artifacts_json(artifacts),
                                 },
                             )
                         except Exception:

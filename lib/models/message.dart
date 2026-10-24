@@ -42,6 +42,11 @@ class Message extends HiveObject {
   @HiveField(9)
   String sourcesJson;
 
+  /// Metadados de arquivos produzidos pelo servidor (ZIP, PDF e vídeo).
+  /// Apenas identificadores/nomes; binários continuam na biblioteca/API.
+  @HiveField(10)
+  String artifactsJson;
+
   Message({
     required this.id,
     required this.role,
@@ -53,6 +58,7 @@ class Message extends HiveObject {
     this.selectedVariantIndex = 0,
     this.isTruncated = false,
     this.sourcesJson = '',
+    this.artifactsJson = '',
   }) : variants = List<String>.from(
          variants ?? (content.isNotEmpty ? <String>[content] : <String>[]),
        ),
@@ -88,6 +94,46 @@ class Message extends HiveObject {
 
   set sources(List<Map<String, dynamic>> value) {
     sourcesJson = jsonEncode(value);
+  }
+
+  List<Map<String, dynamic>> get artifacts {
+    if (artifactsJson.trim().isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(artifactsJson);
+      if (decoded is! List) return const [];
+      return decoded.whereType<Map>().map((item) =>
+          Map<String, dynamic>.from(item)).toList();
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'ler metadados de artefatos');
+      return const [];
+    }
+  }
+
+  set artifacts(List<Map<String, dynamic>> value) {
+    // Não persistir binários nem aceitar uma lista ilimitada de metadados.
+    final limited = value.take(30).map((item) =>
+        Map<String, dynamic>.from(item)).toList();
+    var encoded = jsonEncode(limited);
+    if (encoded.length > 90000) {
+      // As prévias de código podem conter milhares de linhas; o download
+      // continua disponível por artifact_id mesmo sem essas prévias.
+      for (final artifact in limited) {
+        artifact.remove('generated_files');
+        artifact.remove('data');
+        artifact.remove('preview');
+      }
+      encoded = jsonEncode(limited);
+    }
+    if (encoded.length > 90000) {
+      final compact = limited.map((item) => <String, dynamic>{
+        for (final key in const [
+          'artifact_id', 'kind', 'filename', 'duration_seconds', 'resolution'
+        ])
+          if (item.containsKey(key)) key: item[key],
+      }).toList();
+      encoded = jsonEncode(compact);
+    }
+    artifactsJson = encoded.length <= 90000 ? encoded : '[]';
   }
 
   int get variantCount => variants.length;
