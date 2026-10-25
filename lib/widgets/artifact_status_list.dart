@@ -178,7 +178,9 @@ class ArtifactStatusList extends StatelessWidget {
             final videoAudioLabel = artifact['audio_generated'] == false
                 ? 'sem áudio'
                 : 'com áudio';
+            // Ausência de laudo (por exemplo, mensagem antiga) não é falha.
             final zipOk = structural['ok'] == true;
+            final zipFailed = structural['ok'] == false;
             final syntaxStatus = source['status']?.toString() ?? '';
             final checked = source['checked_count']?.toString() ?? '0';
             final unverified = source['unverified_count']?.toString() ?? '0';
@@ -253,18 +255,22 @@ class ArtifactStatusList extends StatelessWidget {
                         Icon(
                           zipOk
                               ? Icons.check_circle_outline
-                              : Icons.error_outline,
+                              : zipFailed
+                              ? Icons.error_outline
+                              : Icons.info_outline,
                           size: 16,
-                          color: zipOk
-                              ? context.gama.accentBright
-                              : Colors.orangeAccent,
+                          color: zipFailed
+                              ? Colors.orangeAccent
+                              : context.gama.accentBright,
                         ),
                         const SizedBox(width: 7),
                         Expanded(
                           child: Text(
                             zipOk
                                 ? 'Integridade do ZIP: passou (estrutura/CRC)'
-                                : 'Integridade do ZIP: falhou',
+                                : zipFailed
+                                ? 'Integridade do ZIP: falhou'
+                                : 'Integridade do ZIP: não informada',
                             style: TextStyle(
                               color: context.gama.textSecondary,
                               fontSize: 12,

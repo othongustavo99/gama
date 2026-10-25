@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from ..config import settings
-from .net_safety import safe_get, UnsafeURLError
+from .net_safety import safe_get, UnsafeURLError, validate_public_url
 
 logger = logging.getLogger(__name__)
 DEFAULT_VIDEO_MODEL = "bytedance/seedance-2.0-mini"
@@ -40,13 +40,51 @@ _IMAGE_WORD = re.compile(r"(?i)\b(imagem|imagens|foto|fotos|fotografia|ilustra[c
 _ANALYZE = re.compile(r"(?i)\b(analisa(?:r|e)?|an[aá]lise|descrev(?:a|e|er)|resum(?:a|ir)|explique|explora(?:r)?|identifique|transcrev(?:a|er)|o que acontece|o que est[aá] acontecendo|o que aparece|o que [eé] isso|what happens|summari[sz]e|analy[sz]e)\b")
 _EDIT = re.compile(r"(?i)\b(edita(?:r|e)?|edite|modifica(?:r|e)?|altera(?:r|e)?|muda(?:r|e)?|troca(?:r|e)?|substitui(?:r|a)?|estende(?:r)?|continue|continua(?:r)?|remonta(?:r)?|recria(?:r|e)?|transforma(?:r|e)?|corta(?:r|e)?|recorta(?:r|e)?|remove|remova|adicione|adiciona)\b")
 _IMPROVE = re.compile(r"(?i)\b(melhora(?:r|e)?|melhore|aprimora(?:r|e)?|refina(?:r|e)?|aumenta(?:r|e)?\s+a\s+qualidade|estabiliza(?:r|e)?|upscale|enhance|improve|sharpen)\b")
-_ANIMATE = re.compile(r"(?i)\b(anima(?:r|e)?|movimenta(?:r|e)?|dar movimento|transforma(?:r|e)?\s+(?:esta|essa|a)\s+imagem\s+em\s+v[ií]deo|image.to.video|animate)\b")
-_IMAGE_TO_VIDEO = re.compile(r"(?i)\b(a\s+partir\s+d(?:a|e)\s+(?:imagem|foto)|usando\s+(?:esta|essa|a)?\s*(?:imagem|foto)(?:\s+como\s+refer[eê]ncia)?|com\s+(?:esta|essa|a|uma)?\s*(?:imagem|foto)|(?:esta|essa)\s+imagem\s+em\s+v[ií]deo|a\s+partir\s+d(?:o|e)\s+anexo|usando\s+(?:o\s+)?anexo|com\s+(?:o\s+)?anexo|from\s+the\s+attachment|turn\s+(?:this\s+)?image\s+into\s+(?:a\s+)?video)\b")
+_ANIMATE = re.compile(r"(?i)\b(anima(?:r|e)?|anime|animar|animar\s+(?:esta|essa|a)\s+(?:imagem|foto)|movimenta(?:r|e)?|dar movimento|transforma(?:r|e)?\s+(?:esta|essa|a)\s+imagem\s+em\s+v[ií]deo|image.to.video|animate)\b")
+_IMAGE_TO_VIDEO = re.compile(r"(?i)\b((?:v[ií]deo|clipe|anima[cç][aã]o)\s+(?:dessa|desta|da|com\s+essa|usando\s+essa)\s+(?:imagem|foto)|a\s+partir\s+d(?:a|e)\s+(?:imagem|foto)|usando\s+(?:esta|essa|a)?\s*(?:imagem|foto)(?:\s+como\s+refer[eê]ncia)?|com\s+(?:esta|essa|a|uma)?\s*(?:imagem|foto)|(?:esta|essa)\s+imagem\s+em\s+v[ií]deo|a\s+partir\s+d(?:o|e)\s+anexo|usando\s+(?:o\s+)?anexo|com\s+(?:o\s+)?anexo|from\s+the\s+attachment|turn\s+(?:this\s+)?image\s+into\s+(?:a\s+)?video)\b")
+_IMAGE_MOTION = re.compile(
+    r"(?i)\b(?:quero|fa[cç]a|faz|preciso|gostaria|deixe|deixa|"
+    r"coloque|p[oõ]e)\b[^.!?\n]{0,140}?\b(?:imagem|foto)\b"
+    r"[^.!?\n]{0,140}?\b(?:se\s+mex(?:a|er)|se\s+mov(?:a|er)|"
+    r"ganh(?:e|ar)\s+vida|animada|movimento|movimentar|animar)\b"
+)
 _CREATE = re.compile(r"(?i)\b(cria(?:r|e)?|crie|gere|gera(?:r)?|faz(?:er)?|fa[cç]a|produz(?:ir|a)?|imagina(?:r)?|imagine|monta(?:r|e)?|create|generate|make)\b")
 _REFERENCE_VIDEO = re.compile(r"(?i)\b(com\s+base\s+(?:n[oa]|em)\s+(?:este|esse|nesse|no|o)?\s*v[ií]deo|a\s+partir\s+(?:d[oa]|desse|deste)\s+v[ií]deo|usando\s+(?:este|esse|o)?\s*v[ií]deo\s+como\s+refer[eê]ncia|use\s+(?:este|esse|o)?\s*v[ií]deo|baseado\s+n(?:o|este|esse)\s*v[ií]deo)\b")
 _FROM_SCRATCH = re.compile(r"(?i)\b(do\s+zero|sem\s+(?:usar|aproveitar)\s+(?:este|esse|o)?\s*v[ií]deo|ignore\s+(?:este|esse|o)?\s*v[ií]deo)\b")
 _INFO_REQUEST = re.compile(r"(?i)^\s*(?:como|de que forma|qual a melhor forma|me ensine|me ensina|explique|explique-me|passo a passo|quais ferramentas|qual ferramenta|o que [eé])\b")
 _ASK_ADVICE = re.compile(r"(?i)\b(como\s+(?:eu\s+)?(?:posso|poderia|devo|deveria)\s+melhorar|o\s+que\s+(?:(?:voc[eê]\s+)?(?:acha|mudaria|poderia\s+melhorar)|(?:eu\s+)?(?:posso|poderia|devo|deveria)\s+(?:melhorar|mudar))|quais\s+(?:s[aã]o\s+)?(?:os\s+)?melhorias|sugest[oõ]es\s+de\s+melhoria|avalie\s+(?:a\s+)?qualidade)\b")
+
+# Pedidos audiovisuais nem sempre começam por "crie um vídeo". Detectamos
+# também briefings nominais e a solicitação educada "quero um clipe...".
+_VIDEO_REQUEST = re.compile(
+    r"(?is)\b(?:cria|crie|criar|gera|gere|gerar|faz|fa[cç]a|produza|"
+    r"quero|gostaria\s+de|preciso\s+de|create|generate|make|produce)\b"
+    r"[\s\S]{0,12000}?\b(?:v[ií]deo|v[ií]deos|clipe|filmagem|"
+    r"anima[cç][aã]o|videoclipe|video|clip|animation)\b"
+)
+_VIDEO_NOMINAL = re.compile(
+    r"(?i)^\s*(?:um|uma|o|a|one|an?)\s+(?:v[ií]deo|clipe|"
+    r"anima[cç][aã]o|videoclipe|video|clip|animation)\b"
+)
+_NON_EXECUTION = re.compile(
+    r"(?i)^\s*(?:n[aã]o\s+(?:crie|cria|gere|gera|fa[cç]a|edite|"
+    r"melhore|anime)|o\s+que\s+(?:voc[eê]\s+)?acha\s+de|"
+    r"(?:me\s+)?(?:d[eê]\s+)?(?:ideias?|sugest[oõ]es)\s+(?:de|para)|"
+    r"voc[eê]\s+(?:consegue|sabe|pode)\s+(?:criar|gerar|fazer)\s+"
+    r"(?:um\s+)?(?:v[ií]deo|v[ií]deos|clipe|clipes)\s*[?.!]?$)"
+)
+_SOFTWARE_DELIVERABLE = re.compile(
+    r"(?i)^\s*(?:por\s+favor[,\s]+)?(?:cria|crie|criar|gera|gere|fa[cç]a|faz|"
+    r"quero|desenvolva|implemente|construa|create|build)\s+"
+    r"(?:um|uma|o|a)?\s*(?:app|aplicativo|programa|software|site|"
+    r"webapp|projeto|sistema|c[oó]digo|script|fun[cç][aã]o|endpoint)\b"
+)
+_PROGRAMMING_INSTRUCTION = re.compile(
+    r"(?i)\b(?:c[oó]digo|script|fun[cç][aã]o|endpoint|api|flutter|dart|"
+    r"python|javascript|tutorial|passo\s+a\s+passo)\b"
+    r"[\s\S]{0,100}?\b(?:gerar|criar|renderizar|processar)\s+"
+    r"(?:uma?s?\s+)?(?:v[ií]deos?|clipes?)\b"
+)
 
 def _clean_text(text: str) -> str:
     """Remove marcadores/rótulos que o app adiciona; eles não são intenção do usuário."""
@@ -64,6 +102,8 @@ def detect_video_intent(
 ) -> VideoRequest:
     """Distingue análise, criação, animação e edição sem confundir rótulos do app."""
     text = _clean_text(user_text)
+    if _NON_EXECUTION.search(text) or _PROGRAMMING_INSTRUCTION.search(text) or _SOFTWARE_DELIVERABLE.search(text):
+        return VideoRequest(VideoIntent.NONE, "", 0.0)
     if not text:
         return VideoRequest(VideoIntent.ANALYZE, "", 0.96) if has_attached_video else VideoRequest(VideoIntent.NONE, "", 0.0)
 
@@ -88,6 +128,9 @@ def detect_video_intent(
     if _INFO_REQUEST.search(text):
         return VideoRequest(VideoIntent.NONE, "", 0.0)
 
+    if _IMAGE_MOTION.search(text) or _IMAGE_TO_VIDEO.search(text) and (_CREATE.search(text) or has_attached_images):
+        return VideoRequest(VideoIntent.ANIMATE, text, 0.95)
+
     if has_attached_video and improve:
         return VideoRequest(VideoIntent.IMPROVE, text, 0.94)
     if has_attached_video and edit:
@@ -99,7 +142,11 @@ def detect_video_intent(
     if has_attached_video and has_video_word and create and not _FROM_SCRATCH.search(text):
         return VideoRequest(VideoIntent.EDIT, text, 0.88)
 
-    if has_attached_images and (_ANIMATE.search(text) or _IMAGE_TO_VIDEO.search(text)):
+    if _ANIMATE.search(text) and (has_attached_images or has_image_word):
+        # Mesmo sem anexo, a intenção é vídeo: a rota pede a referência
+        # em vez de criar um clipe aleatório ou cair no chat genérico.
+        return VideoRequest(VideoIntent.ANIMATE, text, 0.94)
+    if has_attached_images and _IMAGE_TO_VIDEO.search(text):
         return VideoRequest(VideoIntent.ANIMATE, text, 0.93)
     if has_video_word and analyze:
         return VideoRequest(VideoIntent.ANALYZE, text, 0.86 if has_attached_video else 0.58)
@@ -107,6 +154,10 @@ def detect_video_intent(
         return VideoRequest(VideoIntent.IMPROVE, text, 0.90 if has_attached_video else 0.65)
     if has_video_word and edit:
         return VideoRequest(VideoIntent.EDIT, text, 0.90 if has_attached_video else 0.65)
+    if _VIDEO_REQUEST.search(text) and not advice:
+        return VideoRequest(VideoIntent.CREATE, text, 0.92)
+    if _VIDEO_NOMINAL.search(text):
+        return VideoRequest(VideoIntent.CREATE, text, 0.87)
     if (has_video_word and create) or re.search(r"(?i)\b(video|v[ií]deo)\s+(?:de|sobre|com)", text):
         return VideoRequest(VideoIntent.CREATE, text, 0.88)
 
@@ -165,6 +216,60 @@ def build_video_prompt(user_text: str, intent: VideoIntent) -> str:
     }
     directive = directives.get(intent, "Create a coherent short video.")
     return f"{directive}\nUser direction (preserve every requested detail): {text[:7500]}\nPrioritize stable subjects, physically plausible movement, temporal consistency, clean transitions, and no unintended text or logos."
+
+
+async def fetch_generated_video(
+    client,
+    source_url: str,
+    *,
+    job_id: str,
+    headers: dict[str, str],
+    base_url: str | None = None,
+    fetch_external=None,
+) -> tuple[str, int, str, bytes]:
+    """Baixa vídeo do provedor sem vazar Authorization para CDNs/redirects.
+
+    URLs /videos/{job}/content na própria OpenRouter exigem API key;
+    armazenamento de terceiros não recebe os headers privados. Limite 100 MB.
+    """
+    fetch_external = fetch_external or safe_get
+    base = (base_url or getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")).rstrip("/")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", str(job_id)):
+        raise UnsafeURLError("Identificador de vídeo inválido")
+    fallback = f"{base}/videos/{job_id}/content?index=0"
+    url = (source_url or "").strip() or fallback
+    if url.startswith("/"):
+        parsed_base = urlparse(base)
+        url = urljoin(f"{parsed_base.scheme}://{parsed_base.netloc}", url)
+    parsed, parsed_base = urlparse(url), urlparse(base)
+    same_api = (
+        parsed.scheme == parsed_base.scheme == "https"
+        and parsed.netloc == parsed_base.netloc
+        and parsed.path == parsed_base.path.rstrip("/") + f"/videos/{job_id}/content"
+        and not parsed.username and not parsed.password
+    )
+    if not same_api:
+        # Não envia Authorization para hosts externos, nem para caminhos
+        # inesperados no host do provedor.
+        return await fetch_external(client, url, max_bytes=100 * 1024 * 1024, max_redirects=3)
+    await validate_public_url(url)
+    async with client.stream("GET", url, headers=headers, follow_redirects=False) as response:
+        if response.status_code in (301, 302, 303, 307, 308):
+            # Redirect: a autorização nunca acompanha o destino.
+            location = response.headers.get("location", "")
+            if not location:
+                raise UnsafeURLError("Redirecionamento de vídeo sem destino")
+            destination = urljoin(url, location)
+            if destination == url:
+                raise UnsafeURLError("Redirecionamento circular de vídeo")
+            return await fetch_external(client, destination, max_bytes=100 * 1024 * 1024, max_redirects=3)
+        data = bytearray()
+        max_bytes = 100 * 1024 * 1024
+        async for part in response.aiter_bytes():
+            if len(data) + len(part) > max_bytes:
+                raise ValueError("Vídeo excede 100 MB")
+            data.extend(part)
+        return url, response.status_code, response.headers.get("content-type", "video/mp4"), bytes(data)
 
 
 async def generate_video_events(
@@ -298,9 +403,9 @@ async def generate_video_events(
                 status = str(latest.get("status") or "").lower()
                 if status == "completed":
                     break
-                if status == "failed":
+                if status in {"failed", "cancelled", "canceled", "expired"}:
                     provider_error = str(latest.get("error") or "")[:240]
-                    yield {"type": "error", "error": "A geração de vídeo falhou no provedor." + (f" Detalhe: {provider_error}" if provider_error else " Tente uma descrição mais simples ou outro modelo.")}
+                    yield {"type": "error", "error": f"A geração de vídeo terminou com status {status}." + (f" Detalhe: {provider_error}" if provider_error else " Verifique a Biblioteca antes de fazer novo pedido.")}
                     return
                 yield {"type": "phase", "phase": "video_generating"}
                 poll_delay = min(poll_delay + 1.0, 8.0)
@@ -322,17 +427,11 @@ async def generate_video_events(
                 ),
                 "",
             )
-            if not video_url:
-                yield {"type": "error", "error": "O provedor concluiu a geração, mas não retornou uma URL para baixar o vídeo."}
-                return
-            video_parts = urlparse(video_url)
-            if video_parts.scheme != "https" or not video_parts.netloc:
-                yield {"type": "error", "error": "O provedor retornou uma URL de vídeo inválida."}
-                return
-            # Valida DNS/IP e cada redirect antes de baixar. Nunca encaminha
-            # a chave da OpenRouter a hosts externos ou redirecionamentos.
-            final_url, content_status, content_type, data = await safe_get(
-                client, video_url, max_bytes=100 * 1024 * 1024, max_redirects=3
+            # OpenRouter entrega links para /videos/{jobId}/content que
+            # EXIGEM Authorization. Também permite fallback quando não há
+            # unsigned_urls. Downloads para terceiros nunca recebem a chave.
+            final_url, content_status, content_type, data = await fetch_generated_video(
+                client, video_url, job_id=job_id, headers=headers, base_url=base,
             )
             if content_status != 200 or len(data) >= 100 * 1024 * 1024:
                 yield {"type": "error", "error": "O vídeo foi concluído, mas o download falhou ou excedeu 100 MB. Você poderá retomar pela Biblioteca."}
@@ -343,8 +442,8 @@ async def generate_video_events(
             usage = latest.get("usage") if isinstance(latest.get("usage"), dict) else {}
             cost = usage.get("cost")
             yield {"type": "completed", "data": data, "model": model_id, "cost": cost, "duration": seconds, "resolution": res, "aspect_ratio": ratio, "generate_audio": bool(generate_audio), "content_type": content_type or "video/mp4"}
-    except UnsafeURLError:
-        yield {"type": "error", "error": "O provedor retornou um link de download inseguro. O trabalho pode ser consultado na Biblioteca."}
+    except (UnsafeURLError, ValueError):
+        yield {"type": "error", "error": "O download do vídeo foi recusado por segurança ou excedeu o limite de 100 MB. Consulte a Biblioteca."}
     except httpx.TimeoutException:
         yield {"type": "error", "error": "A OpenRouter demorou demais para responder ao pedido de vídeo. Confira o trabalho na Biblioteca antes de tentar outra geração."}
     except httpx.HTTPError as exc:

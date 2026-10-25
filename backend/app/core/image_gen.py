@@ -145,6 +145,50 @@ _WEAK_GENERATE = re.compile(
     r"(?i)\b(imagem de|foto de|ilustração de|desenho de|picture of|image of)\b",
 )
 
+# Verbos visuais que já são, por si, um pedido de imagem. Não exigem a
+# palavra "imagem", por exemplo "desenhe Saturno" ou "renderize este ícone".
+_VISUAL_IMPERATIVE = re.compile(
+    r"(?i)\b(desenh[ea]|desenhe|desenhar|ilustr[ea]|ilustre|ilustrar|"
+    r"pint[ea]|pinte|pintar|renderiz[ea]|renderize|renderizar|"
+    r"draw|paint|illustrate|render)\b"
+)
+_VISUAL_OBJECT = re.compile(
+    r"(?i)\b(logos?|logotipos?|[ií]cones?|avatares?|capas?|p[oô]ster(?:es)?|"
+    r"banners?|wallpapers?|papel\s+de\s+parede|retratos?|"
+    r"artes?\s+(?:visuais?|digitais?)|mockups?)\b"
+)
+_EXPLICIT_VISUAL_CREATION = re.compile(
+    r"(?is)\b(?:cria|crie|criar|gera|gere|gerar|fa[cç]a|faz|produza|"
+    r"quero|gostaria\s+de|preciso\s+de|create|generate|make)\b"
+    r"[\s\S]{0,12000}?\b(?:imagem|imagens|foto|fotografia|ilustra[cç][aã]o|"
+    r"arte\s+digital|desenho|picture|image|photo|illustration|"
+    r"logo|logotipo|[ií]cone|avatar|capa|p[oô]ster|banner|wallpaper|retrato)\b"
+)
+_IMAGE_NOMINAL_PROMPT = re.compile(
+    r"(?i)^\s*(?:uma?|a|one|an?)\s+"
+    r"(?:imagem|foto|fotografia|ilustra[cç][aã]o|desenho|retrato|"
+    r"logo|logotipo|[ií]cone|avatar|capa|p[oô]ster|banner|wallpaper)\b"
+)
+_NON_EXECUTION = re.compile(
+    r"(?i)^\s*(?:n[aã]o\s+(?:crie|cria|gere|gera|fa[cç]a|desenhe|edite|"
+    r"melhore)|(?:me\s+)?(?:d[eê]\s+)?(?:ideias?|sugest[oõ]es)\s+(?:de|para)|"
+    r"o\s+que\s+(?:voc[eê]\s+)?acha\s+de|"
+    r"voc[eê]\s+(?:consegue|sabe|pode)\s+(?:criar|gerar|desenhar)\s+"
+    r"(?:uma?s?\s+)?(?:imagens?|fotos?|ilustra[cç][oõ]es?)\s*[?.!]?$)"
+)
+_SOFTWARE_DELIVERABLE = re.compile(
+    r"(?i)^\s*(?:por\s+favor[,\s]+)?(?:cria|crie|criar|gera|gere|fa[cç]a|faz|"
+    r"quero|desenvolva|implemente|construa|create|build)\s+"
+    r"(?:um|uma|o|a)?\s*(?:app|aplicativo|programa|software|site|"
+    r"webapp|projeto|sistema|c[oó]digo|script|fun[cç][aã]o|endpoint)\b"
+)
+_PROGRAMMING_INSTRUCTION = re.compile(
+    r"(?i)\b(?:c[oó]digo|script|fun[cç][aã]o|endpoint|api|flutter|dart|"
+    r"python|javascript|tutorial|passo\s+a\s+passo)\b"
+    r"[\s\S]{0,100}?\b(?:gerar|criar|renderizar|processar)\s+"
+    r"(?:uma?s?\s+)?(?:imagens?|fotos?|v[ií]deos?)\b"
+)
+
 
 def detect_image_intent(
     user_text: str,
@@ -155,6 +199,8 @@ def detect_image_intent(
     Retorna ImageRequest com intent, prompt limpo e confidence.
     """
     text = (user_text or "").strip()
+    if _NON_EXECUTION.search(text) or _PROGRAMMING_INSTRUCTION.search(text) or _SOFTWARE_DELIVERABLE.search(text):
+        return ImageRequest(intent=ImageIntent.NONE, prompt="", confidence=0.0)
     if len(text) < 4:
         return ImageRequest(intent=ImageIntent.NONE, prompt="", confidence=0.0)
 
@@ -175,6 +221,17 @@ def detect_image_intent(
         if has_attached_images:
             return ImageRequest(intent=ImageIntent.ANALYZE, prompt=text, confidence=0.88)
         return ImageRequest(intent=ImageIntent.NONE, prompt="", confidence=0.0)
+
+    # "Desenhe X", "quero um logotipo" e briefings longos que só mencionam
+    # a mídia no fim também são pedidos reais. Analisar/editar um anexo e
+    # referências explícitas têm precedência abaixo, por isso só adiantamos
+    # comandos visuais sem imagem de entrada.
+    if not has_attached_images and (
+        _VISUAL_IMPERATIVE.search(text)
+        or (_EXPLICIT_VISUAL_CREATION.search(text) and not _ASK_ADVICE.search(text))
+        or _IMAGE_NOMINAL_PROMPT.search(text)
+    ) and not _REFERENCED_VARIANT.search(text) and not _EDIT.search(text):
+        return ImageRequest(ImageIntent.GENERATE, _clean_prompt(text), 0.91)
 
     explicit_image_improvement = bool(_IMPROVE.search(text))
     shorthand_image_improvement = bool(
@@ -252,6 +309,15 @@ def detect_image_intent(
             prompt=_clean_prompt(text, mode="generate"),
             confidence=0.88,
         )
+
+    # "Desenhe o retrato" e pedidos de uma peça visual ainda são criação
+    # mesmo sem citar o substantivo imagem ou quando há referência anexada.
+    if _VISUAL_IMPERATIVE.search(text) and not _ASK_ADVICE.search(text):
+        return ImageRequest(ImageIntent.GENERATE, _clean_prompt(text), 0.91)
+    if _EXPLICIT_VISUAL_CREATION.search(text) and not _ASK_ADVICE.search(text):
+        return ImageRequest(ImageIntent.GENERATE, _clean_prompt(text), 0.89)
+    if _IMAGE_NOMINAL_PROMPT.search(text):
+        return ImageRequest(ImageIntent.GENERATE, text, 0.81)
 
     # 5. Sinal fraco + sem imagem anexada → provavelmente gerar
     if not has_attached_images and _WEAK_GENERATE.search(text):
@@ -342,6 +408,21 @@ def _clean_prompt(text: str, mode: str = "generate") -> str:
     return cleaned
 
 
+def parse_image_aspect_ratio(text: str) -> str:
+    """Respeita dimensões em pedidos conversacionais; a Oficina sobrepõe."""
+    content = (text or "").lower()
+    match = re.search(r"(?<!\d)(1:1|16:9|9:16|4:3|3:4|3:2|2:3)(?!\d)", content)
+    if match:
+        return match.group(1)
+    if re.search(r"\b(vertical|retrato|stories?|reels?|tiktok|shorts?)\b", content):
+        return "9:16"
+    if re.search(r"\b(horizontal|paisagem|widescreen|panor[aâ]mic[oa])\b", content):
+        return "16:9"
+    if re.search(r"\b(quadrad[oa]|square)\b", content):
+        return "1:1"
+    return "1:1"
+
+
 async def generate_image(
     prompt: str,
     *,
@@ -372,7 +453,7 @@ async def generate_image(
     }
     payload = {
         "model": model_id,
-        "prompt": prompt[:4000],
+        "prompt": prompt[:8000],
         "aspect_ratio": aspect_ratio,
     }
 
@@ -412,7 +493,7 @@ async def generate_image(
                     headers=headers,
                     json={
                         "model": model_id,
-                        "prompt": prompt[:4000],
+                        "prompt": prompt[:8000],
                         "n": 1,
                         "size": "1024x1024",
                     },

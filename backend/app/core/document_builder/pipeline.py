@@ -15,6 +15,7 @@ prefixo dela é removido dos caminhos de edição, se o usuário o incluir.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 from pathlib import Path
@@ -87,6 +88,7 @@ def _zip_response(info: dict[str, Any], report: dict[str, Any], **extra: Any) ->
         "filename": info["filename"],
         "kind": "zip",
         "size": info["size"],
+        "sha256": info.get("sha256"),
         "included_files": report.get("included", 0),
         "skipped_files": report.get("skipped", [])[:200],
         "skipped_count": len(report.get("skipped", [])),
@@ -139,6 +141,7 @@ def build_zip_from_project(
         data=data,
         meta={
             "source": "project",
+            "sha256": hashlib.sha256(data).hexdigest(),
             "project_id": project_id,
             "validation": report["validation"],
             "source_validation": report["source_validation"],
@@ -156,43 +159,77 @@ def build_zip_from_files(
     filename: str = "archive.zip",
     user_id: str = "default",
 ) -> dict[str, Any]:
+    """Build and publish one complete, verified source archive.
+
+    Verify each entry against its input bytes before storing, then return a
+    SHA-256 of the entire ZIP for optional client-side download verification.
+    This does not claim that Dart, JavaScript, etc. compile successfully.
+    """
+    import hashlib
+    import io
+    import zipfile
+
     from .zip_builder import build_zip_from_mapping
     from .validator import validate_zip
 
+    if not files:
+        raise ValueError("Nenhum arquivo válido para incluir no ZIP")
+    if len(files) > 500:
+        raise ValueError("Limite de 500 arquivos por pacote excedido")
+
     data = build_zip_from_mapping(files)
-    validation = validate_zip(data)
+    expected = {path.replace("\\", "/"): content.encode("utf-8")
+                for path, content in files.items()}
+    validation = validate_zip(data, expected_paths=list(expected))
+    if not validation.get("ok") or validation.get("entry_count") != len(expected):
+        raise ValueError("ZIP incompleto ou inválido; nenhum arquivo foi publicado")
+
+    # Independently confirm that the bytes *inside* the container equal those
+    # sent by the model; do not rely on the ZIP header or the path list alone.
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        if set(archive.namelist()) != set(expected):
+            raise ValueError("O ZIP não contém exatamente os arquivos esperados")
+        for path, original in expected.items():
+            if archive.read(path) != original:
+                raise ValueError(f"Conteúdo divergente no ZIP: {path}")
+
     source_validation = validate_source_archive(data)
-    if not validation.get('ok'):
-        raise ValueError('ZIP inválido; nenhum arquivo foi publicado')
-    # Falhas de sintaxe *comprovadas* impedem entregar código gerado como se
-    # estivesse pronto. Linguagens sem parser (Dart/JS etc.) seguem claramente
-    # marcadas como não verificadas, sem prometer que compilam.
-    if source_validation.get('issues'):
-        problems = source_validation['issues'][:8]
-        raise ValueError('Arquivos gerados contêm problemas sintáticos: ' +
-                         '; '.join(f"{x['path']}: {x['message']}" for x in problems))
-    import hashlib
+    if source_validation.get("issues"):
+        problems = source_validation["issues"][:8]
+        raise ValueError("Arquivos gerados contêm problemas sintáticos: " +
+                         "; ".join(f"{x['path']}: {x['message']}" for x in problems))
+
+    digest = hashlib.sha256(data).hexdigest()
     manifest = {
-        'files': [
-            {'path': path.replace('\\', '/'), 'bytes': len(content.encode('utf-8')),
-             'sha256': hashlib.sha256(content.encode('utf-8')).hexdigest()}
-            for path, content in files.items()
+        "files": [
+            {"path": path, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+            for path, raw in expected.items()
         ],
-        'verification': 'Conteúdo e ZIP válidos; compilação e testes não executados',
+        "verification": "ZIP e conteúdo conferidos; compilação e testes não executados",
     }
     info = save_artifact(
         kind="zip",
-        filename=filename,
+        filename=filename if filename.lower().endswith(".zip") else f"{filename}.zip",
         data=data,
-        meta={"source": "files", "file_count": len(files), "validation": validation, "source_validation": source_validation, "file_manifest": manifest},
+        meta={
+            "source": "files", "file_count": len(files), "sha256": digest,
+            "validation": validation, "source_validation": source_validation,
+            "file_manifest": manifest,
+        },
         user_id=user_id,
     )
+    # The newly written artifact must still exist and match what was verified.
+    saved = load_artifact(info["artifact_id"], user_id=user_id)
+    if not saved or saved["size"] != len(data):
+        raise ValueError("Falha ao confirmar o arquivo armazenado")
     return {
         "ok": True,
         "artifact_id": info["artifact_id"],
         "filename": info["filename"],
         "kind": "zip",
         "size": info["size"],
+        "sha256": digest,
+        "included_files": len(files),
         "validation": validation,
         "source_validation": source_validation,
         "file_manifest": manifest,
@@ -321,6 +358,7 @@ def apply_edits_and_zip(
             data=data,
             meta={
                 "source": src_label,
+                "sha256": hashlib.sha256(data).hexdigest(),
                 "edits": edit_result,
                 "change_report": change_report,
                 "validation": report["validation"],

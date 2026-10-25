@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
+import 'package:crypto/crypto.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -87,6 +88,8 @@ class DownloadService {
   Future<String> downloadArtifact(
     String downloadPath, {
     required String filename,
+    String? expectedSha256,
+    int? expectedSize,
   }) async {
     if (!downloadPath.startsWith('/artifacts/')) {
       throw ArgumentError.value(
@@ -130,6 +133,23 @@ class DownloadService {
           await partial.length() == 0) {
         throw Exception('O servidor não retornou o arquivo completo.');
       }
+      final fileSize = await partial.length();
+      if (expectedSize != null && expectedSize > 0 &&
+          fileSize != expectedSize) {
+        throw const FormatException('O download não tem o tamanho esperado.');
+      }
+      if (safeName.toLowerCase().endsWith('.zip')) {
+        // Header and central directory/EOCD are checked without inflating the
+        // ZIP on a memory-constrained phone. Full CRC was checked by backend.
+        await _checkZipContainer(partial);
+      }
+      if (expectedSha256 != null &&
+          RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(expectedSha256)) {
+        final actual = (await sha256.bind(partial.openRead()).first).toString();
+        if (actual.toLowerCase() != expectedSha256.toLowerCase()) {
+          throw const FormatException('A verificação SHA-256 do arquivo falhou.');
+        }
+      }
       if (await file.exists()) await file.delete();
       await partial.rename(file.path);
     } on DioException catch (e) {
@@ -155,6 +175,45 @@ class DownloadService {
       rethrow;
     }
     return file.path;
+  }
+
+  /// Reject a truncated or non-ZIP HTTP response without reading all files
+  /// into RAM. A SHA-256 from the backend gives a stronger verification.
+  Future<void> _checkZipContainer(File file) async {
+    final handle = await file.open();
+    try {
+      final length = await handle.length();
+      if (length < 22) {
+        throw const FormatException('ZIP vazio ou incompleto.');
+      }
+      await handle.setPosition(0);
+      final header = await handle.read(4);
+      if (header.length != 4 || header[0] != 0x50 || header[1] != 0x4b ||
+          header[2] != 0x03 || header[3] != 0x04) {
+        throw const FormatException('Assinatura do ZIP inválida.');
+      }
+      // EOCD can be followed by a ZIP comment up to 65,535 bytes.
+      final tailSize = length < 65557 ? length : 65557;
+      await handle.setPosition(length - tailSize);
+      final tail = await handle.read(tailSize);
+      var found = false;
+      for (var i = tail.length - 22; i >= 0; i--) {
+        if (tail[i] != 0x50 || tail[i + 1] != 0x4b ||
+            tail[i + 2] != 0x05 || tail[i + 3] != 0x06) {
+          continue;
+        }
+        final commentLength = tail[i + 20] | (tail[i + 21] << 8);
+        if (i + 22 + commentLength == tail.length) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        throw const FormatException('ZIP truncado: índice final ausente.');
+      }
+    } finally {
+      await handle.close();
+    }
   }
 
   Future<void> openPath(String path) async {

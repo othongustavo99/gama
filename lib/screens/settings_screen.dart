@@ -20,7 +20,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool _resettingMemory = false;
 
-  GamaMode _mode = GamaMode.programar;
   bool _testing = false;
   String? _statusMessage;
   bool? _statusOk;
@@ -34,7 +33,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _urlController.text = SettingsService.instance.baseUrl;
-    _mode = SettingsService.instance.mode;
     _ttsAuto = SettingsService.instance.ttsAuto;
     _fontScale = SettingsService.instance.fontScale;
     _developerMode = SettingsService.instance.developerMode;
@@ -118,7 +116,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _save() async {
     await SettingsService.instance.setBaseUrl(_urlController.text);
-    await SettingsService.instance.setMode(_mode);
     await SettingsService.instance.setTtsAuto(_ttsAuto);
     await SettingsService.instance.setFontScale(_fontScale);
     await SettingsService.instance.setDeveloperMode(_developerMode);
@@ -220,42 +217,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
           const SizedBox(height: 28),
-          const _SectionTitle('Modo de uso'),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _ModeChip(
-                  label: 'Trabalhar',
-                  icon: Icons.code_rounded,
-                  selected: _mode == GamaMode.programar,
-                  onTap: () => setState(() => _mode = GamaMode.programar),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _ModeChip(
-                  label: 'Conversar',
-                  icon: Icons.chat_bubble_outline_rounded,
-                  selected: _mode == GamaMode.conversar,
-                  onTap: () => setState(() => _mode = GamaMode.conversar),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _mode == GamaMode.programar
-                ? 'GLM 5.3 Flash · código, debug e análise de projetos.'
-                : 'GPT-5.4 Mini · diálogo rápido e respostas naturais.',
-            style: TextStyle(
-              color: context.gama.textMuted,
-              fontSize: 12,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 28),
-          const _SectionTitle('Modelo padrão'),
+          const _SectionTitle('Modelo em uso'),
           const SizedBox(height: 8),
           ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 12),
@@ -268,13 +230,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               color: context.gama.accent,
             ),
             title: Text(
-              _mode == GamaMode.conversar
+              SettingsService.instance.mode == GamaMode.conversar
                   ? 'GPT-5.4 Mini'
                   : 'GLM 5.3 Flash',
               style: TextStyle(color: context.gama.textPrimary),
             ),
             subtitle: Text(
-              'O modelo acompanha o modo. A Oficina usa o modelo da tarefa.',
+              'Altere o modo na tela principal. A Oficina usa o modelo da tarefa.',
               style: TextStyle(color: context.gama.textMuted, fontSize: 12),
             ),
           ),
@@ -475,62 +437,6 @@ class _SectionTitle extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _ModeChip extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _ModeChip({
-    required this.label,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? context.gama.accentSoft : context.gama.surfaceCard,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: selected ? context.gama.accent : context.gama.border,
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 18,
-                color: selected ? context.gama.accent : context.gama.textMuted,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  color: selected
-                      ? context.gama.accent
-                      : context.gama.textPrimary,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

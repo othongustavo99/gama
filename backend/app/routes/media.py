@@ -15,6 +15,7 @@ from ..core.identity import current_user_id
 from ..core.media_links import create_media_reference_url, validate_media_reference
 from ..core.video_jobs import get_job, list_jobs, public_job, update_job
 from ..core.net_safety import safe_get, UnsafeURLError
+from ..core.video_gen import fetch_generated_video
 from ..config import settings
 from ._upload import read_upload_limited
 
@@ -147,20 +148,21 @@ async def resume_video_job(job_id: str, user_id: str = Depends(current_user_id))
                     raise HTTPException(502, f"Falha na consulta do provedor (HTTP {response.status_code})")
                 data = response.json()
                 state = str(data.get("status", "")).lower()
-                if state == "failed":
+                if state in {"failed", "cancelled", "canceled", "expired"}:
                     item = update_job(user_id, job_id, status="failed", phase="failed",
-                                      error="A geração falhou no provedor")
+                                      error=f"A geração terminou no provedor ({state})")
                 elif state != "completed":
                     item = update_job(user_id, job_id, status="processing", phase="video_generating")
                 else:
                     links = data.get("unsigned_urls") or []
                     if isinstance(links, str):
                         links = [links]
-                    source = next((s for s in links if isinstance(s, str) and s.startswith("https://")), None)
-                    if source is None:
-                        raise HTTPException(502, "Vídeo concluído, mas sem link de arquivo válido")
-                    final_url, status, mime, content = await safe_get(
-                        client, source, max_bytes=100 * 1024 * 1024, max_redirects=3)
+                    source = next((s for s in links if isinstance(s, str) and s.strip()), "")
+                    final_url, status, mime, content = await fetch_generated_video(
+                        client, source, job_id=str(item.get("provider_job_id") or ""),
+                        headers={"Authorization": f"Bearer {key}"},
+                        base_url=base, fetch_external=safe_get,
+                    )
                     if len(content) >= 100 * 1024 * 1024:
                         raise HTTPException(413, "O vídeo excedeu 100 MB; não vou salvar um arquivo incompleto")
                     if status != 200 or len(content) < 128 or not (

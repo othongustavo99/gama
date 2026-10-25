@@ -127,7 +127,8 @@ class Message extends HiveObject {
     if (encoded.length > 90000) {
       final compact = limited.map((item) => <String, dynamic>{
         for (final key in const [
-          'artifact_id', 'kind', 'filename', 'duration_seconds', 'resolution'
+          'artifact_id', 'kind', 'filename', 'size', 'sha256', 'validation',
+          'source_validation', 'download_path', 'duration_seconds', 'resolution'
         ])
           if (item.containsKey(key)) key: item[key],
       }).toList();

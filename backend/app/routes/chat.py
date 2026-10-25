@@ -1,5 +1,6 @@
 import asyncio
 import json
+import hashlib
 import uuid
 from datetime import datetime, timezone
 import logging
@@ -18,6 +19,7 @@ from ..core.image_gen import (
     build_image_prompt,
     generate_image,
     detect_image_intent,
+    parse_image_aspect_ratio,
     ImageIntent,
 )
 from ..config import settings as app_settings
@@ -57,17 +59,86 @@ _background_generation_tasks: dict[tuple[str, str], tuple[asyncio.Task, asyncio.
 
 
 def _safe_artifacts_json(artifacts: list[dict]) -> str:
-    """Never truncate JSON; remote sync rejects metadata > 100 KB."""
+    """Keep validation and checksums through remote sync without previews."""
     if not artifacts:
         return ""
-    encoded = json.dumps(artifacts[-30:], ensure_ascii=False)
+    compact = [_public_artifact_metadata(item) for item in artifacts[-30:]]
+    encoded = json.dumps(compact, ensure_ascii=False)
     if len(encoded) <= 100_000:
         return encoded
-    compact = [
-        {k: artifact[k] for k in ("artifact_id", "kind", "filename", "duration_seconds", "resolution") if k in artifact}
-        for artifact in artifacts[-30:]
-    ]
-    return json.dumps(compact, ensure_ascii=False)[:100_000] if len(json.dumps(compact, ensure_ascii=False)) <= 100_000 else ""
+    # Preserve the essential integrity status when the history is huge.
+    slim = [{key: item[key] for key in (
+        "artifact_id", "kind", "filename", "size", "sha256", "validation",
+        "source_validation", "download_path",
+    ) if key in item} for item in compact]
+    for item in slim:
+        syntax = item.get("source_validation")
+        if isinstance(syntax, dict):
+            syntax.pop("note", None)
+    encoded = json.dumps(slim, ensure_ascii=False)
+    return encoded if len(encoded) <= 100_000 else ""
+
+
+def _public_artifact_metadata(artifact: dict) -> dict:
+    """Only stable, small download/validation metadata leaves the backend.
+
+    Do not expose paths or serialise potentially huge preview/manifest objects.
+    A missing validation result is not the same as a failed validation.
+    """
+    keys = (
+        "artifact_id", "kind", "filename", "size", "sha256",
+        "download_path", "included_files", "truncated", "skipped_count",
+        "duration_seconds", "resolution", "audio_generated",
+    )
+    public = {key: artifact[key] for key in keys if key in artifact}
+    structural = artifact.get("validation")
+    if isinstance(structural, dict):
+        public["validation"] = {
+            key: structural[key]
+            for key in ("ok", "entry_count", "size", "errors") if key in structural
+        }
+    syntax = artifact.get("source_validation")
+    if isinstance(syntax, dict):
+        public["source_validation"] = {
+            key: syntax[key]
+            for key in (
+                "status", "checked_count", "unverified_count", "issue_count",
+                "syntax_check_complete", "note",
+            ) if key in syntax
+        }
+    return public
+
+
+def _zip_bundle_digest(files: dict[str, str]) -> str:
+    """Same contents and paths = same ZIP delivery, regardless of filename/order."""
+    hasher = hashlib.sha256()
+    for path in sorted(files):
+        raw = files[path].encode("utf-8")
+        path_raw = path.replace("\\", "/").encode("utf-8")
+        hasher.update(len(path_raw).to_bytes(4, "big"))
+        hasher.update(path_raw)
+        hasher.update(len(raw).to_bytes(8, "big"))
+        hasher.update(raw)
+    return hasher.hexdigest()
+
+_NO_MEDIA_EXECUTION_RE = re.compile(
+    r"(?i)^\s*(?:n[aã]o\s+(?:gere|gera|crie|cria|fa[cç]a|anime|edite|"
+    r"melhore)|(?:me\s+)?(?:d[eê]\s+)?(?:ideias?|sugest[oõ]es)\s+(?:de|para)|"
+    r"o\s+que\s+(?:voc[eê]\s+)?acha\s+de)\b"
+)
+_MEDIA_WORD_RE = re.compile(
+    r"(?i)\b(?P<image>imagem|imagens|fotos?|fotografias?|ilustra[cç][oõ]es?|"
+    r"desenhos?|artes?|logotipos?|logos?|[ií]cones?|avatares?|p[oô]steres?|"
+    r"capas?|banners?|retratos?|wallpapers?)\b|"
+    r"\b(?P<video>v[ií]deos?|clipes?|videoclipes?|anima[cç][oõ]es?|filmagens?)\b"
+)
+_IMAGE_REFERENCE_RE = re.compile(
+    r"(?i)\b(?:a\s+partir\s+d[aeo]s?t?[ae]?|com\s+base\s+n[ao]|"
+    r"usando|use|utilizando|inspirad[oa]\s+(?:n[aeo]|por)|"
+    r"refer[eê]ncia\s+d[aeo]|basead[oa]\s+n[aeo])\b"
+    r"[^.!?\n]{0,110}?\b(?:imagem|foto|anexo|refer[eê]ncia)\b|"
+    r"\b(?:imagem|foto)\s+(?:anexada|anterior|de\s+refer[eê]ncia)\b"
+)
 
 _OFFICE_NON_CREATION_RE = re.compile(
     r"(?i)^\s*(?:como\b|por que\b|porque\b|o que (?:e|é|s[aã]o|acontece)\b|"
@@ -98,7 +169,7 @@ def _office_media_action(
 ) -> str | None:
     """Returns a deterministic media operation for executable Oficina requests."""
     cleaned = (text or "").strip()
-    if not cleaned or _OFFICE_NON_CREATION_RE.match(cleaned):
+    if not cleaned or _OFFICE_NON_CREATION_RE.match(cleaned) or _NO_MEDIA_EXECUTION_RE.match(cleaned):
         return None
 
     if mode == "oficina_imagem":
@@ -147,6 +218,68 @@ def _office_media_action(
         if detected.intent == VideoIntent.ANALYZE or _OFFICE_NON_CREATION_RE.match(cleaned):
             return None
         return "create"
+    return None
+
+
+def _media_route_for_turn(
+    mode: str, text: str, *, has_images: bool, has_video: bool
+) -> tuple[str, str] | None:
+    """Escolhe uma ferramenta de mídia para pedidos EXECUTÁVEIS.
+
+    No chat normal, só um pedido efetivo pode disparar geração paga.
+    Na Oficina, uma descrição nominal é suficiente para o tipo escolhido,
+    mas uma intenção explícita do outro tipo continua sendo respeitada.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned or _NO_MEDIA_EXECUTION_RE.match(cleaned):
+        return None
+
+    video = detect_video_intent(
+        cleaned, has_attached_video=has_video, has_attached_images=has_images
+    )
+    image = detect_image_intent(cleaned, has_attached_images=has_images)
+    image_actions = {ImageIntent.GENERATE, ImageIntent.EDIT, ImageIntent.IMPROVE}
+    video_actions = {VideoIntent.CREATE, VideoIntent.ANIMATE, VideoIntent.EDIT, VideoIntent.IMPROVE}
+    image_requested = image.intent in image_actions
+    video_requested = video.intent in video_actions
+
+    # O usuário disse explicitamente qual mídia quer como SAÍDA: se ambas as
+    # palavras aparecem num briefing, a primeira espécie solicitada vence.
+    # "anime esta foto" e "imagem para vídeo" são sempre operações de vídeo.
+    video_conversion = bool(
+        re.search(r"(?i)\b(?:anime|animar|anima[cç][aã]o\s+d[aeo]|"
+                  r"transforme\s+(?:esta|essa|a)\s+(?:imagem|foto)\s+em\s+v[ií]deo|"
+                  r"(?:imagem|foto)\s+(?:para|em)\s+v[ií]deo)\b", cleaned)
+        and has_images
+    )
+    media_words = list(_MEDIA_WORD_RE.finditer(cleaned))
+    first_kind = (
+        "video" if media_words and media_words[0].group("video") else "image"
+    ) if media_words else None
+    if video_requested and (video_conversion or video.intent == VideoIntent.ANIMATE):
+        return ("generate_video", video.intent.value)
+
+    if mode == "oficina_imagem":
+        if video_requested and (not image_requested or first_kind == "video"):
+            return ("generate_video", video.intent.value)
+        operation = _office_media_action(mode, cleaned, has_images=has_images, has_video=has_video)
+        return ("generate_image", operation) if operation else None
+    if mode == "oficina_video":
+        if image_requested and (not video_requested or first_kind == "image"):
+            return ("generate_image", image.intent.value)
+        operation = _office_media_action(mode, cleaned, has_images=has_images, has_video=has_video)
+        return ("generate_video", operation) if operation else None
+
+    # Chat comum: nunca tratar um briefing solto como pedido pago se não
+    # houver indicação de que o usuário quer realmente criar uma mídia.
+    if image_requested and video_requested:
+        if first_kind == "video":
+            return ("generate_video", video.intent.value)
+        return ("generate_image", image.intent.value)
+    if video_requested:
+        return ("generate_video", video.intent.value)
+    if image_requested:
+        return ("generate_image", image.intent.value)
     return None
 
 
@@ -458,7 +591,7 @@ def _try_build_zip_from_assistant(
     if not match:
         return None
 
-    files = _filter_real_files(_parse_gama_files(assistant_text))
+    files = _require_real_files(_parse_gama_files(assistant_text))
     if not files:
         return None
     result = build_zip_from_files(
@@ -482,70 +615,90 @@ def _try_build_zip_from_assistant(
 
 
 def _parse_gama_files(assistant_text: str) -> dict[str, str]:
-    """Extrai arquivos completos; recusa blocos e fences que foram truncados."""
+    """Extract only complete, fenced files, preserving their literal contents.
+
+    No narrative outside code fences is treated as file content. Incomplete
+    fences or paths without content fail the entire bundle (never partial ZIP).
+    """
     text = assistant_text or ""
     match = _GAMA_FILES_BLOCK_RE.search(text)
     if not match:
         opening = text.find("[[GAMA_FILES]]")
         if opening < 0 or "[[/GAMA_FILES]]" in text[opening:]:
             return {}
-
-        # Alguns modelos encerram o conteúdo completo e omitem só o marcador
-        # externo. Aceitamos isso apenas se a resposta terminou numa fence
-        # fechada; um arquivo truncado dentro do bloco continua sendo rejeitado.
-        incomplete_block = text[opening + len("[[GAMA_FILES]]"):].rstrip()
-        if not re.search(r"(?:`{3,}|~{3,})\s*$", incomplete_block):
+        incomplete = text[opening + len("[[GAMA_FILES]]"):].rstrip()
+        # Some models omit only the outer closing marker. A closed last fence
+        # is the minimum proof that the file content was not cut mid-stream.
+        if not re.search(r"(?m)^\s*(?:`{3,}|~{3,})\s*$", incomplete.splitlines()[-1] if incomplete.splitlines() else ""):
             return {}
-        recovered_text = text + "\n[[/GAMA_FILES]]"
-        match = _GAMA_FILES_BLOCK_RE.search(recovered_text)
+        text += "\n[[/GAMA_FILES]]"
+        match = _GAMA_FILES_BLOCK_RE.search(text)
         if not match:
             return {}
-        text = recovered_text
-        logger.info("Recovered outer GAMA_FILES marker after a closed file fence")
+
     files: dict[str, str] = {}
     current_path: str | None = None
-    current_lines: list[str] = []
-    fence_marker: str | None = None
+    fence_char = ""
+    fence_size = 0
+    body: list[str] = []
+    waiting_for_fence = False
+    in_fence = False
+    closed_file = False
 
-    def save_current() -> None:
-        nonlocal current_path, current_lines
-        content = "\n".join(current_lines).rstrip("\n")
-        if current_path and content.strip():
-            if current_path in files:
-                raise ValueError(f"Caminho duplicado no bloco de arquivos: {current_path}")
-            files[current_path] = content
-        current_path, current_lines = None, []
+    def finish_file() -> None:
+        nonlocal current_path, body, waiting_for_fence, closed_file
+        if current_path is None:
+            return
+        if in_fence or waiting_for_fence or not closed_file:
+            raise ValueError(f"Arquivo {current_path} sem bloco de código completo")
+        value = "\n".join(body)
+        if not value.strip():
+            raise ValueError(f"Arquivo {current_path} vazio")
+        # A code fence consumes only delimiter lines, not the newline at EOF.
+        # Keep a final newline, which is conventional for source files.
+        if not value.endswith("\n"):
+            value += "\n"
+        if current_path in files:
+            raise ValueError(f"Caminho duplicado no bloco: {current_path}")
+        files[current_path] = value
+        current_path = None
+        body = []
+        waiting_for_fence = False
+        closed_file = False
 
     for line in match.group(1).splitlines():
-        if fence_marker:
+        if in_fence:
             stripped = line.strip()
-            if re.fullmatch(re.escape(fence_marker[0]) + r"{" + str(len(fence_marker)) + r",}\s*", stripped):
-                fence_marker = None
+            if stripped and stripped[0] == fence_char and stripped == fence_char * len(stripped) and len(stripped) >= fence_size:
+                in_fence = False
+                closed_file = True
             else:
-                current_lines.append(line)
+                body.append(line)
             continue
 
         path_match = _GAMA_FILE_PATH_RE.match(line)
         heading_match = _GAMA_FILE_HEADING_RE.match(line)
-        if path_match:
-            save_current()
-            current_path = path_match.group(1).strip().strip("`\"")
+        if path_match or heading_match:
+            finish_file()
+            current_path = (path_match or heading_match).group(1).strip().strip('`"')
+            waiting_for_fence = True
             continue
-        if heading_match:
-            save_current()
-            current_path = heading_match.group(1).strip()
-            continue
-        fence_match = re.match(r"^\s*(`{3,}|~{3,})", line)
-        if fence_match:
-            if current_path:
-                fence_marker = fence_match.group(1)
-            continue
-        if current_path and line.strip():
-            current_lines.append(line)
 
-    save_current()
-    if fence_marker:
-        raise ValueError("O bloco de arquivos terminou antes do fechamento de um código")
+        if current_path is None or closed_file:
+            # Surrounding explanatory text is never packaged as code.
+            continue
+        if waiting_for_fence:
+            if not line.strip():
+                continue
+            fence_match = re.match(r"^\s*(`{3,}|~{3,})(?:[a-zA-Z0-9_+.#-]+)?\s*$", line)
+            if not fence_match:
+                raise ValueError(f"Arquivo {current_path} sem delimitador de código")
+            opening_fence = fence_match.group(1)
+            fence_char, fence_size = opening_fence[0], len(opening_fence)
+            waiting_for_fence = False
+            in_fence = True
+
+    finish_file()
     if len(files) > 500:
         raise ValueError("A resposta excedeu o limite de 500 arquivos para o ZIP")
     return files
@@ -561,20 +714,17 @@ _STUB_CONTENT_RE = re.compile(
     r"n[aã]o (?:foi )?poss[ií]vel (?:obter|carregar|ler)|"
     r"placeholder|TODO:?\s*preencher|"
     r"sem conte[uú]do dispon[ií]vel"
-    r")"
+    r")\b"
 )
 
 
 def _is_stub_file_content(content: str) -> bool:
-    """True se o conteúdo parece recusa/placeholder, não um arquivo real."""
+    """Recognise model refusals instead of shipping them as program files."""
     text = (content or "").strip()
     if not text:
         return True
-    if len(text) < 40 and _STUB_CONTENT_RE.search(text):
-        return True
-    # recusa longa sem código típico
     if _STUB_CONTENT_RE.search(text[:300]) and not re.search(
-        r"(import |export |class |def |function |void |package |Future<|Widget )",
+        r"\b(import |export |class |def |function |void |package |Future<|Widget )\b",
         text,
     ):
         return True
@@ -582,12 +732,22 @@ def _is_stub_file_content(content: str) -> bool:
 
 
 def _filter_real_files(files: dict[str, str]) -> dict[str, str]:
-    """Remove stubs para não empacotar ZIP vazio de significado."""
+    """Exclude fake content; callers must check that no planned file was lost."""
     return {
         path: content
         for path, content in (files or {}).items()
         if content and not _is_stub_file_content(content)
     }
+
+
+def _require_real_files(files: dict[str, str]) -> dict[str, str]:
+    """Never turn a model reply with missing files into a successful partial ZIP."""
+    filtered = _filter_real_files(files)
+    if len(filtered) != len(files):
+        missing = sorted(set(files) - set(filtered))
+        raise ValueError("Arquivos incompletos ou placeholders no pacote: " +
+                         ", ".join(missing[:8]))
+    return filtered
 
 def _gama_files_parse_issue(assistant_text: str) -> str | None:
     """Descreve por que uma resposta não contém um pacote de arquivos válido."""
@@ -885,6 +1045,16 @@ async def chat(
     ):
         raise HTTPException(403, "Anexos estão desativados na tela Plugins deste aparelho.")
 
+    media_route = _media_route_for_turn(
+        chat_mode_raw, last_user,
+        has_images=bool(getattr(request, "images", None)),
+        has_video="[video_artifact_id:" in last_user.lower(),
+    )
+    # Pedidos de geração/edição não precisam de análise visual por LLM:
+    # os pixels vão direto à ferramenta como referência. Isto evita custo
+    # adicional, perda de detalhes e reencaminhamento desnecessário.
+    direct_media_request = media_route is not None
+
     wants_zip_request = _wants_zip_delivery(last_user)
     wants_pdf_request = _wants_pdf_delivery(last_user)
     download_requested = wants_zip_request or wants_pdf_request
@@ -930,7 +1100,7 @@ async def chat(
         and not has_current_github_link
     )
     will_search = bool(
-        web_search_enabled and last_user and not use_agent and should_search(last_user)
+        web_search_enabled and last_user and not use_agent and not direct_media_request and should_search(last_user)
     )
 
     # ZIPs são indexados no momento do anexo; ler o conteúdo para o modelo é
@@ -950,7 +1120,7 @@ async def chat(
     image_analysis_context = ""
     image_analysis_ok = False
     vision_model = None
-    if getattr(request, "images", None):
+    if getattr(request, "images", None) and not direct_media_request:
         from ..config import settings as _settings
         vision_model = (
             getattr(_settings, "VISION_MODEL", None)
@@ -967,7 +1137,7 @@ async def chat(
             nonlocal image_analysis_context, image_analysis_ok
             # Geração de imagem, vídeo e arquivos ocorre somente quando o agente escolhe a ferramenta.
             # --- fase: Image Analyzer ---
-            if getattr(request, "images", None):
+            if getattr(request, "images", None) and not direct_media_request:
                 yield json.dumps(
                     {"gama_meta": {"phase": "image_analyzing"}},
                     ensure_ascii=False,
@@ -1164,7 +1334,7 @@ async def chat(
                 ) + "\n"
 
             img_payload = None
-            if getattr(request, "images", None) and not image_analysis_ok:
+            if getattr(request, "images", None) and not image_analysis_ok and not direct_media_request:
                 img_payload = [
                     {"mime": i.mime, "data": i.data, "name": i.name}
                     for i in request.images
@@ -1224,6 +1394,7 @@ async def chat(
 
             agent_done = False
             agent_file_created = False
+            delivered_zip_digests: set[str] = set()
             agent_memory_tool_used = False
             answer_truncated = False
 
@@ -1262,6 +1433,9 @@ async def chat(
                     if image_intent in {ImageIntent.EDIT, ImageIntent.IMPROVE} and not has_image_refs:
                         yield {"type": "result", "content": "Para editar ou melhorar, anexe a imagem de referência e envie o pedido novamente."}
                         return
+                    if image_intent == ImageIntent.GENERATE and not has_image_refs and _IMAGE_REFERENCE_RE.search(last_user):
+                        yield {"type": "result", "content": "Para criar a imagem usando essa referência, anexe a foto ou imagem primeiro."}
+                        return
                     # O texto original é a fonte completa do briefing; args.prompt pode
                     # ser resumido pelo modelo ao preparar tool calls.
                     prompt = build_image_prompt(last_user, image_intent)[:8000]
@@ -1287,14 +1461,17 @@ async def chat(
                         for image in (request.images or [])
                         if image.data
                     ]
+                    use_reference = image_intent in {ImageIntent.EDIT, ImageIntent.IMPROVE} or bool(
+                        _IMAGE_REFERENCE_RE.search(last_user)
+                    )
                     result = await generate_image(
                         prompt,
                         aspect_ratio=(
                             request.image_aspect_ratio
                             if request.chat_mode == "oficina_imagem" and request.image_aspect_ratio in {"1:1", "16:9", "9:16", "4:3", "3:4"}
-                            else str(args.get("aspect_ratio") or "1:1")
+                            else parse_image_aspect_ratio(last_user)
                         ),
-                        reference_images=refs or None,
+                        reference_images=(refs or None) if use_reference else None,
                     )
                     if not result.get("ok") or not result.get("base64"):
                         yield {"type": "result", "content": str(result.get("error") or "Não consegui gerar a imagem.")}
@@ -1345,6 +1522,9 @@ async def chat(
                     }:
                         yield {"type": "result", "content": "Não identifiquei um pedido explícito de criar ou editar vídeo. Posso analisar o anexo ou explicar como fazer, sem iniciar uma geração."}
                         return
+                    if video_intent == VideoIntent.ANIMATE and not has_image_refs:
+                        yield {"type": "result", "content": "Para animar uma imagem, anexe a imagem de referência antes de enviar o pedido."}
+                        return
                     if video_intent in {VideoIntent.EDIT, VideoIntent.IMPROVE} and not has_attached_video:
                         yield {"type": "result", "content": "Para editar ou melhorar um vídeo, anexe o vídeo de referência e envie o pedido novamente."}
                         return
@@ -1383,6 +1563,10 @@ async def chat(
                     selected_resolution = (request.video_resolution if is_video_office else None)
                     selected_ratio = (request.video_aspect_ratio if is_video_office else None)
                     selected_audio = (request.video_generate_audio if is_video_office else None)
+                    # Um anexo visual não implica que a nova criação de vídeo
+                    # deva copiá-lo. Referência apenas ao animar ou se indicada.
+                    if video_intent == VideoIntent.CREATE and not _IMAGE_REFERENCE_RE.search(last_user):
+                        refs = []
                     prompt = await refine_media_brief(prompt, kind="video")
                     stored_artifact = None
                     error = None
@@ -1468,9 +1652,12 @@ async def chat(
                             )
                         elif file_format == "zip":
                             raw_files = args.get("files")
-                            files = _filter_real_files(
+                            files = (
                                 {str(k): str(v) for k, v in raw_files.items()}
-                            ) if isinstance(raw_files, dict) else {}
+                                if isinstance(raw_files, dict) else {}
+                            )
+                            if len(_filter_real_files(files)) != len(files):
+                                files = {}  # invalid tool arguments: regenerate, do not ship half
                             if not files:
                                 file_messages = list(gama_messages or messages)
                                 instruction = str(args.get("instructions") or last_user).strip()
@@ -1481,9 +1668,13 @@ async def chat(
                                     prepared_messages=file_messages,
                                     assistant_text="",
                                 )
-                                files = _filter_real_files(_parse_gama_files(bundle))
+                                files = _require_real_files(_parse_gama_files(bundle))
                             if not files:
                                 yield {"type": "result", "content": "Não consegui gerar arquivos válidos para o ZIP."}
+                                return
+                            digest = _zip_bundle_digest(files)
+                            if digest in delivered_zip_digests:
+                                yield {"type": "result", "content": "O ZIP com esses mesmos arquivos já está anexado à resposta."}
                                 return
                             yield {"type": "phase", "phase": "artifact_validating"}
                             built = build_zip_from_files(
@@ -1491,18 +1682,14 @@ async def chat(
                                 filename=filename if filename.lower().endswith(".zip") else f"{filename}.zip",
                                 user_id=user_id,
                             )
+                            delivered_zip_digests.add(digest)
                         else:
                             yield {"type": "result", "content": "Formato de arquivo não suportado; use zip ou pdf."}
                             return
                         if not built.get("ok"):
                             yield {"type": "result", "content": str(built.get("error") or "Não consegui criar o arquivo.")}
                             return
-                        artifact = {
-                            "artifact_id": built.get("artifact_id"),
-                            "filename": built.get("filename", filename),
-                            "kind": built.get("kind", file_format),
-                            "size": built.get("size"),
-                        }
+                        artifact = _public_artifact_metadata(built)
                         agent_file_created = True
                         yield {"type": "artifact", "artifact": artifact}
                         yield {"type": "result", "content": f"Arquivo {artifact['filename']} criado e anexado à resposta."}
@@ -1511,60 +1698,54 @@ async def chat(
                         yield {"type": "result", "content": f"Não consegui criar o arquivo: {str(exc)[:300]}"}
                     return
 
-            # Nos modos criativos, não dependemos de o LLM decidir se chama a
-            # ferramenta: briefings curtos também iniciam a mídia do modo atual.
-            # Perguntas/análises explícitas continuam no fluxo conversacional.
-            has_office_images = bool(getattr(request, "images", None))
-            has_office_video = "[video_artifact_id:" in last_user.lower()
-            office_intent = _office_media_action(
-                chat_mode_raw,
-                last_user,
-                has_images=has_office_images,
-                has_video=has_office_video,
-            )
-            office_tool = {
-                "oficina_imagem": "generate_image",
-                "oficina_video": "generate_video",
-            }.get(chat_mode_raw)
-            office_tool_enabled = (
-                bool(plugin_flags.get("image_gen", True))
-                and bool(getattr(app_settings, "IMAGE_GEN_ENABLED", True))
-                if office_tool == "generate_image"
-                else bool(plugin_flags.get("video_gen", True))
-                and bool(getattr(app_settings, "VIDEO_GEN_ENABLED", True))
-                if office_tool == "generate_video"
-                else False
-            )
-            if office_tool and office_intent and office_tool_enabled:
-                agent_done = True
-                async for media_event in agent_media_or_file_tool({
-                    "_tool_name": office_tool,
-                    "_office_intent": office_intent,
-                }):
-                    event_type = media_event.get("type")
-                    if event_type == "phase":
-                        yield json.dumps(
-                            {"gama_meta": {"phase": media_event.get("phase") or "thinking"}},
-                            ensure_ascii=False,
-                        ) + "\n"
-                    elif event_type == "image":
-                        yield json.dumps(
-                            {"gama_meta": {"phase": "image_ready", "image": media_event.get("image")}},
-                            ensure_ascii=False,
-                        ) + "\n"
-                    elif event_type == "artifact":
-                        artifact = media_event.get("artifact") or {}
-                        if artifact.get("kind") in {"zip", "pdf"}:
-                            agent_file_created = True
-                        yield json.dumps(
-                            {"gama_meta": {"phase": "artifact_ready", "artifact": artifact}},
-                            ensure_ascii=False,
-                        ) + "\n"
-                    elif event_type == "result":
-                        result_text = str(media_event.get("content") or "").strip()
-                        if result_text:
-                            assistant_acc.append(result_text)
-                            yield _tok(result_text)
+            # Rota determinística compartilhada por Conversar/Programar e
+            # Oficina Imagem/Vídeo. Também funciona com agente desabilitado ou
+            # modelo sem tool calling. Uma requisição gera NO MÁXIMO uma mídia.
+            selected_media = media_route
+            if selected_media:
+                media_tool, media_intent = selected_media
+                media_enabled = bool(plugin_flags.get(
+                    "image_gen" if media_tool == "generate_image" else "video_gen", True
+                ))
+                if not media_enabled:
+                    agent_done = True
+                    result_text = (
+                        "A criação de imagens está desativada nos Plugins deste aparelho."
+                        if media_tool == "generate_image" else
+                        "A criação de vídeos está desativada nos Plugins deste aparelho."
+                    )
+                    assistant_acc.append(result_text)
+                    yield _tok(result_text)
+                else:
+                    agent_done = True
+                    async for media_event in agent_media_or_file_tool({
+                        "_tool_name": media_tool,
+                        "_office_intent": media_intent,
+                    }):
+                        event_type = media_event.get("type")
+                        if event_type == "phase":
+                            yield json.dumps(
+                                {"gama_meta": {"phase": media_event.get("phase") or "thinking"}},
+                                ensure_ascii=False,
+                            ) + "\n"
+                        elif event_type == "image":
+                            yield json.dumps(
+                                {"gama_meta": {"phase": "image_ready", "image": media_event.get("image")}},
+                                ensure_ascii=False,
+                            ) + "\n"
+                        elif event_type == "artifact":
+                            artifact = media_event.get("artifact") or {}
+                            if artifact.get("kind") in {"zip", "pdf"}:
+                                agent_file_created = True
+                            yield json.dumps(
+                                {"gama_meta": {"phase": "artifact_ready", "artifact": artifact}},
+                                ensure_ascii=False,
+                            ) + "\n"
+                        elif event_type == "result":
+                            result_text = str(media_event.get("content") or "").strip()
+                            if result_text:
+                                assistant_acc.append(result_text)
+                                yield _tok(result_text)
 
             if use_agent and not agent_done:
                 _typing_sent = False
@@ -1682,7 +1863,7 @@ async def chat(
                         files = simple_flutter_files
                     try:
                         if not files:
-                            files = _filter_real_files(_parse_gama_files(bundle_text))
+                            files = _require_real_files(_parse_gama_files(bundle_text))
                     except ValueError as parse_err:
                         logger.warning("initial file block rejected: %s", parse_err)
 
@@ -1697,7 +1878,7 @@ async def chat(
                                 prepared_messages=gama_messages or messages,
                                 assistant_text=full_assistant,
                             )
-                            files = _filter_real_files(_parse_gama_files(bundle_text))
+                            files = _require_real_files(_parse_gama_files(bundle_text))
                         except Exception as bundle_err:
                             logger.warning("structured file generation failed: %s", bundle_err)
                             bundle_text = ""
@@ -1712,7 +1893,7 @@ async def chat(
                                     rejected_response=bundle_text,
                                     parse_issue=first_parse_issue,
                                 )
-                                repaired_files = _filter_real_files(_parse_gama_files(repaired_text))
+                                repaired_files = _require_real_files(_parse_gama_files(repaired_text))
                                 if repaired_files:
                                     bundle_text = repaired_text
                                     files = repaired_files
@@ -1752,8 +1933,8 @@ async def chat(
                                 finally:
                                     if not task.done():
                                         task.cancel()
-                                if per_file["bundle"]:
-                                    per_files = _filter_real_files(_parse_gama_files(per_file["bundle"]))
+                                if per_file["bundle"] and not per_file.get("failed"):
+                                    per_files = _require_real_files(_parse_gama_files(per_file["bundle"]))
                                     if per_files:
                                         bundle_text = per_file["bundle"]
                                         files = per_files

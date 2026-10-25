@@ -51,6 +51,7 @@ import '../utils/chat_history_window.dart';
 import '../utils/chat_scroll_policy.dart';
 import '../utils/chat_generation_clock.dart';
 import '../utils/stream_display_filter.dart';
+import '../utils/speech_reveal_buffer.dart';
 import 'package:flutter/rendering.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -115,6 +116,9 @@ class _ChatScreenState extends State<ChatScreen> {
   );
   String? _voiceReplyDisplayMessageId;
   final Queue<int> _streamRevealQueue = Queue<int>();
+  StringBuffer _streamDisplayedBuffer = StringBuffer();
+  bool _streamPreviewTruncated = false;
+  final SpeechRevealBuffer _speechReveal = SpeechRevealBuffer();
   final Map<String, GlobalKey> _messageKeys = <String, GlobalKey>{};
   Timer? _streamRevealTimer;
   DateTime? _streamRevealLastFrame;
@@ -212,6 +216,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamingSpeechSession? _liveSpeech;
   final List<Future<void>> _pendingGeneratedImages = <Future<void>>[];
   bool _isSpeaking = false;
+  int _manualSpeechEpoch = 0;
   String? _failedAssistantMessageId;
   String? _chatErrorMessage;
   bool _failedRequestRetryable = true;
@@ -389,7 +394,7 @@ class _ChatScreenState extends State<ChatScreen> {
       position.pixels, position.maxScrollExtent,
     );
     _nearBottomCache = nearBottom;
-    if (nearBottom && _isLoading) _followStream = true;
+    if (nearBottom && (_isLoading || _isSpeaking)) _followStream = true;
     final show = !nearBottom;
     if (show == _showScrollToBottom) return;
     _showScrollToBottom = show;
@@ -405,7 +410,7 @@ class _ChatScreenState extends State<ChatScreen> {
         notification.dragDetails != null;
     final userMovingUp = notification is UserScrollNotification &&
         notification.direction == ScrollDirection.forward;
-    if (_isLoading && (userDragging || userMovingUp)) {
+    if ((_isLoading || _isSpeaking) && (userDragging || userMovingUp)) {
       _followStream = false;
     }
     return false;
@@ -433,6 +438,28 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  // Mantém somente uma janela de prévia em memória de renderização.
+  // O conteúdo integral permanece em _streamRawText e é salvo ao finalizar.
+  // Assim, o custo por frame não cresce com respostas de 20 ou 100 mil chars.
+  void _publishStreamPreview() {
+    const maxPreview = 16000;
+    if (_streamDisplayedBuffer.length > maxPreview) {
+      final text = _streamDisplayedBuffer.toString();
+      var start = text.length - maxPreview;
+      if (start < text.length &&
+          text.codeUnitAt(start) >= 0xDC00 &&
+          text.codeUnitAt(start) <= 0xDFFF) {
+        start++;
+      }
+      _streamDisplayedBuffer = StringBuffer(text.substring(start));
+      _streamPreviewTruncated = true;
+    }
+    final visible = _streamDisplayedBuffer.toString();
+    _streamingText.value = _streamPreviewTruncated
+        ? '… [prévia anterior ocultada durante a geração]\n\n$visible'
+        : visible;
+  }
+
   // Revelação adaptativa a cada ~frame, limitada pelo tempo efetivamente
   // decorrido. A fila é por code point: não quebra pares UTF-16/emoji.
   // O texto original e a persistência não são modificados por este efeito.
@@ -450,7 +477,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _streamRevealBudget = 0;
       final pending = String.fromCharCodes(_streamRevealQueue);
       _streamRevealQueue.clear();
-      _streamingText.value = '${_streamingText.value}$pending$visible';
+      _streamDisplayedBuffer.write(pending);
+      _streamDisplayedBuffer.write(visible);
+      _publishStreamPreview();
       if (_followStream) _scrollToBottom(followStream: true);
       return;
     }
@@ -473,6 +502,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _streamRevealLastFrame = null;
       _streamRevealBudget = 0;
       if (_finishingStreamReveal && mounted) {
+        _streamDisplayedBuffer = StringBuffer();
+        _streamPreviewTruncated = false;
         _streamingText.value = _streamRevealFinalText;
         setState(() => _finishingStreamReveal = false);
         if (_followStream) _scrollToBottom(followStream: true);
@@ -512,7 +543,8 @@ class _ChatScreenState extends State<ChatScreen> {
     for (var i = 0; i < count && _streamRevealQueue.isNotEmpty; i++) {
       next.writeCharCode(_streamRevealQueue.removeFirst());
     }
-    _streamingText.value = '${_streamingText.value}${next.toString()}';
+    _streamDisplayedBuffer.write(next);
+    _publishStreamPreview();
     if (_followStream) _scrollToBottom(followStream: true);
   }
 
@@ -531,6 +563,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _streamRevealLastFrame = null;
     _streamRevealBudget = 0;
     _streamRevealQueue.clear();
+    _streamDisplayedBuffer = StringBuffer();
+    _streamPreviewTruncated = false;
     if (mounted) _streamingText.value = finalText;
   }
 
@@ -1276,6 +1310,11 @@ class _ChatScreenState extends State<ChatScreen> {
   void didUpdateWidget(covariant ChatScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.conversationId != widget.conversationId) {
+      _manualSpeechEpoch++;
+      _speechReveal.reset();
+      _voiceReplyDisplayMessageId = null;
+      _voiceReplyDisplayedText.value = '';
+      unawaited(TtsService.instance.stop());
       _generation.invalidate();
       _stopGenerationClock();
       _streamSubscription?.cancel();
@@ -1288,6 +1327,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _streamRevealFinishStarted = null;
       _streamRawText = StringBuffer();
       _streamDisplayFilter.reset();
+      _streamDisplayedBuffer = StringBuffer();
+      _streamPreviewTruncated = false;
       _streamingText.value = '';
       _streamSearchQuery = '';
       _isLoading = false;
@@ -1900,18 +1941,35 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     final text = _cleanMessageText(message);
-    if (text.isEmpty) return;
+    if (text.isEmpty || _isLoading) return;
+    final request = ++_manualSpeechEpoch;
     if (TtsService.instance.isBusy) {
       await TtsService.instance.stop();
     }
-    if (!mounted) return;
-    setState(() => _isSpeaking = true);
+    if (!mounted || request != _manualSpeechEpoch) return;
+    _speechReveal.reset();
+    _voiceReplyDisplayedText.value = '';
+    setState(() {
+      _voiceReplyDisplayMessageId = message.id;
+      _isSpeaking = true;
+    });
     try {
-      await TtsService.instance.speakFull(text);
+      await TtsService.instance.speakFull(
+        text,
+        onChunkPlaybackProgress: (chunk, fraction) {
+          if (!mounted || request != _manualSpeechEpoch) return;
+          _showSpeechProgress(chunk, fraction);
+        },
+      );
     } catch (error) {
       _snack('Não consegui reproduzir a mensagem: $error');
     } finally {
-      if (mounted) setState(() => _isSpeaking = false);
+      if (mounted && request == _manualSpeechEpoch) {
+        _voiceReplyDisplayMessageId = null;
+        _voiceReplyDisplayedText.value = '';
+        _speechReveal.reset();
+        setState(() => _isSpeaking = false);
+      }
     }
   }
 
@@ -2175,13 +2233,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _downloadGeneratedArtifact(
     String artifactId,
-    String filename,
-  ) async {
+    String filename, {
+    String? expectedSha256,
+    int? expectedSize,
+  }) async {
     late final String savedPath;
     try {
       savedPath = await DownloadService.instance.downloadArtifact(
         '/artifacts/$artifactId/download',
         filename: filename,
+        expectedSha256: expectedSha256,
+        expectedSize: expectedSize,
       );
       final file = File(savedPath);
       final lowerName = filename.toLowerCase();
@@ -2586,6 +2648,22 @@ class _ChatScreenState extends State<ChatScreen> {
     return false;
   }
 
+
+  /// O primeiro vocábulo troca o indicador de síntese pela mensagem real.
+  /// Depois disso apenas o ValueNotifier da mensagem é reconstruído.
+  void _showSpeechProgress(String chunk, double fraction) {
+    if (!mounted) return;
+    final hadText = _voiceReplyDisplayedText.value.isNotEmpty;
+    final next = _speechReveal.advance(chunk, fraction);
+    if (_voiceReplyDisplayedText.value != next) {
+      _voiceReplyDisplayedText.value = next;
+    }
+    if (!hadText && next.isNotEmpty) setState(() {});
+    if (next.isNotEmpty && _followStream && _voiceResponsePending) {
+      _scrollToBottom(followStream: true);
+    }
+  }
+
   Future<void> _maybeSpeak(
     String text, {
     bool revealWhileSpeaking = false,
@@ -2626,13 +2704,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
       // Somente para o botão "Enviar e ouvir": o texto já foi recebido,
       // mas permanece oculto até o primeiro áudio começar a tocar.
+      _speechReveal.reset();
       await TtsService.instance.speakFull(
         t,
-        onChunkPlaybackStart: (chunk) async {
+        onChunkPlaybackProgress: (chunk, fraction) {
           if (!mounted) return;
-          _voiceReplyDisplayedText.value =
-              '${_voiceReplyDisplayedText.value}${_voiceReplyDisplayedText.value.isEmpty ? '' : ' '}$chunk';
-          _scrollToBottom();
+          _showSpeechProgress(chunk, fraction);
         },
       );
     } finally {
@@ -2855,7 +2932,11 @@ class _ChatScreenState extends State<ChatScreen> {
     // Se a Gama ainda estiver falando a resposta anterior, interrompe
     // imediatamente e começa a tratar a mensagem atual.
     if (_isSpeaking || TtsService.instance.isBusy) {
+      _manualSpeechEpoch++;
       await TtsService.instance.stop();
+      _voiceReplyDisplayMessageId = null;
+      _voiceReplyDisplayedText.value = '';
+      _speechReveal.reset();
       if (mounted) setState(() => _isSpeaking = false);
     }
 
@@ -2881,7 +2962,9 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
 
-    final voiceRequested = _speakNextReply && (pluginFlags['tts'] ?? true);
+    final voiceRequested =
+        (_speakNextReply || SettingsService.instance.ttsAuto) &&
+        (pluginFlags['tts'] ?? true) && widget.oficinaKind == null;
 
     unawaited(HapticFeedback.lightImpact());
     _followStream = true;
@@ -2897,6 +2980,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _streamRevealQueue.clear();
     _finishingStreamReveal = false;
     _streamRevealFinishStarted = null;
+    _streamDisplayedBuffer = StringBuffer();
+    _streamPreviewTruncated = false;
+    _speechReveal.reset();
+    _voiceReplyDisplayedText.value = '';
     _streamingText.value = '';
 
     final isRegeneration =
@@ -3032,16 +3119,18 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       final generationEpoch = _generation.start();
-      // Apenas respostas explicitamente pedidas por voz usam TTS incremental.
-      // O TTS automático do chat de texto mantém a exibição normal.
+      // TTS explícito e TTS automático usam a mesma sincronização incremental
+      // durante a geração, sem esperar toda a resposta ficar pronta.
       if (voiceRequested && oficina == null && willSpeak) {
         try {
           _liveSpeech = await TtsService.instance.startStreamingSpeech(
             onChunkPlaybackStart: (chunk) {
               if (!mounted || !_generation.isCurrent(generationEpoch)) return;
               if (!_isSpeaking) setState(() => _isSpeaking = true);
-              _voiceReplyDisplayedText.value =
-                  '${_voiceReplyDisplayedText.value}${_voiceReplyDisplayedText.value.isEmpty ? '' : ' '}$chunk';
+            },
+            onChunkPlaybackProgress: (chunk, fraction) {
+              if (!mounted || !_generation.isCurrent(generationEpoch)) return;
+              _showSpeechProgress(chunk, fraction);
             },
           );
           _ttsEarlyStarted = true;
@@ -3083,7 +3172,9 @@ class _ChatScreenState extends State<ChatScreen> {
           }
 
           if (event.phase != null) {
-            setState(() => _streamPhase = event.phase!);
+            if (_streamPhase != event.phase) {
+              setState(() => _streamPhase = event.phase!);
+            }
             _recordActivity(event.phase!);
           }
           if (event.webSearchQuery != null &&
@@ -3223,10 +3314,15 @@ class _ChatScreenState extends State<ChatScreen> {
               _messages.isNotEmpty && _messages.last.isAssistant
               ? _messages.last
               : null;
+          final hasArtifact = latestAssistant != null &&
+              (_artifactsByMessageId[latestAssistant.id]?.isNotEmpty ?? false);
           final hasResponse = isVoiceReply
-              ? _voiceResponseBuffer.trim().isNotEmpty
+              ? (_voiceResponseBuffer.trim().isNotEmpty ||
+                  (latestAssistant?.content.trim().isNotEmpty ?? false) ||
+                  hasArtifact)
               : (_streamingText.value.trim().isNotEmpty ||
-                    (latestAssistant?.content.trim().isNotEmpty ?? false));
+                  (latestAssistant?.content.trim().isNotEmpty ?? false) ||
+                  hasArtifact);
           if (!hasResponse) {
             final speech = _liveSpeech;
             _liveSpeech = null;
@@ -3270,7 +3366,19 @@ class _ChatScreenState extends State<ChatScreen> {
                 : extractGamaImages(_messages.last.content).$1;
             final assistantToSave = _messages.last;
             if (isVoiceReply) {
-              assistantToSave.content = responseText;
+              // Preserve imagens criadas pela ferramenta mesmo quando a
+              // resposta textual é revelada pelo TTS. O áudio fala apenas
+              // responseText; o histórico mantém os blocos de mídia.
+              final imageBlocks = RegExp(
+                r'\[gama_image_file\][\s\S]*?\[/gama_image_file\]|'
+                r'\[gama_image\][\s\S]*?\[/gama_image\]',
+              ).allMatches(assistantToSave.content)
+                  .map((match) => match.group(0)!)
+                  .toList();
+              assistantToSave.content = [
+                responseText,
+                ...imageBlocks,
+              ].where((part) => part.trim().isNotEmpty).join('\n\n');
               _voiceReplyDisplayMessageId = assistantToSave.id;
               // A fala pode ter começado antes de o stream terminar.
               // Não apague as frases que já foram reproduzidas.
@@ -3300,10 +3408,13 @@ class _ChatScreenState extends State<ChatScreen> {
                     await speech.finish();
                   } finally {
                     if (identical(_liveSpeech, speech)) _liveSpeech = null;
-                    _speakNextReply = false;
-                    _voiceReplyDisplayMessageId = null;
-                    _voiceReplyDisplayedText.value = '';
-                    if (mounted) setState(() => _isSpeaking = false);
+                    if (_generation.isCurrent(generationEpoch) &&
+                        _voiceReplyDisplayMessageId == assistantToSave.id) {
+                      _speakNextReply = false;
+                      _voiceReplyDisplayMessageId = null;
+                      _voiceReplyDisplayedText.value = '';
+                      if (mounted) setState(() => _isSpeaking = false);
+                    }
                   }
                 } else if (isVoiceReply) {
                   await _maybeSpeak(responseText, revealWhileSpeaking: true);
@@ -3502,6 +3613,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _voiceResponsePending = false;
     _voiceResponseBuffer = '';
     _voiceReplyDisplayMessageId = null;
+    _speechReveal.reset();
     _voiceReplyDisplayedText.value = '';
     _speakNextReply = false;
     _isSpeaking = false;
@@ -3574,6 +3686,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _manualSpeechEpoch++;
+    if (_isSpeaking || TtsService.instance.isBusy) {
+      unawaited(TtsService.instance.stop());
+    }
     final speech = _liveSpeech;
     _liveSpeech = null;
     if (speech != null) unawaited(speech.cancel());
@@ -4292,11 +4408,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                     ],
                                                                   )
                                                                 : _timedStreamStatus()
-                                                          else if (msg
-                                                                  .content
-                                                                  .isEmpty &&
-                                                              !isUser &&
-                                                              _isLoading &&
+                                                          else if (!isUser &&
+                                                              isLastAssistant &&
                                                               _voiceResponsePending &&
                                                               _voiceReplyDisplayedText.value.isEmpty)
                                                             _timedStreamStatus()
@@ -4345,6 +4458,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                     ),
                                                             )
                                                           else if (!isUser &&
+                                                              msg.id == _voiceReplyDisplayMessageId &&
+                                                              _voiceReplyDisplayedText.value.isEmpty)
+                                                            const ChatStatusIndicator(label: 'Preparando áudio…')
+                                                          else if (!isUser &&
                                                               msg.id ==
                                                                   _voiceReplyDisplayMessageId)
                                                             ValueListenableBuilder<
@@ -4358,6 +4475,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                     content,
                                                                     _,
                                                                   ) => MessageContentView(
+                                                                    streaming: true,
                                                                     content:
                                                                         _citationMarkdown(
                                                                           msg.id,
@@ -4530,6 +4648,12 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                   _downloadGeneratedArtifact(
                                                                     id,
                                                                     filename,
+                                                                    expectedSha256:
+                                                                        artifact['sha256']
+                                                                            ?.toString(),
+                                                                    expectedSize: int.tryParse(
+                                                                        artifact['size']
+                                                                            ?.toString() ?? ''),
                                                                   );
                                                                 }
                                                               },

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -59,11 +60,14 @@ class TtsService {
   /// chega, sem esperar o texto inteiro e sem reproduzir áudio em paralelo.
   Future<StreamingSpeechSession> startStreamingSpeech({
     FutureOr<void> Function(String chunk)? onChunkPlaybackStart,
+    void Function(String chunk, double fraction)? onChunkPlaybackProgress,
   }) async {
     await stop();
     _cancelQueue = false;
     _busy = true;
-    final session = StreamingSpeechSession._(this, onChunkPlaybackStart);
+    final session = StreamingSpeechSession._(
+      this, onChunkPlaybackStart, onChunkPlaybackProgress,
+    );
     _activeStreamingSession = session;
     return session;
   }
@@ -305,28 +309,80 @@ class TtsService {
   Future<void> _playBytes(
     Uint8List bytes, {
     FutureOr<void> Function()? onPlaybackStart,
+    void Function(double fraction)? onPlaybackProgress,
+    int spokenCharacters = 0,
   }) async {
     if (_cancelQueue) return;
     final epoch = _playbackEpoch;
     final completion = Completer<void>();
     final cancellation = Completer<void>();
     _playbackCancelled = cancellation;
-    // Assine antes de iniciar o player; stop() pode acordar a fila mesmo
-    // quando o player não emite onPlayerComplete após interrupção.
-    final subscription = _player.onPlayerComplete.listen((_) {
+    Duration? duration;
+    Duration currentPosition = Duration.zero;
+    final started = DateTime.now();
+    var lastFraction = -1.0;
+
+    void reportProgress(double fraction) {
+      if (onPlaybackProgress == null || _cancelQueue ||
+          epoch != _playbackEpoch) return;
+      final next = fraction.clamp(0.0, 0.97).toDouble();
+      // Evita notificações redundantes e reconstruções do texto a cada ms.
+      if (next - lastFraction < 0.015 && lastFraction >= 0) return;
+      lastFraction = next;
+      onPlaybackProgress(next);
+    }
+
+    void reportFromPosition() {
+      final lengthMs = duration?.inMilliseconds ?? 0;
+      // Alguns backends Android não informam a duração de BytesSource.
+      // Nesses casos a posição do áudio ou relógio fornece uma estimativa
+      // conservadora, sem liberar a frase inteira antes de acabar a fala.
+      final fallbackMs = (spokenCharacters * 85 + 450).clamp(650, 60000);
+      final elapsedMs = DateTime.now().difference(started).inMilliseconds;
+      final positionMs = currentPosition.inMilliseconds > 0
+          ? currentPosition.inMilliseconds
+          : elapsedMs;
+      final denominator = lengthMs > 0 ? lengthMs : fallbackMs;
+      reportProgress(positionMs / denominator);
+    }
+
+    // Inscrições pertencem somente ao segmento em reprodução. Nunca há
+    // listeners de posição sobrevivendo à troca ou interrupção de áudio.
+    final completeSubscription = _player.onPlayerComplete.listen((_) {
       if (!completion.isCompleted) completion.complete();
     });
+    final durationSubscription = _player.onDurationChanged.listen((value) {
+      if (value.inMilliseconds > 0) duration = value;
+    });
+    final positionSubscription = _player.onPositionChanged.listen((position) {
+      currentPosition = position;
+      reportFromPosition();
+    });
+    Timer? fallbackTicker;
     try {
       if (_cancelQueue || epoch != _playbackEpoch) return;
       await _player.play(BytesSource(bytes, mimeType: 'audio/mpeg'));
       if (_cancelQueue || epoch != _playbackEpoch) return;
+      reportProgress(0);
       if (onPlaybackStart != null) await onPlaybackStart();
+      if (onPlaybackProgress != null) {
+        fallbackTicker = Timer.periodic(const Duration(milliseconds: 130), (_) {
+          reportFromPosition();
+        });
+      }
       await Future.any([completion.future, cancellation.future])
           .timeout(const Duration(minutes: 5));
+      if (completion.isCompleted && !_cancelQueue && epoch == _playbackEpoch) {
+        // Finalização exata no evento real de conclusão do player.
+        onPlaybackProgress?.call(1.0);
+      }
     } on TimeoutException {
       // Não mantém uma sessão travada se o player não sinalizar conclusão.
     } finally {
-      await subscription.cancel();
+      fallbackTicker?.cancel();
+      await completeSubscription.cancel();
+      await durationSubscription.cancel();
+      await positionSubscription.cancel();
       if (identical(_playbackCancelled, cancellation)) {
         _playbackCancelled = null;
       }
@@ -419,6 +475,7 @@ class TtsService {
   Future<void> speakFull(
     String text, {
     FutureOr<void> Function(String chunk)? onChunkPlaybackStart,
+    void Function(String chunk, double fraction)? onChunkPlaybackProgress,
   }) async {
     final sentences = sentencesForSpeech(text);
     if (sentences.isEmpty) return;
@@ -457,6 +514,10 @@ class TtsService {
           onPlaybackStart: onChunkPlaybackStart == null
               ? null
               : () => onChunkPlaybackStart(chunks[i]),
+          onPlaybackProgress: onChunkPlaybackProgress == null
+              ? null
+              : (fraction) => onChunkPlaybackProgress(chunks[i], fraction),
+          spokenCharacters: chunks[i].length,
         );
       }
     } catch (e, st) {
@@ -473,14 +534,15 @@ class TtsService {
 /// Fila controlada e cancelável de síntese/reprodução incremental.
 /// Usada apenas durante uma resposta de voz, não compete com speakFull().
 class StreamingSpeechSession {
-  StreamingSpeechSession._(this._tts, this._onChunkStart) {
+  StreamingSpeechSession._(this._tts, this._onChunkStart, this._onChunkProgress) {
     _worker = _run();
   }
 
   final TtsService _tts;
   final FutureOr<void> Function(String chunk)? _onChunkStart;
+  final void Function(String chunk, double fraction)? _onChunkProgress;
   final SpeechSentenceAccumulator _accumulator = SpeechSentenceAccumulator();
-  final List<String> _queue = [];
+  final Queue<String> _queue = Queue<String>();
   Completer<void>? _wake;
   late final Future<void> _worker;
   bool _closed = false;
@@ -540,7 +602,7 @@ class StreamingSpeechSession {
           await wake.future;
           continue;
         }
-        final next = _queue.removeAt(0);
+        final next = _queue.removeFirst();
         final clean = TtsService.plainForSpeech(next);
         if (clean.isEmpty) continue;
         for (final chunk in _tts._splitLongChunk(clean)) {
@@ -552,6 +614,10 @@ class StreamingSpeechSession {
             onPlaybackStart: _onChunkStart == null
                 ? null
                 : () => _onChunkStart(chunk),
+            onPlaybackProgress: _onChunkProgress == null
+                ? null
+                : (fraction) => _onChunkProgress(chunk, fraction),
+            spokenCharacters: chunk.length,
           );
         }
       }

@@ -101,6 +101,35 @@ def assemble_bundle(file_responses: list[str]) -> str:
     return "[[GAMA_FILES]]\n" + "\n".join(bodies) + f"\n{CLOSE_MARKER}"
 
 
+def _complete_file_response(text: str, path: str) -> bool:
+    """A named, fenced, non-placeholder file with closed outer markers."""
+    if "[[GAMA_FILES]]" not in text or CLOSE_MARKER not in text:
+        return False
+    body = _INNER_RE.search(text)
+    if not body:
+        return False
+    # Paths must come from the path header, not from explanatory prose.
+    path_line = re.compile(r"(?im)^\s*path\s*:\s*`?" + re.escape(path) + r"`?\s*$")
+    match = path_line.search(body.group(1))
+    if not match:
+        return False
+    after = body.group(1)[match.end():]
+    open_fence = re.match(r"^\s*(`{3,}|~{3,})[^\r\n]*\n", after)
+    if not open_fence:
+        return False
+    fence = open_fence.group(1)
+    closing = re.search(r"(?m)^\s*" + re.escape(fence[0]) +
+                        r"{" + str(len(fence)) + r",}\s*$", after[open_fence.end():])
+    if not closing:
+        return False
+    content = after[open_fence.end():][:closing.start()].strip()
+    if not content:
+        return False
+    if re.match(r"(?i)^(?:#\s*)?(?:arquivo não disponível|arquivo nao disponivel|placeholder|TODO:? preencher)\b", content):
+        return False
+    return True
+
+
 async def generate_files_per_file(
     chat_fn: ChatFn,
     base_messages: list[dict],
@@ -126,11 +155,20 @@ async def generate_files_per_file(
                 prompt = {"role": "user", "content": _FILE_PROMPT.format(path=path)}
                 result = await chat_with_continuation(chat_fn, base_messages + [prompt])
                 text = result["text"] or ""
-                # Aceita "path: X" ou heading markdown com o caminho
-                path_ok = any(marker in text for marker in (
-                    f"path: {path}", f"path:{path}", f"`{path}`", f"# {path}",
-                ))
-                if not path_ok:
+                if not _complete_file_response(text, path):
+                    # Retry only the defective file rather than regenerating
+                    # the entire multi-file archive and losing good results.
+                    retry = await chat_with_continuation(chat_fn, base_messages + [
+                        prompt,
+                        {"role": "assistant", "content": text[-4000:]},
+                        {"role": "user", "content": (
+                            f"O arquivo {path} veio incompleto ou sem delimitadores corretos. "
+                            "Gere novamente APENAS este arquivo, com path:, abertura/fechamento "
+                            "da cerca de código e [[/GAMA_FILES]]. Sem placeholders."
+                        )},
+                    ])
+                    text = retry["text"] or ""
+                if not _complete_file_response(text, path):
                     failed.append(path)
                     return ""
                 return text
