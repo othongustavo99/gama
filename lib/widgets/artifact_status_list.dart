@@ -3,6 +3,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../core/gama_colors.dart';
+import 'generated_files_preview.dart';
 
 class _VideoArtifactPoster extends StatelessWidget {
   final String? duration;
@@ -237,16 +238,11 @@ class ArtifactStatusList extends StatelessWidget {
                     const SizedBox(height: 8),
                   ],
                   if (generatedFiles.isNotEmpty) ...[
-                    Text(
-                      '${generatedFiles.length} arquivo(s) · conteúdo pronto para prévia',
-                      style: TextStyle(
-                        color: context.gama.textSecondary,
-                        fontSize: 12,
-                      ),
+                    GeneratedFilesPreview(
+                      files: generatedFiles,
+                      onPreview: onPreview,
                     ),
-                    const SizedBox(height: 4),
-                    for (final file in generatedFiles) _generatedFileTile(file),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 6),
                   ],
                   if (isZip) ...[
                     Row(
@@ -267,7 +263,7 @@ class ArtifactStatusList extends StatelessWidget {
                         Expanded(
                           child: Text(
                             zipOk
-                                ? 'Integridade do ZIP: passou (estrutura/CRC)'
+                                ? 'ZIP íntegro (estrutura e CRC; execução não testada)'
                                 : zipFailed
                                 ? 'Integridade do ZIP: falhou'
                                 : 'Integridade do ZIP: não informada',
@@ -340,7 +336,7 @@ class ArtifactStatusList extends StatelessWidget {
                   ] else ...[
                     Text(
                       structural['ok'] == true
-                          ? 'Arquivo gerado e validado estruturalmente.'
+                          ? 'Estrutura do arquivo verificada; conteúdo não testado.'
                           : 'O arquivo precisa de verificação adicional.',
                       style: TextStyle(
                         color: context.gama.textSecondary,
@@ -381,34 +377,4 @@ class ArtifactStatusList extends StatelessWidget {
     );
   }
 
-  String _formatBytes(dynamic value) {
-    final size = int.tryParse(value?.toString() ?? '') ?? 0;
-    if (size < 1024) return '$size B';
-    if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
-    return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-
-  Widget _generatedFileTile(Map<String, dynamic> file) {
-    final name = file['name']?.toString() ?? 'arquivo';
-    final depth = (name.split(RegExp(r'[/\\]')).length - 1).clamp(0, 4);
-    return Padding(
-      padding: EdgeInsets.only(left: depth * 12.0),
-      child: ListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        leading: Icon(
-          depth == 0
-              ? Icons.code_rounded
-              : Icons.subdirectory_arrow_right_rounded,
-          size: 18,
-        ),
-        title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          '${file['language'] ?? 'texto'} · ${_formatBytes(file['size'])}',
-        ),
-        trailing: const Icon(Icons.visibility_outlined, size: 18),
-        onTap: () => onPreview(file),
-      ),
-    );
-  }
 }

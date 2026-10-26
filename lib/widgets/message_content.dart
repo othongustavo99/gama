@@ -526,6 +526,12 @@ class MessageContentView extends StatelessWidget {
                           await DownloadService.instance.openPath(path);
                         } catch (error, stack) {
                           logSwallowed(error, stack);
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text(
+                              'Não foi possível salvar ou abrir a imagem. Tente novamente.',
+                            )),
+                          );
                         }
                       },
                       icon: const Icon(Icons.download_rounded, size: 18),
@@ -549,7 +555,11 @@ class MessageContentView extends StatelessWidget {
         );
       } catch (error, stack) {
         logSwallowed(error, stack);
-        return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Text('Não foi possível exibir esta imagem.',
+              style: TextStyle(color: context.gama.textMuted)),
+        );
       }
     }
 
@@ -560,7 +570,7 @@ class MessageContentView extends StatelessWidget {
           if (images.isNotEmpty) ...[
             LayoutBuilder(
               builder: (context, constraints) {
-                final columns = images.length == 1 ? 1 : 2;
+                final columns = images.length > 1 && constraints.maxWidth >= 600 ? 2 : 1;
                 final itemWidth = columns == 1
                     ? constraints.maxWidth
                     : (constraints.maxWidth - 10) / 2;
@@ -831,7 +841,15 @@ class _MarkdownPartView extends StatefulWidget {
 }
 
 class _MarkdownPartViewState extends State<_MarkdownPartView> {
-  late Widget _cachedChild = _buildChild();
+  late Widget _cachedChild;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // MarkdownStyleSheet usa as cores do tema; recrie o cache ao alternar
+    // entre claro/escuro ou ao alterar acessibilidade.
+    _cachedChild = _buildChild();
+  }
 
   @override
   void didUpdateWidget(covariant _MarkdownPartView oldWidget) {
@@ -1277,6 +1295,33 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
     _highlightedCodeCache[key] = span;
   }
 
+  Future<void> _openInOficina() async {
+    await HapticFeedback.selectionClick();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      GamaPageRoute<void>(
+        builder: (_) => OficinaScreen(
+          initialCode: widget.code,
+          initialLanguage: widget.language,
+        ),
+      ),
+    );
+  }
+
+  void _moreAction(String value) {
+    switch (value) {
+      case 'wrap':
+        setState(() => _wrapLines = !_wrapLines);
+        return;
+      case 'save':
+        _save();
+        return;
+      case 'workshop':
+        _openInOficina();
+        return;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark =
@@ -1311,96 +1356,101 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            height: 48,
-            padding: const EdgeInsets.only(left: 12, right: 6),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(
-                alpha: widget.isUser ? 0.10 : 0.18,
-              ),
-              border: Border(bottom: BorderSide(color: border)),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.code_rounded, size: 16, color: muted),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    widget.language.isEmpty ? 'Código' : widget.language,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: muted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 430;
+              return Container(
+                height: 48,
+                padding: const EdgeInsets.only(left: 12, right: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(
+                    alpha: widget.isUser ? 0.10 : 0.18,
+                  ),
+                  border: Border(bottom: BorderSide(color: border)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.code_rounded, size: 16, color: muted),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        widget.language.isEmpty ? 'Código' : widget.language,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: muted, fontSize: 12,
+                          fontWeight: FontWeight.w600),
+                      ),
                     ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: _wrapLines
-                      ? 'Desativar quebra de linha'
-                      : 'Ativar quebra de linha',
-                  constraints: const BoxConstraints.tightFor(
-                    width: 48,
-                    height: 48,
-                  ),
-                  onPressed: () => setState(() => _wrapLines = !_wrapLines),
-                  icon: Icon(
-                    _wrapLines ? Icons.wrap_text_rounded : Icons.notes_rounded,
-                    size: 17,
-                  ),
-                  color: muted,
-                ),
-                IconButton(
-                  tooltip: 'Baixar como arquivo',
-                  constraints: const BoxConstraints.tightFor(
-                    width: 48,
-                    height: 48,
-                  ),
-                  onPressed: _save,
-                  icon: Icon(
-                    _saved ? Icons.check_rounded : Icons.download_outlined,
-                    size: 18,
-                  ),
-                  color: _saved ? Colors.green : muted,
-                ),
-                if (!widget.isUser)
-                  IconButton(
-                    tooltip: 'Abrir código na Oficina',
-                    constraints: const BoxConstraints.tightFor(
-                      width: 44,
-                      height: 48,
-                    ),
-                    onPressed: () async {
-                      await HapticFeedback.selectionClick();
-                      if (!context.mounted) return;
-                      await Navigator.of(context).push(
-                        GamaPageRoute<void>(
-                          builder: (_) => OficinaScreen(
-                            initialCode: widget.code,
-                            initialLanguage: widget.language,
+                    if (compact)
+                      PopupMenuButton<String>(
+                        tooltip: 'Mais opções do código',
+                        icon: Icon(Icons.more_vert_rounded, color: muted),
+                        onSelected: _moreAction,
+                        itemBuilder: (_) => [
+                          PopupMenuItem<String>(
+                            value: 'wrap',
+                            child: Text(_wrapLines
+                                ? 'Desativar quebra de linha'
+                                : 'Ativar quebra de linha'),
                           ),
+                          const PopupMenuItem<String>(
+                            value: 'save',
+                            child: Text('Baixar como arquivo'),
+                          ),
+                          if (!widget.isUser)
+                            const PopupMenuItem<String>(
+                              value: 'workshop',
+                              child: Text('Abrir código na Oficina'),
+                            ),
+                        ],
+                      )
+                    else ...[
+                      IconButton(
+                        tooltip: _wrapLines
+                            ? 'Desativar quebra de linha'
+                            : 'Ativar quebra de linha',
+                        constraints: const BoxConstraints.tightFor(
+                          width: 48, height: 48),
+                        onPressed: () => setState(() => _wrapLines = !_wrapLines),
+                        icon: Icon(_wrapLines
+                            ? Icons.wrap_text_rounded : Icons.notes_rounded,
+                          size: 17),
+                        color: muted,
+                      ),
+                      IconButton(
+                        tooltip: 'Baixar como arquivo',
+                        constraints: const BoxConstraints.tightFor(
+                          width: 48, height: 48),
+                        onPressed: _save,
+                        icon: Icon(_saved
+                            ? Icons.check_rounded : Icons.download_outlined,
+                          size: 18),
+                        color: _saved ? Colors.green : muted,
+                      ),
+                      if (!widget.isUser)
+                        IconButton(
+                          tooltip: 'Abrir código na Oficina',
+                          constraints: const BoxConstraints.tightFor(
+                            width: 44, height: 48),
+                          onPressed: _openInOficina,
+                          icon: const Icon(Icons.handyman_outlined, size: 18),
+                          color: context.gama.accentBright,
                         ),
-                      );
-                    },
-                    icon: const Icon(Icons.handyman_outlined, size: 18),
-                    color: context.gama.accentBright,
-                  ),
-                IconButton(
-                  tooltip: _copied ? 'Código copiado' : 'Copiar código',
-                  constraints: const BoxConstraints.tightFor(
-                    width: 48,
-                    height: 48,
-                  ),
-                  onPressed: () => _copy(context),
-                  icon: Icon(
-                    _copied ? Icons.check_rounded : Icons.copy_rounded,
-                    size: 17,
-                  ),
-                  color: _copied ? Colors.green : muted,
+                    ],
+                    IconButton(
+                      tooltip: _copied ? 'Código copiado' : 'Copiar código',
+                      constraints: const BoxConstraints.tightFor(
+                        width: 48, height: 48),
+                      onPressed: () => _copy(context),
+                      icon: Icon(_copied
+                          ? Icons.check_rounded : Icons.copy_rounded,
+                        size: 17),
+                      color: _copied ? Colors.green : muted,
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              );
+            },
           ),
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 420),
