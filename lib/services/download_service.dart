@@ -28,7 +28,7 @@ class DownloadService {
       try {
         final ext = await getExternalStorageDirectory();
         if (ext != null) {
-          final dl = Directory(p.join(ext.path, 'Download', 'Gama'));
+          final dl = Directory(p.join(ext.path, 'Download', 'Gama', LocalAccountScope.current().internalDownloadsDirectoryName));
           if (!await dl.exists()) await dl.create(recursive: true);
           return dl;
         }
@@ -48,10 +48,31 @@ class DownloadService {
     return '${n.year}${two(n.month)}${two(n.day)}_${two(n.hour)}${two(n.minute)}${two(n.second)}';
   }
 
+  String _safeFilename(String value) {
+    final name = p.basename(value.replaceAll('\\', '/'))
+        .replaceAll(RegExp(r'[\\/\x00-\x1F\x7F]'), '_').trim();
+    if (name.isEmpty || name == '.' || name == '..') {
+      throw const FormatException('Nome de arquivo inválido.');
+    }
+    return name;
+  }
+
+  /// Nunca sobrescreve silenciosamente um download anterior com o mesmo nome.
+  Future<File> _availableFile(Directory dir, String filename) async {
+    final safe = _safeFilename(filename);
+    final ext = p.extension(safe);
+    final stem = p.basenameWithoutExtension(safe);
+    var candidate = File(p.join(dir.path, safe));
+    for (var number = 2; await candidate.exists(); number++) {
+      candidate = File(p.join(dir.path, '$stem ($number)$ext'));
+    }
+    return candidate;
+  }
+
   Future<String> saveText(String text, {String? filename}) async {
     final dir = await _targetDir();
     final name = filename ?? 'gamma_${_stamp()}.md';
-    final file = File(p.join(dir.path, name));
+    final file = await _availableFile(dir, name);
     await file.writeAsString(text, encoding: utf8);
     return file.path;
   }
@@ -63,8 +84,7 @@ class DownloadService {
     }
     final dir = await _targetDir();
     final base = filename ?? p.basename(sourcePath);
-    final safeName = base.replaceAll(RegExp(r'[\\/\x00-\x1F]'), '_');
-    final destination = File(p.join(dir.path, safeName));
+    final destination = await _availableFile(dir, base);
     await source.copy(destination.path);
     return destination.path;
   }
@@ -98,7 +118,7 @@ class DownloadService {
     if (mime.contains('gif')) ext = 'gif';
     final name = filename ?? 'gamma_img_${_stamp()}.$ext';
     final bytes = base64Decode(base64Data.replaceAll(RegExp(r'\s'), ''));
-    final file = File(p.join(dir.path, name));
+    final file = await _availableFile(dir, name);
     await file.writeAsBytes(bytes, flush: true);
     return file.path;
   }
@@ -109,16 +129,14 @@ class DownloadService {
     String? expectedSha256,
     int? expectedSize,
   }) async {
-    if (!downloadPath.startsWith('/artifacts/')) {
-      throw ArgumentError.value(
-        downloadPath,
-        'downloadPath',
-        'caminho inválido',
-      );
+    // Endereço vem de metadados do servidor ou do texto gerado pelo modelo.
+    // Nunca faça download de caminhos arbitrários introduzidos em mensagens.
+    final match = RegExp(r'^/artifacts/([a-f0-9]{16})/download$')
+        .firstMatch(downloadPath);
+    if (match == null) {
+      throw const FormatException('Link de arquivo inválido.');
     }
-    final safeName = p
-        .basename(filename)
-        .replaceAll(RegExp(r'[\\/\x00-\x1F]'), '_');
+    final artifactId = match.group(1)!;
     final token = await AuthService.instance.bearerToken();
     final dio = Dio(
       BaseOptions(
@@ -132,13 +150,44 @@ class DownloadService {
         },
       ),
     );
-    if (!dio.interceptors.any((i) => i is GammaAuthInterceptor)) {
-      dio.interceptors.add(GammaAuthInterceptor(client: dio));
+    dio.interceptors.add(GammaAuthInterceptor(client: dio));
+
+    // O próprio servidor autenticado fornece o tamanho e SHA-256 oficiais.
+    // Não dependa exclusivamente de valores vindos de uma mensagem da IA.
+    final metadataResponse = await dio.get<Map<String, dynamic>>(
+      '/artifacts/$artifactId',
+    );
+    final metadata = metadataResponse.data;
+    if (metadata == null || metadata['artifact_id']?.toString() != artifactId) {
+      throw const FormatException('Metadados do arquivo inválidos.');
     }
+    final serverHash = metadata['sha256']?.toString().toLowerCase() ?? '';
+    final serverSize = int.tryParse(metadata['size']?.toString() ?? '');
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(serverHash) ||
+        serverSize == null || serverSize <= 0) {
+      throw const FormatException('O servidor não forneceu dados válidos de integridade.');
+    }
+    if (expectedSha256 != null &&
+        expectedSha256.isNotEmpty &&
+        expectedSha256.toLowerCase() != serverHash) {
+      throw const FormatException('Checksum da mensagem difere do arquivo armazenado.');
+    }
+    if (expectedSize != null && expectedSize > 0 &&
+        expectedSize != serverSize) {
+      throw const FormatException('Tamanho da mensagem difere do arquivo armazenado.');
+    }
+
     final dir = await _targetDir();
-    final file = File(p.join(dir.path, safeName));
+    final safeName = _safeFilename(filename);
+    final serverName = _safeFilename(metadata['filename']?.toString() ?? '');
+    // Não deixe a extensão da mensagem decidir como abrir bytes diferentes.
+    if (p.extension(safeName).toLowerCase() !=
+        p.extension(serverName).toLowerCase()) {
+      throw const FormatException('O tipo do arquivo não coincide com o servidor.');
+    }
+    final destination = await _availableFile(dir, safeName);
     final partial = File(
-      '${file.path}.part-${DateTime.now().microsecondsSinceEpoch}',
+      '${destination.path}.part-${DateTime.now().microsecondsSinceEpoch}',
     );
     try {
       final response = await dio.download(
@@ -149,32 +198,28 @@ class DownloadService {
       if (response.statusCode != 200 ||
           !await partial.exists() ||
           await partial.length() == 0) {
-        throw Exception('O servidor não retornou o arquivo completo.');
+        throw const FormatException('O servidor não retornou o arquivo completo.');
       }
-      final fileSize = await partial.length();
-      if (expectedSize != null && expectedSize > 0 &&
-          fileSize != expectedSize) {
+      if (await partial.length() != serverSize) {
         throw const FormatException('O download não tem o tamanho esperado.');
       }
       if (safeName.toLowerCase().endsWith('.zip')) {
-        // Header and central directory/EOCD are checked without inflating the
-        // ZIP on a memory-constrained phone. Full CRC was checked by backend.
         await _checkZipContainer(partial);
       }
-      if (expectedSha256 != null &&
-          RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(expectedSha256)) {
-        final actual = (await sha256.bind(partial.openRead()).first).toString();
-        if (actual.toLowerCase() != expectedSha256.toLowerCase()) {
-          throw const FormatException('A verificação SHA-256 do arquivo falhou.');
-        }
+      final actual = (await sha256.bind(partial.openRead()).first).toString();
+      if (actual.toLowerCase() != serverHash) {
+        throw const FormatException('A verificação SHA-256 do arquivo falhou.');
       }
-      if (await file.exists()) await file.delete();
-      await partial.rename(file.path);
-    } on DioException catch (e) {
+      // Só torna visível depois de validar bytes, tamanho, extensão e hash.
+      // Nunca apaga uma versão previamente baixada com o mesmo nome.
+      if (await destination.exists()) {
+        throw const FileSystemException('O nome do download já está em uso.');
+      }
+      await partial.rename(destination.path);
+      return destination.path;
+    } on DioException catch (error) {
       if (await partial.exists()) await partial.delete();
-      // Mostra a mensagem real da API (por exemplo, identidade inválida),
-      // em vez de deixar o usuário apenas com o status HTTP 400.
-      final body = e.response?.data;
+      final body = error.response?.data;
       String detail = '';
       if (body is Map) {
         detail = (body['detail'] ?? body['message'] ?? '').toString();
@@ -183,7 +228,7 @@ class DownloadService {
       }
       if (detail.isNotEmpty) {
         throw Exception(
-          'Falha ao baixar arquivo (HTTP ${e.response?.statusCode}): $detail',
+          'Falha ao baixar arquivo (HTTP ${error.response?.statusCode}): $detail',
         );
       }
       rethrow;
@@ -192,7 +237,6 @@ class DownloadService {
       if (await partial.exists()) await partial.delete();
       rethrow;
     }
-    return file.path;
   }
 
   /// Reject a truncated or non-ZIP HTTP response without reading all files

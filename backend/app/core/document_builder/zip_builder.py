@@ -106,9 +106,11 @@ def build_zip_with_report(
                 size = path.stat().st_size
             except OSError as e:
                 report["skipped"].append({"path": rel, "reason": f"stat: {e}"})
+                report["truncated"] = True
                 continue
             if size > max_file_size:
                 report["skipped"].append({"path": rel, "reason": f"maior que {max_file_size} bytes"})
+                report["truncated"] = True
                 continue
             if total + size > max_total:
                 report["truncated"] = True
@@ -122,6 +124,7 @@ def build_zip_with_report(
                 report["included"] += 1
             except Exception as e:
                 report["skipped"].append({"path": rel, "reason": f"erro ao escrever: {e}"})
+                report["truncated"] = True
                 logger.debug("skip write %s: %s", rel, e)
     data = buf.getvalue()
     report["total_bytes"] = total

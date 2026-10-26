@@ -31,7 +31,7 @@ from ..core.document_builder.pipeline import prepare_project
 from ._upload import read_upload_limited
 from ..core.identity import current_user_id
 from ..core.code_analyzer.index_store import load_meta
-from ..core.document_builder.store import ArtifactStorageLimitError
+from ..core.document_builder.store import ArtifactStorageLimitError, verify_artifact_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/artifacts", tags=["artifacts", "document-builder"])
@@ -269,6 +269,11 @@ async def artifact_download(
     info = get_artifact(artifact_id, user_id=user_id)
     if not info or not info.get("path"):
         raise HTTPException(404, "Artefato não encontrado ou expirado")
+    # Evita distribuir bytes alterados/corrompidos no volume após a geração.
+    # A verificação é realizada no disco, não apenas no JSON do artefato.
+    if not verify_artifact_file(info):
+        logger.error("Artifact integrity mismatch: %s", artifact_id)
+        raise HTTPException(409, "O arquivo armazenado falhou na verificação de integridade")
     media = {
         "zip": "application/zip",
         "pdf": "application/pdf",
@@ -280,5 +285,7 @@ async def artifact_download(
         media_type=media,
         headers={
             "Cache-Control": "private, no-store",
+            "X-Gama-SHA256": str(info["sha256"]),
+            "X-Gama-File-Size": str(info["size"]),
         },
     )

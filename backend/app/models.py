@@ -24,7 +24,7 @@ class ChatRequest(BaseModel):
     user_id: Optional[str] = Field(default=None)
     # ID da conversa no app — mantém projeto/arquivos/ações entre mensagens
     conversation_id: Optional[str] = Field(default=None)
-    assistant_message_id: Optional[str] = Field(default=None)
+    assistant_message_id: Optional[str] = Field(default=None, max_length=128)
     auto_memory: bool = True
     # True quando o app pede resposta para ser falada (TTS)
     voice_mode: bool = False

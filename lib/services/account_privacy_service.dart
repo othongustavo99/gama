@@ -94,9 +94,8 @@ class AccountPrivacyService {
     }
   }
 
-  /// Só executar após o servidor confirmar a exclusão. A Biblioteca/Hive
-  /// atuais são compartilhados no dispositivo, por isso a interface avisa que
-  /// esses arquivos locais serão apagados mesmo se houve outras sessões.
+  /// Só executar após o servidor confirmar a exclusão. Remove exclusivamente
+  /// os dados do namespace da conta autenticada neste aparelho.
   Future<void> clearDeviceAfterDeletion({bool keepGoogleSession = false}) async {
     final scope = LocalAccountScope.current();
     final identity = IdentityService.instance;
@@ -123,6 +122,25 @@ class AccountPrivacyService {
     final internalDownloads = Directory(p.join(docs.path, scope.internalDownloadsDirectoryName));
     if (await internalDownloads.exists()) {
       await internalDownloads.delete(recursive: true);
+    }
+    if (Platform.isAndroid) {
+      // Downloads privados do aplicativo no armazenamento externo também
+      // passaram a ser separados por conta na Fase 1D.
+      try {
+        final external = await getExternalStorageDirectory();
+        if (external != null) {
+          final scopedDownloads = Directory(p.join(
+            external.path, 'Download', 'Gama',
+            scope.internalDownloadsDirectoryName,
+          ));
+          if (await scopedDownloads.exists()) {
+            await scopedDownloads.delete(recursive: true);
+          }
+        }
+      } catch (_) {
+        // Armazenamento externo pode estar indisponível/desmontado.
+        // Não impeça a limpeza das caixas Hive e das demais preferências.
+      }
     }
     final prefs = await SharedPreferences.getInstance();
     // Nunca apague preferências / biblioteca de outras contas neste dispositivo.

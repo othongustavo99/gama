@@ -992,6 +992,18 @@ async def chat(
       2) gama_meta.phase = thinking + sources
       3) tokens da resposta
     """
+    # Uma queda do aplicativo não cancela imediatamente uma geração remota.
+    # Se o usuário tocar em "Tentar novamente" antes de terminar, não faça
+    # uma segunda chamada paga com o MESMO ID enquanto a primeira ainda roda.
+    attempt_id = (request.assistant_message_id or "").strip()
+    if attempt_id:
+        existing = _background_generation_tasks.get((user_id, attempt_id))
+        if existing is not None and not existing[0].done():
+            raise HTTPException(
+                409,
+                "A resposta anterior ainda está sendo processada. "
+                "Aguarde a conclusão e sincronize a conversa antes de reenviar.",
+            )
     plugin_flags = request.plugins or {}
     web_search_enabled = bool(plugin_flags.get("web_search", True))
     memory_enabled = bool(plugin_flags.get("memory", True)) and bool(request.auto_memory)

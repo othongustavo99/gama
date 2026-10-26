@@ -1,0 +1,50 @@
+{
+  "backend/app/core/document_builder/store.py": {
+    "bytes": 9030,
+    "sha256": "c40a605bd676af7d836a4432129b10b0840174e66dd64386a6949aef3d1f18ee"
+  },
+  "backend/app/routes/artifacts.py": {
+    "bytes": 9480,
+    "sha256": "8971fef85e23f29d26aff4b4ec81dd3f9f2318194367396eb03604fa88d73cc9"
+  },
+  "backend/app/core/document_builder/zip_builder.py": {
+    "bytes": 10391,
+    "sha256": "db9f80494a10b1270f12000cfa8fc327223e3fb2c36602b69e153c7b3f279e17"
+  },
+  "backend/app/routes/chat.py": {
+    "bytes": 108594,
+    "sha256": "68e88b6de0a5c0312f1def4d46f3524f33e0aa537b2e4eb36f0a0f8915bb3ba1"
+  },
+  "backend/app/models.py": {
+    "bytes": 1667,
+    "sha256": "5f6513db3e0b09eb9c582bb6ada3144f703831631bdf2e009df1610ae2b954f0"
+  },
+  "backend/app/routes/_upload.py": {
+    "bytes": 1191,
+    "sha256": "4514088255de5b251ef1c960fd54343d3a43016ee47b5e5f2d13a025c56270ed"
+  },
+  "lib/services/ollama_service.dart": {
+    "bytes": 19215,
+    "sha256": "b08b163adb0833bff7b54ecccf725fa7148151e1e1741005550609edba409276"
+  },
+  "lib/services/download_service.dart": {
+    "bytes": 12292,
+    "sha256": "cd0e6c46ee1af293d3317bced67f4dba955fba50f23174e57e834ae5088ef089"
+  },
+  "lib/services/account_privacy_service.dart": {
+    "bytes": 7009,
+    "sha256": "257d7eaba6fcd98c1099e2e07fc684300c97174b34e83a790e08650d627eb42c"
+  },
+  "backend/tests/test_phase1d_integrity.py": {
+    "bytes": 5731,
+    "sha256": "101009a5330bcc256e17595535b50c7f19c67f01919c13a374ef96251679cc7e"
+  },
+  "test/phase1d_stream_integrity_test.dart": {
+    "bytes": 1380,
+    "sha256": "9ac3c9086ed40544d85995ba296dd34f23a7788a083fcb0455680da2ac2bbd2f"
+  },
+  "docs/FASE_1D_APLICACAO.md": {
+    "bytes": 6862,
+    "sha256": "bb175150a3ac907ebb715fe0d2e36dd52516afabba05013d622577197785fe2f"
+  }
+}

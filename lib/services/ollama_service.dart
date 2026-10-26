@@ -446,12 +446,18 @@ class OllamaService {
     Map<String, dynamic> json;
     try {
       final decoded = jsonDecode(trimmed);
-      if (decoded is! Map) return;
+      if (decoded is! Map) {
+        throw const FormatException('O evento não é um objeto JSON.');
+      }
       json = Map<String, dynamic>.from(decoded);
-    } catch (error, stack) {
-      logSwallowed(error, stack);
-      // Linhas auxiliares/eventuais keep-alives não são mensagens visíveis.
-      return;
+    } on FormatException catch (error, stack) {
+      logSwallowed(error, stack, context: 'evento NDJSON inválido');
+      // Uma linha quebrada no meio do stream não pode ser descartada em
+      // silêncio: isso marcaria como completa uma resposta com tokens perdidos.
+      throw const ChatApiException(
+        'O servidor enviou uma parte inválida da resposta. '
+        'O texto já recebido foi preservado; tente novamente.',
+      );
     }
 
     if (json['error'] != null) {

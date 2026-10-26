@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -103,16 +104,25 @@ def save_artifact(
             temp_path.write_bytes(data)
             temp_path.replace(path)
             now = time.time()
+            # Dados auxiliares não podem substituir o proprietário, o caminho
+            # nem o checksum. Mesmo um chamador interno pode receber metadados
+            # gerados por um modelo de IA ou por outro serviço.
+            reserved = {
+                "artifact_id", "kind", "filename", "size", "user_id",
+                "created_at", "expires_at", "path", "sha256", "bytes",
+            }
+            extras = {k: v for k, v in (meta or {}).items() if k not in reserved}
             info = {
+                **extras,
                 "artifact_id": aid,
                 "kind": kind,
                 "filename": safe_name,
                 "size": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
                 "user_id": user_id,
                 "created_at": now,
                 "expires_at": now + _TTL_SEC,
                 "path": str(path),
-                **(meta or {}),
             }
             meta_tmp = d / ".meta.tmp"
             meta_tmp.write_text(
@@ -144,11 +154,40 @@ def _metadata(artifact_id: str, user_id: Optional[str] = None) -> Optional[dict[
             shutil.rmtree(d, ignore_errors=True)
             return None
         info["path"] = str(file_path)
-        info["size"] = file_path.stat().st_size
+        actual_size = file_path.stat().st_size
+        # O usuário nunca deve receber um arquivo evidentemente incompleto.
+        # Metadados legados podem não possuir SHA-256; o checksum é calculado
+        # uma vez na leitura, sem sobrescrever o arquivo de metadados.
+        if "size" in info and int(info["size"]) != actual_size:
+            return None
+        info["size"] = actual_size
+        if not re.fullmatch(r"[a-fA-F0-9]{64}", str(info.get("sha256") or "")):
+            info["sha256"] = _sha256_file(file_path)
         info["expires_at"] = expires
         return info
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def verify_artifact_file(info: dict[str, Any]) -> bool:
+    """Verifica os bytes em disco antes de enviá-los ao consumidor."""
+    try:
+        path = Path(info["path"])
+        expected_size = int(info["size"])
+        expected_hash = str(info.get("sha256") or "")
+        return (path.is_file() and path.stat().st_size == expected_size
+                and bool(re.fullmatch(r"[a-fA-F0-9]{64}", expected_hash))
+                and _sha256_file(path) == expected_hash.lower())
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
 
 
 def load_artifact(
