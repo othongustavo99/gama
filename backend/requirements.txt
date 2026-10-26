@@ -10,3 +10,4 @@ duckduckgo-search>=6.0.0
 Pillow>=11.0.0
 reportlab>=4.0.0
 tzdata>=2024.1
+cryptography>=42.0

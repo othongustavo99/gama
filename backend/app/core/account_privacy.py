@@ -191,6 +191,8 @@ def delete_account_data(user_id: str) -> dict:
             logger.warning("Falha ao excluir planos e créditos: %s", type(exc).__name__)
             errors.append("planos e créditos")
         try:
+            from .play_reconciliation import delete_user as delete_play_events
+            delete_play_events(uid)
             from .store_billing import delete_user as delete_play_checks
             if delete_play_checks(uid):
                 removed.append("verificações de compras")

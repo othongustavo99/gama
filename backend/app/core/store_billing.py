@@ -239,11 +239,20 @@ def _connection():
             expires_at TEXT NOT NULL,
             verified_active INTEGER NOT NULL,
             verified_at TEXT NOT NULL,
-            entitlement_applied INTEGER NOT NULL DEFAULT 0
+            entitlement_applied INTEGER NOT NULL DEFAULT 0,
+            encrypted_token TEXT,
+            reconcile_lease_until TEXT,
+            latest_order_hash TEXT
         )''')
         columns = {row[1] for row in db.execute('PRAGMA table_info(play_checks)')}
         if 'entitlement_applied' not in columns:
             db.execute('ALTER TABLE play_checks ADD COLUMN entitlement_applied INTEGER NOT NULL DEFAULT 0')
+        if 'encrypted_token' not in columns:
+            db.execute('ALTER TABLE play_checks ADD COLUMN encrypted_token TEXT')
+        if 'reconcile_lease_until' not in columns:
+            db.execute('ALTER TABLE play_checks ADD COLUMN reconcile_lease_until TEXT')
+        if 'latest_order_hash' not in columns:
+            db.execute('ALTER TABLE play_checks ADD COLUMN latest_order_hash TEXT')
         db.execute('CREATE INDEX IF NOT EXISTS ix_play_checks_owner ON play_checks(owner)')
         db.commit()
         yield db
@@ -255,32 +264,42 @@ def _connection():
         db.close()
 
 
-def _save_check(owner: str, hashed: str, info: dict, linked_hash: str | None = None) -> bool:
+def _save_check(owner: str, hashed: str, info: dict, linked_hash: str | None = None,
+                encrypted_token: str | None = None, started_at: str | None = None) -> bool:
     from .account_privacy import deletion_status
     with _connection() as db:
         db.execute('BEGIN IMMEDIATE')
         if deletion_status(owner) != 'active':
             raise BillingForbidden('Conta excluída ou em exclusão')
-        existing = db.execute('SELECT owner FROM play_checks WHERE token_hash=?', (hashed,)).fetchone()
+        existing = db.execute('SELECT owner,verified_at FROM play_checks WHERE token_hash=?', (hashed,)).fetchone()
+        if existing and existing[0] != owner:
+            raise BillingConflict('Esta compra já está vinculada a outra conta')
+        # Duas chamadas paralelas à Play podem voltar fora de ordem. A resposta
+        # iniciada antes de uma verificação já persistida não pode sobrescrevê-la.
+        if existing and started_at and existing[1] > started_at:
+            return True
         if linked_hash:
             linked = db.execute('SELECT owner FROM play_checks WHERE token_hash=?', (linked_hash,)).fetchone()
             if linked and linked[0] != owner:
                 raise BillingConflict('A assinatura substituída pertence a outra conta')
             if linked:
                 db.execute('UPDATE play_checks SET verified_active=0,entitlement_applied=0 WHERE token_hash=?', (linked_hash,))
-        if existing and existing[0] != owner:
-            raise BillingConflict('Esta compra já está vinculada a outra conta')
         db.execute('''INSERT INTO play_checks
             (token_hash, owner, product, plan_preview, subscription_state, expires_at,
-             verified_active, verified_at, entitlement_applied) VALUES(?,?,?,?,?,?,?,?,?)
+             verified_active, verified_at, entitlement_applied, encrypted_token,
+             reconcile_lease_until,latest_order_hash) VALUES(?,?,?,?,?,?,?,?,?,?,NULL,?)
             ON CONFLICT(token_hash) DO UPDATE SET
               product=excluded.product,plan_preview=excluded.plan_preview,
               subscription_state=excluded.subscription_state,expires_at=excluded.expires_at,
               verified_active=excluded.verified_active,verified_at=excluded.verified_at,
-              entitlement_applied=excluded.entitlement_applied''',
+              entitlement_applied=excluded.entitlement_applied,
+              encrypted_token=COALESCE(excluded.encrypted_token, play_checks.encrypted_token),
+              reconcile_lease_until=NULL,
+              latest_order_hash=COALESCE(excluded.latest_order_hash,play_checks.latest_order_hash)''',
             (hashed, owner, info['product_id'], info['plan_preview'],
              info['subscription_state'], info['expires_at'], int(info['verified_active']),
-             datetime.now(timezone.utc).isoformat(), int(info.get('entitlement_applied', False))))
+             datetime.now(timezone.utc).isoformat(), int(info.get('entitlement_applied', False)), encrypted_token,
+             info.get('latest_order_hash')))
         return bool(existing)
 
 
@@ -339,19 +358,27 @@ async def verify_subscription(owner: str, token: str) -> dict:
         raise BillingForbidden('Token de compra inválido')
     package, products, secret = _configuration()
     # Nunca confiar no estado/planos fornecidos pelo dispositivo.
+    started_at = datetime.now(timezone.utc).isoformat()
     payload = await fetch_subscription(token, package)
     info = _verify_payload(payload, owner, products, secret)
-    # Jamais reconhecer/ativar uma assinatura PENDING, ON_HOLD ou expirada.
-    # A ativação requer habilitação explícita em duas etapas no servidor.
+    hashed = hashlib.sha256(token.encode()).hexdigest()
+    # Compras anuladas do pedido atual NÃO podem ser reativadas via "Restaurar".
+    from .play_reconciliation import order_is_voided, encrypt_token_for_reconciliation
+    from .play_reconciliation import latest_order_hash
+    info['latest_order_hash'] = latest_order_hash(payload)
+    if order_is_voided(hashed, payload):
+        info['verified_active'] = False
+        info['note'] = 'Pedido anulado pela Google Play; revisão necessária.'
+    # Não reconhecer nem conceder benefício a uma compra anulada, pendente ou expirada.
     if entitlements_enabled() and info['verified_active']:
         if payload.get('acknowledgementState') != 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED':
             await acknowledge_subscription(token, package, info['product_id'])
         info['entitlement_applied'] = True
         info['note'] = 'Assinatura verificada e reconhecida pela Google Play.'
-    hashed = hashlib.sha256(token.encode()).hexdigest()
+    encrypted_token = encrypt_token_for_reconciliation(token)
     linked = payload.get('linkedPurchaseToken')
     linked_hash = hashlib.sha256(linked.encode()).hexdigest() if isinstance(linked, str) and linked else None
-    replay = await asyncio.to_thread(_save_check, owner, hashed, info, linked_hash)
+    replay = await asyncio.to_thread(_save_check, owner, hashed, info, linked_hash, encrypted_token, started_at)
     return {**info, 'already_checked': replay}
 
 

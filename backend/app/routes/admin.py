@@ -9,6 +9,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from ..core import play_reconciliation
 
 from ..core.commercial_metrics import media_quota_overview, overview
 from ..core.usage_ledger import overview as cost_overview
@@ -161,3 +162,17 @@ async def admin_adjust_credits_by_email(payload: EmailCreditAdjustment, _admin: 
         return {**result, "payments_active": False}
     except CommercialError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.get('/play/reconciliation')
+async def admin_play_reconciliation(_admin: str = Depends(require_admin)):
+    return play_reconciliation.overview()
+
+
+@router.post('/play/reconcile')
+async def admin_play_reconcile(limit: int = Query(default=20, ge=1, le=50),
+                               _admin: str = Depends(require_admin)):
+    try:
+        return await play_reconciliation.reconcile_due(limit=limit, min_age_minutes=5)
+    except play_reconciliation.billing.BillingUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc

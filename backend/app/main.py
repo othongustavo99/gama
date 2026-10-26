@@ -1,4 +1,5 @@
 import logging
+from contextlib import suppress
 import asyncio
 import sqlite3
 from contextlib import asynccontextmanager
@@ -22,6 +23,8 @@ from .routes.account import router as account_router
 from .routes.jobs import router as jobs_router
 from .routes.admin import router as admin_router
 from .routes.billing import router as billing_router
+from .routes.play_notifications import router as play_notifications_router
+from .core.play_reconciliation import periodic_reconcile_loop, enabled as play_rtdn_enabled
 from .security import body_too_large, rate_limit_chat, rate_limit_default, require_api_key
 from .core.identity import require_auth, google_oauth_client_ids, current_user_id
 from .storage_status import inspect_data_storage
@@ -65,8 +68,15 @@ async def lifespan(_app: FastAPI):
         logger.error("GOOGLE_OAUTH_CLIENT_IDS ausente: autenticação Google recusará todas as sessões.")
     if settings.CORS_ORIGINS == ["*"]:
         logger.info("CORS aberto (*). Restrinja com CORS_ORIGINS se houver cliente web.")
-    yield
-    await llm.aclose()
+    play_task = asyncio.create_task(periodic_reconcile_loop()) if play_rtdn_enabled() else None
+    try:
+        yield
+    finally:
+        if play_task:
+            play_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await play_task
+        await llm.aclose()
 
 
 app = FastAPI(title="Gama API", version=VERSION, lifespan=lifespan)
@@ -118,6 +128,9 @@ app.include_router(artifacts_router, dependencies=_guard)
 app.include_router(jobs_router, dependencies=_guard)
 app.include_router(admin_router, dependencies=_guard)
 app.include_router(billing_router, dependencies=_guard)
+# Rota pública por necessidade de entrega, porém criptograficamente autenticada
+# como Pub/Sub Google OIDC no próprio endpoint (não usa identidade do usuário).
+app.include_router(play_notifications_router)
 app.include_router(media_router, dependencies=_guard)
 # Autenticação própria: /account/status e /account/start-new precisam funcionar
 # mesmo quando o titular já excluiu a conta. Não aceitam X-User-Id.
