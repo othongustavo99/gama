@@ -9,6 +9,9 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
+from functools import wraps
+from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
@@ -66,7 +69,16 @@ def _connect():
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=15)
     db.execute("PRAGMA busy_timeout=15000")
-    db.execute("PRAGMA journal_mode=WAL")
+    # Múltiplas requisições podem abrir o banco simultaneamente. ALTERAR
+    # journal_mode em toda conexão pode falhar com database is locked.
+    try:
+        db.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError as exc:
+        if "locked" not in str(exc).lower():
+            db.close()
+            raise
+        # Outra conexão está inicializando WAL; respeitar busy_timeout
+        # para os comandos transacionais seguintes.
     db.execute("""CREATE TABLE IF NOT EXISTS plan_assignments (
         owner TEXT PRIMARY KEY, plan_code TEXT NOT NULL,
         expires_at TEXT, updated_at TEXT NOT NULL)""")
@@ -82,6 +94,11 @@ def _connect():
         request_id TEXT PRIMARY KEY, owner TEXT NOT NULL, day TEXT NOT NULL,
         feature TEXT NOT NULL, created_at TEXT NOT NULL)""")
     db.execute("CREATE INDEX IF NOT EXISTS ix_feature_usage_owner ON feature_usage(owner,day,feature)")
+    db.execute("""CREATE TABLE IF NOT EXISTS feature_reservations (
+        request_id TEXT PRIMARY KEY, owner TEXT NOT NULL, feature TEXT NOT NULL,
+        day TEXT NOT NULL, status TEXT NOT NULL, credits INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+    db.execute("CREATE INDEX IF NOT EXISTS ix_feature_reservations_quota ON feature_reservations(owner,day,feature,status)")
     db.commit()
     try:
         yield db
@@ -123,6 +140,11 @@ def account_snapshot(owner: str) -> dict:
             "SELECT feature,COUNT(*) FROM feature_usage WHERE owner=? AND day=? GROUP BY feature",
             (owner, day),
         ).fetchall())
+        for feature, qty in db.execute(
+            "SELECT feature,COUNT(*) FROM feature_reservations WHERE owner=? AND day=? "
+            "AND status IN ('reserved','committed') GROUP BY feature", (owner, day),
+        ).fetchall():
+            counts[feature] = counts.get(feature, 0) + qty
         balance = _balance(db, owner)
     return {
         "account_id": owner,
@@ -132,10 +154,11 @@ def account_snapshot(owner: str) -> dict:
         "limits": dict(CATALOG[code]),
         "usage_today": {feature: counts.get(feature, 0) for feature in CATALOG[code]},
         "day_utc": day,
-        "enforcement_active": False,  # Ainda NÃO integrado às rotas de geração.
+        "enforcement_active": enforcement_enabled(),
         "payments_active": False,
-        "limits_preview_only": True,
-        "note": "Franquias de teste, ainda não aplicadas às gerações nem vinculadas a cobranças.",
+        "limits_preview_only": not enforcement_enabled(),
+        "note": ("Franquias beta aplicadas, sem pagamentos externos."
+                 if enforcement_enabled() else "Franquias de teste; aplicação desativada."),
     }
 
 
@@ -230,6 +253,147 @@ def delete_user(owner: str) -> bool:
     changed = 0
     with _connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        for table in ("plan_assignments", "plan_events", "credit_events", "feature_usage"):
+        for table in ("plan_assignments", "plan_events", "credit_events", "feature_usage", "feature_reservations"):
             changed += db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,)).rowcount
     return bool(changed)
+
+
+# Fase 3D - medição reversível com ativação explícita no Railway.
+# Créditos são virtuais: nenhum pagamento ou compra é criado por este módulo.
+class FeatureRequestAlreadyProcessed(CommercialError):
+    pass
+
+
+def enforcement_enabled() -> bool:
+    return os.getenv("GAMA_COMMERCIAL_ENFORCEMENT", "0").strip().lower() in {"1", "true", "yes"}
+
+
+def credit_overage_enabled() -> bool:
+    return os.getenv("GAMA_COMMERCIAL_ALLOW_OVERAGE_CREDITS", "0").strip().lower() in {"1", "true", "yes"}
+
+
+def _release_row(db: sqlite3.Connection, request_id: str, owner: str, now: str) -> None:
+    row = db.execute("SELECT status, credits FROM feature_reservations WHERE request_id=? AND owner=?",
+                     (request_id, owner)).fetchone()
+    if row and row[0] == "reserved":
+        db.execute("UPDATE feature_reservations SET status='released',updated_at=? WHERE request_id=? AND owner=?",
+                   (now, request_id, owner))
+        if row[1]:
+            # O identificador de estorno não pode colidir com concessões manuais.
+            db.execute("INSERT OR IGNORE INTO credit_events VALUES(?,?,?,?,?)",
+                       ("refund:" + request_id, owner, row[1], "estorno_reserva_beta", now))
+
+
+def reserve_feature(owner: str, feature: str, request_id: str) -> dict | None:
+    """Reserva idempotente e atômica. Sem efeito com enforcement desligado.
+
+    Em replay pendente/concluído, bloqueia nova chamada (evita cobrança dupla).
+    Reservas órfãs com mais de 36 horas são estornadas no próximo acesso;
+    esse prazo NÃO garante retomada do trabalho remoto.
+    """
+    if not enforcement_enabled():
+        return None
+    from .identity import require_auth
+    if not require_auth():
+        raise CommercialError("Franquias comerciais exigem autenticação individual Google")
+    owner, request_id = _check_owner(owner), _check_id(request_id)
+    if feature not in CATALOG["free"]:
+        raise CommercialError("Funcionalidade desconhecida")
+    now = _now()
+    stamp, day = now.isoformat(), now.date().isoformat()
+    with _connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        _check_owner(owner)
+        stale_cutoff = (now - timedelta(hours=36)).isoformat()
+        stale = db.execute("SELECT request_id,owner FROM feature_reservations WHERE status='reserved' "
+                           "AND created_at<?", (stale_cutoff,)).fetchall()
+        for old_id, old_owner in stale:
+            _release_row(db, old_id, old_owner, stamp)
+        existing = db.execute("SELECT owner,feature,status FROM feature_reservations WHERE request_id=?",
+                              (request_id,)).fetchone()
+        if existing and existing[:2] != (owner, feature):
+            raise CommercialError("Identificador de operação reutilizado em outra conta ou recurso")
+        if existing:
+            raise FeatureRequestAlreadyProcessed("Esta operação já foi iniciada. Consulte o histórico antes de reenviar.")
+        plan, _ = _plan_row(db, owner, now)
+        available = CATALOG[plan][feature]
+        legacy_count = db.execute("SELECT COUNT(*) FROM feature_usage WHERE owner=? AND feature=? AND day=?",
+                                  (owner, feature, day)).fetchone()[0]
+        new_count = db.execute("SELECT COUNT(*) FROM feature_reservations WHERE owner=? AND feature=? "
+                               "AND day=? AND status IN ('reserved','committed')", (owner, feature, day)).fetchone()[0]
+        credits = 0
+        if legacy_count + new_count >= available:
+            if not credit_overage_enabled() or _balance(db, owner) < 1:
+                raise FeatureLimitReached("Sua franquia beta de %s acabou. Consulte seu plano ou tente amanhã (UTC)." % feature)
+            credits = 1
+            db.execute("INSERT INTO credit_events VALUES(?,?,?,?,?)",
+                       ("spend:" + request_id, owner, -credits, "excedente_beta_" + feature, stamp))
+        db.execute("INSERT INTO feature_reservations VALUES(?,?,?,?,?,?,?,?)",
+                   (request_id, owner, feature, day, "reserved", credits, stamp, stamp))
+    return {"request_id": request_id, "feature": feature, "credits_reserved": credits}
+
+
+def finalize_feature(owner: str, reservation: dict | None, *, provider_contacted: bool = False,
+                     delivered: bool = False) -> bool:
+    """Confirma tentativa que pode ter gerado custo, ou estorna antes do provedor.
+
+    Chamadas de IA iniciadas não são estornadas automaticamente em erro remoto:
+    o provedor pode ter cobrado mesmo sem devolver artefato.
+    """
+    if not reservation:
+        return False
+    request_id = _check_id(reservation["request_id"])
+    with _connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT owner,status FROM feature_reservations WHERE request_id=?", (request_id,)).fetchone()
+        if not row or row[0] != owner or row[1] != "reserved":
+            return False
+        if provider_contacted or delivered:
+            db.execute("UPDATE feature_reservations SET status='committed',updated_at=? WHERE request_id=?",
+                       (_now().isoformat(), request_id))
+        else:
+            _release_row(db, request_id, owner, _now().isoformat())
+    return True
+
+
+@contextmanager
+def artifact_quota(owner: str, request_id: str | None = None):
+    """Aplica franquia a artefatos criados por endpoints /artifacts/.
+
+    Falhas antes de entregar um artefato estornam a reserva. Identificador
+    X-Idempotency-Key enviado pelo cliente evita repetição de operações.
+    """
+    hold = reserve_feature(owner, "artifact", request_id or uuid4().hex)
+    try:
+        yield hold
+    except BaseException:
+        finalize_feature(owner, hold, provider_contacted=False)
+        raise
+    else:
+        finalize_feature(owner, hold, delivered=True)
+
+
+def artifact_route(fn):
+    """Decorator abaixo de @router.post; conserva a assinatura para FastAPI."""
+    @wraps(fn)
+    async def wrapped(*args, **kwargs):
+        owner = kwargs.get("user_id")
+        if not enforcement_enabled():
+            return await fn(*args, **kwargs)
+        if not owner:
+            raise CommercialError("Conta autenticada obrigatória para usar franquias")
+        # Chamadas antigas sem chave recebem um ID novo. Para replay seguro,
+        # clientes devem fornecer X-Idempotency-Key estável por criação.
+        try:
+            with artifact_quota(owner, kwargs.get("idempotency_key")):
+                return await fn(*args, **kwargs)
+        except FeatureLimitReached as exc:
+            from fastapi import HTTPException
+            raise HTTPException(429, str(exc)) from exc
+        except FeatureRequestAlreadyProcessed as exc:
+            from fastapi import HTTPException
+            raise HTTPException(409, str(exc)) from exc
+        except CommercialError as exc:
+            from fastapi import HTTPException
+            raise HTTPException(403, str(exc)) from exc
+    return wrapped

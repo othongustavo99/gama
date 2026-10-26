@@ -71,7 +71,7 @@ async def my_usage(days: int = Query(default=7, ge=1, le=30), user_id: str = Dep
 
 @router.get("/commercial")
 async def my_commercial_preview(user_id: str = Depends(current_user_id)):
-    """Visualização por conta: sem pagamento e sem limites ativos nesta fase.
+    """Visualização por conta dos limites beta, sem pagamentos externos.
 
     Exige autenticação individual mesmo se o backend estiver em modo legado.
     """

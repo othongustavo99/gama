@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from ..core.commercial_metrics import media_quota_overview, overview
 from ..core.usage_ledger import overview as cost_overview
 from ..core.commercial_plans import (
-    CommercialError, public_catalog, assign_plan, adjust_credits, account_snapshot,
+    CommercialError, public_catalog, assign_plan, adjust_credits, account_snapshot, enforcement_enabled,
 )
 from ..core.identity import canonical_google_user_id, current_user_id, require_auth
 
@@ -63,7 +63,7 @@ class CreditAdjustment(BaseModel):
 
 @router.get("/commercial/catalog")
 async def admin_commercial_catalog(_admin: str = Depends(require_admin)):
-    return {"plans": public_catalog(), "payments_active": False, "limits_preview_only": True}
+    return {"plans": public_catalog(), "payments_active": False, "limits_preview_only": not enforcement_enabled(), "enforcement_active": enforcement_enabled()}
 
 
 @router.post("/commercial/assign-plan")

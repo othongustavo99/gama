@@ -40,6 +40,10 @@ from ..core.conversation_session import load_session, save_session, session_key
 from ..core.code_analyzer.source_detector import parse_github_url
 from ..core.identity import current_user_id
 from ..core.media_quota import DailyQuotaExceeded, consume_daily_media_quota, refund_daily_media_quota
+from ..core.commercial_plans import (
+    reserve_feature, finalize_feature, FeatureLimitReached,
+    FeatureRequestAlreadyProcessed, CommercialError,
+)
 from ..core.media_prompt_director import refine_media_brief
 from ..core.video_gen import (
     VideoIntent,
@@ -59,6 +63,22 @@ router = APIRouter()
 gama = GamaCore()
 _background_memory_tasks: set[asyncio.Task] = set()
 _background_generation_tasks: dict[tuple[str, str], tuple[asyncio.Task, asyncio.Event]] = {}
+
+
+def _commercial_artifact_build(user_id: str, builder):
+    """Reserva 1 entrega de arquivo por ZIP/PDF realmente produzido no chat.
+
+    A geração LLM do conteúdo pode ocorrer antes desta etapa e continuar
+    contabilizada como chat; somente a criação de artefato passa pela quota.
+    """
+    hold = reserve_feature(user_id, "artifact", uuid.uuid4().hex)
+    try:
+        artifact = builder()
+    except BaseException:
+        finalize_feature(user_id, hold, provider_contacted=False)
+        raise
+    finalize_feature(user_id, hold, delivered=bool(artifact and artifact.get("artifact_id")))
+    return artifact
 
 
 def _safe_artifacts_json(artifacts: list[dict]) -> str:
@@ -1470,9 +1490,15 @@ async def chat(
                     if not prompt:
                         yield {"type": "result", "content": "Descreva a imagem a gerar."}
                         return
+                    # Cota comercial é reservada somente depois de validar pedido.
+                    # O provedor NÃO é acionado se a conta atingiu a franquia beta.
+                    image_hold = None
                     try:
+                        image_hold = reserve_feature(user_id, "image", uuid.uuid4().hex)
                         consume_daily_media_quota(user_id, "image")
-                    except (DailyQuotaExceeded, RuntimeError) as exc:
+                    except (FeatureLimitReached, FeatureRequestAlreadyProcessed, CommercialError,
+                            DailyQuotaExceeded, RuntimeError) as exc:
+                        finalize_feature(user_id, image_hold, provider_contacted=False)
                         yield {"type": "result", "content": str(exc)}
                         return
                     yield {"type": "phase", "phase": "generating_image"}
@@ -1484,15 +1510,22 @@ async def chat(
                     use_reference = image_intent in {ImageIntent.EDIT, ImageIntent.IMPROVE} or bool(
                         _IMAGE_REFERENCE_RE.search(last_user)
                     )
-                    result = await generate_image(
-                        prompt,
-                        aspect_ratio=(
-                            request.image_aspect_ratio
-                            if request.chat_mode == "oficina_imagem" and request.image_aspect_ratio in {"1:1", "16:9", "9:16", "4:3", "3:4"}
-                            else parse_image_aspect_ratio(last_user)
-                        ),
-                        reference_images=(refs or None) if use_reference else None,
-                    )
+                    try:
+                        result = await generate_image(
+                            prompt,
+                            aspect_ratio=(
+                                request.image_aspect_ratio
+                                if request.chat_mode == "oficina_imagem" and request.image_aspect_ratio in {"1:1", "16:9", "9:16", "4:3", "3:4"}
+                                else parse_image_aspect_ratio(last_user)
+                            ),
+                            reference_images=(refs or None) if use_reference else None,
+                        )
+                    except Exception:
+                        # Incerto se houve cobrança: não estornar automaticamente.
+                        finalize_feature(user_id, image_hold, provider_contacted=True)
+                        raise
+                    finalize_feature(user_id, image_hold,
+                                     provider_contacted=not bool(result.get("budget_blocked")))
                     if not result.get("ok") or not result.get("base64"):
                         if result.get("budget_blocked"):
                             try:
@@ -1557,9 +1590,13 @@ async def chat(
                     if not prompt:
                         yield {"type": "result", "content": "Descreva o vídeo a gerar."}
                         return
+                    video_hold = None
                     try:
+                        video_hold = reserve_feature(user_id, "video", uuid.uuid4().hex)
                         consume_daily_media_quota(user_id, "video")
-                    except (DailyQuotaExceeded, RuntimeError) as exc:
+                    except (FeatureLimitReached, FeatureRequestAlreadyProcessed, CommercialError,
+                            DailyQuotaExceeded, RuntimeError) as exc:
+                        finalize_feature(user_id, video_hold, provider_contacted=False)
                         yield {"type": "result", "content": str(exc)}
                         return
                     refs = [
@@ -1573,11 +1610,15 @@ async def chat(
                         video_id = video_match.group(1).lower()
                         stored_video = load_artifact(video_id, user_id=user_id)
                         if not stored_video or str(stored_video.get("kind", "")).lower() != "video":
+                            finalize_feature(user_id, video_hold, provider_contacted=False)
+                            refund_daily_media_quota(user_id, "video")
                             yield {"type": "result", "content": "O vídeo anexado não está mais disponível para edição. Anexe-o novamente e tente outra vez."}
                             return
                         try:
                             reference_video_url = create_media_reference_url(video_id, user_id)
                         except RuntimeError as exc:
+                            finalize_feature(user_id, video_hold, provider_contacted=False)
+                            refund_daily_media_quota(user_id, "video")
                             yield {"type": "result", "content": str(exc)}
                             return
                     options = parse_video_options(last_user)
@@ -1603,6 +1644,7 @@ async def chat(
                     try:
                         _video_hold = reserve_budget(user_id, category="video")
                     except BudgetExceeded as exc:
+                        finalize_feature(user_id, video_hold, provider_contacted=False)
                         try:
                             refund_daily_media_quota(user_id, "video")
                         except (OSError, sqlite3.Error):
@@ -1611,6 +1653,8 @@ async def chat(
                         yield {"type": "result", "content": str(exc)}
                         return
                     yield {"type": "phase", "phase": "video_queued"}
+                    # Após este ponto a submissão remota pode gerar custo.
+                    finalize_feature(user_id, video_hold, provider_contacted=True)
                     try:
                         async for event in generate_video_events(
                             prompt,
@@ -1692,12 +1736,12 @@ async def chat(
                             if not body:
                                 yield {"type": "result", "content": "Para gerar PDF, forneça conteúdo no argumento content."}
                                 return
-                            built = build_pdf(
+                            built = _commercial_artifact_build(user_id, lambda: build_pdf(
                                 title=str(args.get("title") or "Documento da Gama")[:160],
                                 sections=[{"type": "paragraph", "text": body[:60_000]}],
                                 filename=filename if filename.lower().endswith(".pdf") else f"{filename}.pdf",
                                 user_id=user_id,
-                            )
+                            ))
                         elif file_format == "zip":
                             raw_files = args.get("files")
                             files = (
@@ -1725,11 +1769,11 @@ async def chat(
                                 yield {"type": "result", "content": "O ZIP com esses mesmos arquivos já está anexado à resposta."}
                                 return
                             yield {"type": "phase", "phase": "artifact_validating"}
-                            built = build_zip_from_files(
+                            built = _commercial_artifact_build(user_id, lambda: build_zip_from_files(
                                 files,
                                 filename=filename if filename.lower().endswith(".zip") else f"{filename}.zip",
                                 user_id=user_id,
-                            )
+                            ))
                             delivered_zip_digests.add(digest)
                         else:
                             yield {"type": "result", "content": "Formato de arquivo não suportado; use zip ou pdf."}
@@ -2017,27 +2061,27 @@ async def chat(
                     pdf_meta = None
                     if simple_flutter_files and wants_zip:
                         yield json.dumps({"gama_meta": {"phase": "artifact_validating"}}, ensure_ascii=False) + "\n"
-                        artifact_meta = build_zip_from_files(
+                        artifact_meta = _commercial_artifact_build(artifact_user, lambda: build_zip_from_files(
                             simple_flutter_files,
                             filename="flutter_exemplo_simples.zip",
                             user_id=artifact_user,
-                        )
+                        ))
                     elif files and (wants_zip or (not wants_pdf and "[[GAMA_FILES]]" in full_assistant)):
                         yield json.dumps({"gama_meta": {"phase": "artifact_validating"}}, ensure_ascii=False) + "\n"
-                        artifact_meta = _try_build_zip_from_assistant(
+                        artifact_meta = _commercial_artifact_build(artifact_user, lambda: _try_build_zip_from_assistant(
                             bundle_text,
                             user_id=artifact_user,
-                        )
+                        ))
                     if artifact_meta:
                         yield json.dumps(
                             {"gama_meta": {"phase": "artifact_ready", "artifact": artifact_meta}},
                             ensure_ascii=False,
                         ) + "\n"
                     if wants_pdf and files:
-                        pdf_meta = _try_build_pdf_from_assistant(
+                        pdf_meta = _commercial_artifact_build(artifact_user, lambda: _try_build_pdf_from_assistant(
                             bundle_text,
                             user_id=artifact_user,
-                        )
+                        ))
                         if pdf_meta:
                             yield json.dumps(
                                 {"gama_meta": {"phase": "artifact_ready", "artifact": pdf_meta}},
@@ -2321,6 +2365,11 @@ async def chat(
                         except Exception:
                             logger.exception("could not persist response after client disconnect")
                             final_status = "interrupted"
+                try:
+                    # Operação iniciada pode ter sido cobrada mesmo se o provedor falhou.
+                    finalize_feature(user_id, commercial_chat_hold, provider_contacted=True)
+                except (OSError, sqlite3.Error, ValueError) as quota_exc:
+                    logger.error("Não foi possível confirmar a franquia do chat: %s", type(quota_exc).__name__)
                 journal_update(status=final_status,
                                phase="finished" if final_status == "completed" else "connection_lost")
 
@@ -2356,6 +2405,20 @@ async def chat(
                 while not queue.empty():
                     queue.get_nowait()
 
+    # Chat comum usa a cota chat. Pedido direto de imagem/vídeo utiliza
+    # a cota correspondente dentro da ferramenta (não cobra chat duas vezes).
+    commercial_chat_hold = None
+    if not direct_media_request:
+        message_key = (request.assistant_message_id or uuid.uuid4().hex)
+        operation_id = "chat-" + hashlib.sha256((user_id + ":" + message_key).encode()).hexdigest()[:40]
+        try:
+            commercial_chat_hold = reserve_feature(user_id, "chat", operation_id)
+        except FeatureLimitReached as exc:
+            raise HTTPException(429, str(exc)) from exc
+        except FeatureRequestAlreadyProcessed as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except CommercialError as exc:
+            raise HTTPException(403, str(exc)) from exc
     return StreamingResponse(
         stream_for_client(),
         media_type="application/x-ndjson",

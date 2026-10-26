@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Header
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -30,6 +30,7 @@ from ..core.document_builder import (
 from ..core.document_builder.pipeline import prepare_project
 from ._upload import read_upload_limited
 from ..core.identity import current_user_id
+from ..core.commercial_plans import artifact_route
 from ..core.code_analyzer.index_store import load_meta
 from ..core.document_builder.store import ArtifactStorageLimitError, verify_artifact_file
 
@@ -100,9 +101,11 @@ class PdfRequest(BaseModel):
 
 
 @router.post("/zip/from-project")
+@artifact_route
 async def zip_from_project(
     body: ZipFromProjectRequest,
     user_id: str = Depends(current_user_id),
+    idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ):
     try:
         _require_project_owner(body.project_id, user_id)
@@ -127,9 +130,11 @@ async def zip_from_project(
 
 
 @router.post("/zip/from-files")
+@artifact_route
 async def zip_from_files(
     body: ZipFromFilesRequest,
     user_id: str = Depends(current_user_id),
+    idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ):
     if not body.files:
         raise HTTPException(400, "files vazio")
@@ -149,9 +154,11 @@ async def zip_from_files(
 
 
 @router.post("/zip/edit")
+@artifact_route
 async def zip_edit(
     body: ZipEditRequest,
     user_id: str = Depends(current_user_id),
+    idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ):
     if not body.project_id and not body.edits and not body.extra_files:
         raise HTTPException(400, "Informe project_id e/ou edits")
@@ -180,9 +187,11 @@ async def zip_edit(
 
 
 @router.post("/zip/edit-upload")
+@artifact_route
 async def zip_edit_upload(
     file: UploadFile = File(...),
     user_id: str = Depends(current_user_id),
+    idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """Recebe ZIP + campo form 'edits' JSON via multipart — simplificado: só extrai e rezipa.
 
@@ -212,9 +221,11 @@ async def zip_edit_upload(
 
 
 @router.post("/pdf")
+@artifact_route
 async def pdf_create(
     body: PdfRequest,
     user_id: str = Depends(current_user_id),
+    idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
 ):
     try:
         sections = [s.model_dump(exclude_none=True) for s in body.sections]
