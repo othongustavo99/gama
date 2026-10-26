@@ -170,6 +170,13 @@ def delete_account_data(user_id: str) -> dict:
             logger.warning("Falha ao excluir histórico de tarefas: %s", type(exc).__name__)
             errors.append("histórico de tarefas")
         try:
+            from .commercial_metrics import delete_user as delete_commercial_metrics
+            if delete_commercial_metrics(uid):
+                removed.append("métricas de utilização")
+        except (sqlite3.Error, OSError) as exc:
+            logger.warning("Falha ao limpar métricas: %s", type(exc).__name__)
+            errors.append("métricas de utilização")
+        try:
             if _remove_quota(base, uid):
                 removed.append("cotas de mídia")
         except (sqlite3.Error, OSError) as exc:

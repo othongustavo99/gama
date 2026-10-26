@@ -21,7 +21,7 @@ import time
 from typing import Awaitable, Callable, Optional
 
 import httpx
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +190,7 @@ async def _verified_user(token: str) -> str:
 
 
 async def current_user_id(
+    request: Request,
     authorization: Optional[str] = Header(default=None),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
 ) -> str:
@@ -203,7 +204,9 @@ async def current_user_id(
             if not token:
                 raise HTTPException(401, "Token de autenticação vazio")
             try:
-                return await _verified_user(token)
+                user_id = await _verified_user(token)
+                request.state.gama_authenticated_user_id = user_id
+                return user_id
             except AccountDeletedError as exc:
                 raise HTTPException(403, str(exc)) from exc
             except PermissionError as exc:
