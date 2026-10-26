@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
@@ -84,13 +86,16 @@ class _VideoJobsPanelState extends State<VideoJobsPanel> {
         '/artifacts/$artifactId/download',
         filename: filename,
       );
+      final size = await File(path).length();
+      if (size == 0) throw const FormatException('Vídeo vazio ou incompleto.');
       await LibraryScreen.addEntry(
         name: filename,
         kind: 'video',
-        bytes: 0,
+        bytes: size,
         sourcePath: path,
         conversationId: job['conversation_id']?.toString(),
       );
+      await DownloadService.instance.exportToDownloads(path, filename: filename);
       widget.onLibraryChanged?.call();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(

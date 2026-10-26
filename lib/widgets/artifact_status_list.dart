@@ -349,26 +349,30 @@ class ArtifactStatusList extends StatelessWidget {
                     ),
                   ],
                   const SizedBox(height: 8),
-                  if (!isVideo)
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: () => onDownload(artifact),
-                        icon: Icon(
-                          isVideo
-                              ? Icons.play_arrow_rounded
-                              : Icons.download_rounded,
-                          size: 18,
-                        ),
-                        label: Text(
-                          isVideo
-                              ? 'Reproduzir vídeo'
-                              : isZip
-                              ? 'Baixar tudo em ZIP'
-                              : 'Baixar arquivo',
-                        ),
-                      ),
-                    ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: isVideo
+                        ? Wrap(
+                            spacing: 8,
+                            children: [
+                              TextButton.icon(
+                                onPressed: () => onPlayVideo(artifact),
+                                icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                                label: const Text('Reproduzir'),
+                              ),
+                              TextButton.icon(
+                                onPressed: () => onDownload(artifact),
+                                icon: const Icon(Icons.download_rounded, size: 18),
+                                label: const Text('Baixar vídeo'),
+                              ),
+                            ],
+                          )
+                        : TextButton.icon(
+                            onPressed: () => onDownload(artifact),
+                            icon: const Icon(Icons.download_rounded, size: 18),
+                            label: Text(isZip ? 'Baixar tudo em ZIP' : 'Baixar arquivo'),
+                          ),
+                  ),
                 ],
               ),
             );

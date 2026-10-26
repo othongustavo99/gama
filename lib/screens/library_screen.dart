@@ -55,6 +55,11 @@ class LibraryScreen extends StatefulWidget {
       }
     }
 
+    // Metadados de tamanho confiáveis; entradas antigas marcadas com 0 B
+    // serão mostradas pelo tamanho real do arquivo quando a Biblioteca abrir.
+    final effectiveBytes = savedPath != null && await File(savedPath).exists()
+        ? await File(savedPath).length()
+        : (sourceBytes?.length ?? bytes);
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('gama_library') ?? '[]';
     // Nunca substitui uma biblioteca existente se seus metadados estiverem
@@ -66,7 +71,7 @@ class LibraryScreen extends StatefulWidget {
     list.add({
       'name': name,
       'kind': kind,
-      'bytes': bytes,
+      'bytes': effectiveBytes,
       'path': savedPath,
       'at': DateTime.now().toIso8601String(),
       if (conversationId != null) 'conversationId': conversationId,
@@ -83,17 +88,18 @@ class LibraryScreen extends StatefulWidget {
   ) async {
     final path = it['path']?.toString();
     final name = it['name']?.toString() ?? 'arquivo';
-    if (path == null || path.isEmpty || !await File(path).exists()) {
+    if (path == null || path.isEmpty ||
+        !await File(path).exists() || await File(path).length() == 0) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Arquivo não encontrado no disco.')),
+          const SnackBar(content: Text('Arquivo não encontrado ou vazio.')),
         );
       }
       return;
     }
 
     try {
-      await DownloadService.instance.copyFile(path, filename: name);
+      await DownloadService.instance.exportToDownloads(path, filename: name);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -138,6 +144,15 @@ class LibraryScreen extends StatefulWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Arquivo não encontrado no disco.')),
+        );
+      }
+      return;
+    }
+
+    if (await file.length() == 0) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Arquivo vazio. Baixe ou gere novamente.')),
         );
       }
       return;
@@ -509,11 +524,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               final entry = filtered[index];
                               final kind = entry['kind']?.toString() ?? '';
                               final path = entry['path']?.toString();
-                              final hasFile = path != null &&
-                                  path.isNotEmpty && File(path).existsSync();
+                              final localFile = path == null ? null : File(path);
+                              final fileExists = localFile != null &&
+                                  path!.isNotEmpty && localFile.existsSync();
+                              final actualSize = fileExists ? localFile.lengthSync() : 0;
+                              final hasFile = fileExists && actualSize > 0;
                               final name = entry['name']?.toString() ?? 'Arquivo';
-                              final size = entry['bytes'] is num
-                                  ? (entry['bytes'] as num).toInt() : 0;
+                              final size = fileExists ? actualSize :
+                                  (entry['bytes'] is num ? (entry['bytes'] as num).toInt() : 0);
                               return Material(
                                 color: context.gama.surfaceCard,
                                 borderRadius: BorderRadius.circular(12),
@@ -548,7 +566,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                               const SizedBox(height: 3),
                                               Text(
                                                 '${categoryForLibraryItem(entry).label} · ${_fmtBytes(size)}'
-                                                '${hasFile ? '' : ' · Indisponível neste dispositivo'}',
+                                                '${hasFile ? '' : fileExists ? ' · Arquivo vazio' : ' · Indisponível neste dispositivo'}',
                                                 maxLines: 2,
                                                 style: TextStyle(
                                                   color: context.gama.textMuted,

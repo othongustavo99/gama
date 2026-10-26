@@ -68,6 +68,23 @@ class DownloadService {
     return destination.path;
   }
 
+  /// Exporta o arquivo para Downloads/Gama (coleção pública do Android 10+).
+  /// Mantém a cópia privada usada pelo player e pela Biblioteca intacta.
+  Future<void> exportToDownloads(String sourcePath, {String? filename}) async {
+    final source = File(sourcePath);
+    if (!await source.exists() || await source.length() <= 0) {
+      throw const FileSystemException('Arquivo vazio ou não encontrado');
+    }
+    if (!kIsWeb && Platform.isAndroid) {
+      await const MethodChannel('com.example.gama/file_opener').invokeMethod<String>(
+        'saveToDownloads',
+        {'path': sourcePath, 'filename': filename ?? p.basename(sourcePath)},
+      );
+      return;
+    }
+    await copyFile(sourcePath, filename: filename);
+  }
+
   Future<String> saveBase64Image(
     String base64Data, {
     String mime = 'image/png',

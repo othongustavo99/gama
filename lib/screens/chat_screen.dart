@@ -2236,6 +2236,7 @@ class _ChatScreenState extends State<ChatScreen> {
     String filename, {
     String? expectedSha256,
     int? expectedSize,
+    bool openAfterDownload = true,
   }) async {
     late final String savedPath;
     try {
@@ -2256,17 +2257,31 @@ class _ChatScreenState extends State<ChatScreen> {
                 lowerName.endsWith('.mkv'))
           ? 'video'
           : 'zip';
+      final fileSize = await file.length();
+      if (fileSize == 0) {
+        throw const FormatException('Arquivo vazio ou incompleto.');
+      }
       await LibraryScreen.addEntry(
         name: filename,
         kind: kind,
-        bytes: await file.length(),
+        bytes: fileSize,
         sourcePath: savedPath,
       );
+      if (!openAfterDownload) {
+        await DownloadService.instance.exportToDownloads(
+          savedPath,
+          filename: filename,
+        );
+      }
     } catch (e) {
       _snack('Não consegui baixar o arquivo: $e');
       return;
     }
 
+    if (!openAfterDownload) {
+      _snack('Arquivo salvo na Biblioteca e em Downloads/Gama.');
+      return;
+    }
     try {
       await DownloadService.instance.openGeneratedFile(savedPath);
     } catch (e) {
@@ -4654,6 +4669,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                     expectedSize: int.tryParse(
                                                                         artifact['size']
                                                                             ?.toString() ?? ''),
+                                                                    openAfterDownload: artifact['kind'] != 'video',
                                                                   );
                                                                 }
                                                               },

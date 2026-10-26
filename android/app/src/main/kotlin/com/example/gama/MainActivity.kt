@@ -1,6 +1,11 @@
 package com.example.gama
 
 import android.content.ClipData
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import java.io.FileOutputStream
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
@@ -16,7 +21,7 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             FILE_OPENER_CHANNEL,
         ).setMethodCallHandler { call, result ->
-            if (call.method != "openWithChooser") {
+            if (call.method != "openWithChooser" && call.method != "saveToDownloads") {
                 result.notImplemented()
                 return@setMethodCallHandler
             }
@@ -34,15 +39,31 @@ class MainActivity : FlutterActivity() {
                     return@setMethodCallHandler
                 }
 
+                if (file.length() <= 0L) {
+                    result.error("EMPTY_FILE", "Arquivo vazio ou incompleto.", null)
+                    return@setMethodCallHandler
+                }
+                if (call.method == "saveToDownloads") {
+                    val name = call.argument<String>("filename")
+                        ?.substringAfterLast('/')?.substringAfterLast('\\')
+                        ?.takeIf { it.isNotBlank() } ?: file.name
+                    result.success(saveToDownloads(file, name))
+                    return@setMethodCallHandler
+                }
+
+                // Flutter usa .../app_flutter/gama_library. O FileProvider só
+                // permite cacheDir/filesDir. Copiamos para uma área autorizada
+                // em vez de abrir uma root-path ampla para /data/data.
+                val fileToShare = prepareShareableFile(file)
                 val uri = FileProvider.getUriForFile(
                     this,
                     "${applicationContext.packageName}.fileprovider",
-                    file,
+                    fileToShare,
                 )
                 val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, mimeTypeFor(file))
+                    setDataAndType(uri, mimeTypeFor(fileToShare))
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    clipData = ClipData.newUri(contentResolver, file.name, uri)
+                    clipData = ClipData.newUri(contentResolver, fileToShare.name, uri)
                 }
                 startActivity(Intent.createChooser(viewIntent, "Abrir com"))
                 result.success(null)
@@ -53,6 +74,73 @@ class MainActivity : FlutterActivity() {
                     null,
                 )
             }
+        }
+    }
+
+    private fun prepareShareableFile(source: File): File {
+        val allowedRoots = listOf(filesDir, cacheDir,
+            getExternalFilesDir(null), externalCacheDir).filterNotNull()
+        val sourcePath = source.canonicalPath
+        if (allowedRoots.any {
+                val rootPath = it.canonicalPath
+                sourcePath == rootPath || sourcePath.startsWith("$rootPath${File.separator}")
+            }) return source
+
+        // Nomes determinísticos e isolados previnem colisões e repetição de
+        // cópias. Nenhuma pasta privada arbitrária é exposta pelo FileProvider.
+        val shareDir = File(cacheDir, "gama_shared_files").apply { mkdirs() }
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest("$sourcePath:${source.lastModified()}:${source.length()}".toByteArray())
+            .take(10).joinToString("") { "%02x".format(it) }
+        val safeName = source.name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val target = File(shareDir, "${digest}_$safeName")
+        if (!target.isFile || target.length() != source.length()) {
+            val tmp = File.createTempFile("gama_", ".part", shareDir)
+            try {
+                source.inputStream().use { input ->
+                    FileOutputStream(tmp).use { output -> input.copyTo(output) }
+                }
+                if (!tmp.renameTo(target)) {
+                    tmp.copyTo(target, overwrite = true)
+                }
+            } finally {
+                tmp.delete()
+            }
+        }
+        return target
+    }
+
+    private fun saveToDownloads(source: File, filename: String): String {
+        val safeName = filename.replace(Regex("[\\/:*?\"<>|\u0000-\u001f]"), "_")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // Android 9 e anteriores: salva na pasta do próprio app, sem
+            // pedir permissões de armazenamento amplo.
+            val dir = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "Gama")
+            if (!dir.exists() && !dir.mkdirs()) {
+                throw IllegalStateException("Não foi possível criar a pasta de downloads.")
+            }
+            val target = File(dir, safeName)
+            source.copyTo(target, overwrite = true)
+            return target.path
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, safeName)
+            put(MediaStore.Downloads.MIME_TYPE, mimeTypeFor(source))
+            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Gama")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw IllegalStateException("Não foi possível criar o arquivo em Downloads.")
+        try {
+            contentResolver.openOutputStream(uri)?.use { output ->
+                source.inputStream().use { input -> input.copyTo(output) }
+            } ?: throw IllegalStateException("Não foi possível gravar o download.")
+            val ready = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+            contentResolver.update(uri, ready, null, null)
+            return uri.toString()
+        } catch (error: Exception) {
+            contentResolver.delete(uri, null, null)
+            throw error
         }
     }
 
