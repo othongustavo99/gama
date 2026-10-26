@@ -4,6 +4,7 @@ import '../core/gama_colors.dart';
 import '../core/launch_policy.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/auth_service.dart';
+import '../services/account_privacy_service.dart';
 import '../services/identity_service.dart';
 import '../services/memory_service.dart';
 import 'home_screen.dart';
@@ -42,6 +43,45 @@ class _LoginScreenState extends State<LoginScreen> {
       final ok = await AuthService.instance.signInWithGoogle();
       if (!mounted) return;
       if (ok) {
+        // Verificação ANTES de migrar memória ou exibir dados da conta.
+        // Uma sessão antiga em outro aparelho não reativa uma conta apagada.
+        final accountStatus = await AccountPrivacyService.instance.status();
+        if (accountStatus == 'deleted') {
+          // Histórico Hive e biblioteca são locais e compartilhados entre
+          // sessões; jamais sincronizar dados da conta apagada em outra conta.
+          await AccountPrivacyService.instance.clearDeviceAfterDeletion(
+            keepGoogleSession: true,
+          );
+          if (!mounted) return;
+          final restart = await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Conta excluída anteriormente'),
+              content: const Text(
+                'Os dados desta conta foram apagados. Você pode iniciar uma '
+                'nova conta vazia usando o mesmo Google. Seu histórico antigo '
+                'não será recuperado. Deseja recomeçar?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancelar')),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Recomeçar vazia')),
+              ],
+            ),
+          );
+          if (restart != true) {
+            await AuthService.instance.signOut();
+            if (mounted) setState(() { _loading = false; _error = null; });
+            return;
+          }
+          await AccountPrivacyService.instance.startNewAccount();
+        } else if (accountStatus != 'active') {
+          throw StateError('A exclusão dos dados ainda está em processamento. '
+              'Tente novamente mais tarde.');
+        }
         // Unifica memória legada (google_<id>) → google_email_* entre Android/Windows
         try {
           await MemoryService().migrateIfNeeded();

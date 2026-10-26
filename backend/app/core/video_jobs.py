@@ -65,6 +65,9 @@ def create_job(user_id: str, *, conversation_id: str | None = None) -> dict[str,
 
 
 def _save(user_id: str, item: dict[str, Any]) -> None:
+    from .account_privacy import deletion_status
+    if deletion_status(user_id) != "active":
+        raise PermissionError("Conta excluída: trabalho não pode ser salvo")
     path = _file(user_id, str(item["job_id"]))
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(item, ensure_ascii=False), encoding="utf-8")

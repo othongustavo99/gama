@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'account_deletion_screen.dart';
+
 import '../core/gama_colors.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/memory_service.dart';
@@ -374,6 +376,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 32),
+          const _SectionTitle('Conta e privacidade'),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            tileColor: context.gama.surfaceInput,
+            leading: Icon(Icons.privacy_tip_outlined, color: context.gama.textSecondary),
+            title: const Text('Gerenciar e excluir conta'),
+            subtitle: const Text('Exclusão definitiva do histórico, memória e arquivos associados.'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const AccountDeletionScreen()),
+            ),
+          ),
+          const SizedBox(height: 24),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(

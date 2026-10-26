@@ -71,6 +71,9 @@ def save_artifact(
     meta: Optional[dict[str, Any]] = None,
     user_id: str = "default",
 ) -> dict[str, Any]:
+    from ..account_privacy import deletion_status
+    if deletion_status(user_id) != "active":
+        raise PermissionError("Conta excluída: não é permitido salvar novos arquivos")
     if not isinstance(data, bytes):
         data = bytes(data)
     if not data:

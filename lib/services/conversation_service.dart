@@ -65,6 +65,21 @@ class ConversationService extends ChangeNotifier {
     }
   }
 
+  /// Apaga dados locais sem acionar deleções remotas nem timers pendentes.
+  /// Usado APENAS após DELETE /account confirmar limpeza no servidor.
+  Future<void> clearLocalForAccountDeletion() async {
+    for (final timer in _conversationDeleteTimers.values) {
+      timer.cancel();
+    }
+    _conversationDeleteTimers.clear();
+    _pendingConversationDeletes.clear();
+    _drafts.clear();
+    await _messagesBox.clear();
+    await _conversationsBox.clear();
+    _currentConversationId = null;
+    notifyListeners();
+  }
+
   // ==================== CONVERSAS ====================
 
   /// True se a conversa já tem pelo menos uma mensagem persistida.

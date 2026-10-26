@@ -34,6 +34,10 @@ _token_cache: dict[str, tuple[float, str]] = {}
 _warned_legacy = False
 
 
+class AccountDeletedError(PermissionError):
+    pass
+
+
 def require_auth() -> bool:
     # Fail closed unless a developer deliberately opts into legacy X-User-Id mode.
     return os.getenv("GAMA_REQUIRE_AUTH", "1").strip().lower() in {"1", "true", "yes", "on"}
@@ -155,13 +159,26 @@ async def verify_google_legacy_user_id(token: str) -> str:
 _verifier: Callable[[str], Awaitable[str]] = verify_google_id_token
 
 
+async def _verified_user_allow_deleted(token: str) -> str:
+    """Somente endpoints explícitos de exclusão/recomeço podem usar."""
+    if not token:
+        raise PermissionError("Token ausente")
+    return await _verifier(token)
+
+
 async def _verified_user(token: str) -> str:
     key = hashlib.sha256(token.encode("utf-8")).hexdigest()
     now = time.monotonic()
     hit = _token_cache.get(key)
     if hit and hit[0] > now:
-        return hit[1]
-    user_id = await _verifier(token)
+        user_id = hit[1]
+    else:
+        user_id = await _verifier(token)
+    # Verificado inclusive quando o token está em cache; sessões antigas não
+    # podem repovoar o histórico que o titular mandou excluir.
+    from .account_privacy import deletion_status
+    if deletion_status(user_id) != "active":
+        raise AccountDeletedError("Conta excluída. Faça login para recomeçar, se desejar.")
     _token_cache[key] = (now + _TOKEN_TTL_SEC, user_id)
     if len(_token_cache) > 5000:  # evita crescimento sem limite
         for k in [k for k, (exp, _) in _token_cache.items() if exp <= now]:
@@ -184,6 +201,8 @@ async def current_user_id(
                 raise HTTPException(401, "Token de autenticação vazio")
             try:
                 return await _verified_user(token)
+            except AccountDeletedError as exc:
+                raise HTTPException(403, str(exc)) from exc
             except PermissionError as exc:
                 raise HTTPException(401, str(exc)) from exc
             except httpx.HTTPError as exc:

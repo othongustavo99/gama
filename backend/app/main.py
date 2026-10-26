@@ -16,6 +16,7 @@ from .routes.project import router as project_router
 from .routes.tts import router as tts_router
 from .routes.artifacts import router as artifacts_router
 from .routes.media import router as media_router, public_router as media_public_router
+from .routes.account import router as account_router
 from .security import body_too_large, rate_limit_chat, rate_limit_default, require_api_key
 from .core.identity import require_auth, google_oauth_client_ids, current_user_id
 from .storage_status import inspect_data_storage
@@ -96,6 +97,9 @@ app.include_router(project_router, dependencies=_guard)
 app.include_router(tts_router, dependencies=_chat_guard)
 app.include_router(artifacts_router, dependencies=_guard)
 app.include_router(media_router, dependencies=_guard)
+# Autenticação própria: /account/status e /account/start-new precisam funcionar
+# mesmo quando o titular já excluiu a conta. Não aceitam X-User-Id.
+app.include_router(account_router, dependencies=[Depends(require_api_key), Depends(rate_limit_default)])
 # Referências HMAC de curta duração precisam ser acessíveis ao provedor do modelo; o endpoint valida assinatura antes de servir o arquivo.
 app.include_router(media_public_router)
 

@@ -1035,6 +1035,9 @@ def migrate_memory(from_user_id: str, to_user_id: str) -> dict:
 
 
 def get_store(user_id: Optional[str] = None) -> MemoryStore:
+    from .account_privacy import deletion_status
+    if user_id is not None and deletion_status(_safe_user_id(user_id)) != "active":
+        raise PermissionError("Conta excluída: memória indisponível")
     if os.getenv("GAMA_MEMORY_V3_ENABLED", "true").strip().lower() in {"0", "false", "off"}:
         return MemoryStore(user_id=user_id)
     from .memory_v3 import SQLiteMemoryStore

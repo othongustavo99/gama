@@ -31,6 +31,11 @@ def project_dir(project_id: str) -> Path:
 
 
 def save_meta(project_id: str, meta: dict[str, Any]) -> None:
+    from ..account_privacy import deletion_status
+    owner = meta.get("user_id")
+    if owner and deletion_status(owner) != "active":
+        shutil.rmtree(project_dir(project_id), ignore_errors=True)
+        raise PermissionError("Conta excluída: projeto não pode ser salvo")
     d = project_dir(project_id)
     d.mkdir(parents=True, exist_ok=True)
     meta = {**meta, "project_id": project_id, "updated_at": time.time()}
