@@ -6,6 +6,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..core.commercial_metrics import media_quota_overview, overview
+from ..core.usage_ledger import overview as cost_overview
 from ..core.identity import canonical_google_user_id, current_user_id, require_auth
 
 router = APIRouter(prefix="/admin", tags=["commercial-admin"])
@@ -38,4 +39,5 @@ async def commercial_overview(days: int = Query(default=7, ge=1, le=30), _admin:
         "currency": None,
         "provider_cost_total": None,
         "billing_enabled": False,
+        "provider_usage": cost_overview(days),
     }

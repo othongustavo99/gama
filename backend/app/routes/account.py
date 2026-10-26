@@ -1,11 +1,12 @@
 """Autogestão de dados da conta, com autenticação Google obrigatória."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from ..core.account_privacy import delete_account_data, deletion_status, start_new_account
-from ..core.identity import require_auth
+from ..core.identity import require_auth, current_user_id
+from ..core.usage_ledger import owner_overview
 
 router = APIRouter(prefix="/account", tags=["account"])
 
@@ -59,3 +60,9 @@ async def new_account(body: DeleteConfirmation, authorization: str | None = Head
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"ok": True, "status": "active"}
+
+
+@router.get("/usage")
+async def my_usage(days: int = Query(default=7, ge=1, le=30), user_id: str = Depends(current_user_id)):
+    """Resumo financeiro somente da conta autenticada, sem dados de outras contas."""
+    return owner_overview(user_id, days)

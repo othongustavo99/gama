@@ -39,7 +39,7 @@ from ..core.file_bundle import chat_with_continuation, generate_files_per_file
 from ..core.conversation_session import load_session, save_session, session_key
 from ..core.code_analyzer.source_detector import parse_github_url
 from ..core.identity import current_user_id
-from ..core.media_quota import DailyQuotaExceeded, consume_daily_media_quota
+from ..core.media_quota import DailyQuotaExceeded, consume_daily_media_quota, refund_daily_media_quota
 from ..core.media_prompt_director import refine_media_brief
 from ..core.video_gen import (
     VideoIntent,
@@ -1494,6 +1494,11 @@ async def chat(
                         reference_images=(refs or None) if use_reference else None,
                     )
                     if not result.get("ok") or not result.get("base64"):
+                        if result.get("budget_blocked"):
+                            try:
+                                refund_daily_media_quota(user_id, "image")
+                            except (OSError, sqlite3.Error):
+                                logger.warning("Cota de imagem não pôde ser estornada após bloqueio preventivo")
                         yield {"type": "result", "content": str(result.get("error") or "Não consegui gerar a imagem.")}
                         return
                     yield {
@@ -1594,6 +1599,17 @@ async def chat(
                     # processo reinicie, /media/video-jobs permite retomada.
                     video_job = create_job(user_id, conversation_id=getattr(request, "conversation_id", None))
                     video_job_id = video_job["job_id"]
+                    from ..core.usage_ledger import BudgetExceeded, reserve_budget, release_budget
+                    try:
+                        _video_hold = reserve_budget(user_id, category="video")
+                    except BudgetExceeded as exc:
+                        try:
+                            refund_daily_media_quota(user_id, "video")
+                        except (OSError, sqlite3.Error):
+                            logger.warning("Cota de vídeo não pôde ser estornada após bloqueio preventivo")
+                        update_job(user_id, video_job_id, status="failed", error=str(exc))
+                        yield {"type": "result", "content": str(exc)}
+                        return
                     yield {"type": "phase", "phase": "video_queued"}
                     try:
                         async for event in generate_video_events(
@@ -1619,6 +1635,13 @@ async def chat(
                             elif event.get("type") == "error":
                                 error = str(event.get("error") or "O provedor não conseguiu gerar o vídeo.")[:500]
                             elif event.get("type") == "completed":
+                                from ..core.usage_ledger import record_usage
+                                try:
+                                    record_usage(user_id, provider="openrouter", category="video",
+                                                 model=str(event.get("model") or "unknown"),
+                                                 cost=event.get("cost"), generation_id=video_job_id)
+                                except (OSError, sqlite3.Error, ValueError, RuntimeError) as usage_exc:
+                                    logger.warning("Falha ao registrar custo do vídeo: %s", type(usage_exc).__name__)
                                 data = event.get("data")
                                 if isinstance(data, bytes) and data:
                                     saved = save_artifact(
@@ -1640,6 +1663,11 @@ async def chat(
                     except Exception as exc:
                         logger.exception("agent video tool failed")
                         error = str(exc)[:300]
+                    finally:
+                        try:
+                            release_budget(_video_hold)
+                        except (OSError, sqlite3.Error, ValueError):
+                            logger.warning("Reserva de orçamento de vídeo não pôde ser liberada")
                     if stored_artifact:
                         yield {"type": "artifact", "artifact": stored_artifact}
                         yield {"type": "result", "content": f"Vídeo criado: {stored_artifact['filename']}. O arquivo está anexado à resposta."}
@@ -2187,6 +2215,8 @@ async def chat(
                 logger.warning("Generation journal update failed: %s", type(exc).__name__)
 
         async def produce():
+            from ..core.usage_ledger import bind_owner, restore_owner
+            _usage_token = bind_owner(user_id)
             response_parts: list[str] = []
             image_blocks: list[str] = []
             sources: list = []

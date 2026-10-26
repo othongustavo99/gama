@@ -177,6 +177,13 @@ def delete_account_data(user_id: str) -> dict:
             logger.warning("Falha ao limpar métricas: %s", type(exc).__name__)
             errors.append("métricas de utilização")
         try:
+            from .usage_ledger import delete_user as delete_usage_ledger
+            if delete_usage_ledger(uid):
+                removed.append("custos e tokens")
+        except (sqlite3.Error, OSError) as exc:
+            logger.warning("Falha ao excluir livro de custos: %s", type(exc).__name__)
+            errors.append("custos e tokens")
+        try:
             if _remove_quota(base, uid):
                 removed.append("cotas de mídia")
         except (sqlite3.Error, OSError) as exc:

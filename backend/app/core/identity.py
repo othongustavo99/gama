@@ -206,6 +206,8 @@ async def current_user_id(
             try:
                 user_id = await _verified_user(token)
                 request.state.gama_authenticated_user_id = user_id
+                from .usage_ledger import bind_owner
+                bind_owner(user_id)
                 return user_id
             except AccountDeletedError as exc:
                 raise HTTPException(403, str(exc)) from exc

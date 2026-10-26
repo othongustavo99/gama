@@ -63,3 +63,24 @@ def consume_daily_media_quota(user_id: str, media_type: str) -> None:
         # Fail closed: never make paid requests when quota accounting is down.
         raise RuntimeError("Não foi possível verificar a cota diária de mídia.") from exc
 
+
+
+def refund_daily_media_quota(user_id: str, media_type: str) -> bool:
+    """Devolve reserva somente quando a chamada paga foi bloqueada ANTES do envio.
+
+    Não usar para falha do provedor: ela pode ter gerado cobrança mesmo sem entrega.
+    """
+    if media_type not in {"image", "video"}:
+        raise ValueError("tipo de mídia inválido")
+    db_path = Path(settings.DATA_DIR) / "gama_media_quota.sqlite3"
+    if not db_path.is_file():
+        return False
+    day = datetime.now(timezone.utc).date().isoformat()
+    with sqlite3.connect(db_path, timeout=10) as db:
+        db.execute("PRAGMA busy_timeout=10000")
+        db.execute("BEGIN IMMEDIATE")
+        changed = db.execute(
+            "UPDATE media_quota SET used=used-1 WHERE user_id=? AND media_type=? AND day=? AND used>0",
+            (user_id, media_type, day),
+        )
+        return changed.rowcount > 0

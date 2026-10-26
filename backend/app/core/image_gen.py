@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import sqlite3
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional
@@ -12,6 +13,7 @@ from typing import Any, Optional
 import httpx
 
 from ..config import settings
+from .usage_ledger import BudgetExceeded, owner as usage_owner, record_usage, reserve_budget, release_budget
 
 logger = logging.getLogger(__name__)
 
@@ -555,6 +557,11 @@ async def generate_image(
             }
         ]
 
+    _usage_owner = usage_owner()
+    try:
+        _budget_hold = reserve_budget(_usage_owner, category="image")
+    except BudgetExceeded as exc:
+        return {"ok": False, "error": str(exc), "model": model_id, "budget_blocked": True}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(url, headers=headers, json=payload)
@@ -602,9 +609,21 @@ async def generate_image(
                     "model": model_id,
                 }
             data = r.json()
+            if _usage_owner:
+                try:
+                    record_usage(_usage_owner, provider="openrouter", category="image",
+                                 model=model_id, usage=data.get("usage") or {},
+                                 generation_id=data.get("id"))
+                except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
+                    logger.warning("Falha ao registrar custo da imagem: %s", type(exc).__name__)
     except Exception as e:
         logger.exception("image gen network")
         return {"ok": False, "error": str(e), "model": model_id}
+    finally:
+        try:
+            release_budget(_budget_hold)
+        except (OSError, sqlite3.Error, ValueError):
+            logger.warning("Reserva de imagem não pôde ser liberada")
 
     b64 = None
     mime = "image/png"

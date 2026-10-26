@@ -19,12 +19,15 @@ import json
 import logging
 import random
 import re
+import sqlite3
 import time
 from typing import Any, AsyncIterator, Iterable, Optional
 
 import httpx
 
 from .config import settings
+from .core.usage_ledger import (BudgetExceeded, owner as usage_owner, record_usage,
+                                reserve_budget, release_budget)
 from .core.context_budget import (
     MAX_MESSAGE_CHARS as _MAX_MSG_CHARS,
     MAX_TOTAL_INPUT_CHARS as _MAX_TOTAL_INPUT_CHARS,
@@ -151,7 +154,7 @@ async def iter_openai_events(lines: AsyncIterator[str]) -> AsyncIterator[dict]:
             msg = err.get("message") if isinstance(err, dict) else str(err)
             raise LLMError(None, "O provedor de IA interrompeu a resposta.", str(msg)[:300])
         if data.get("usage"):
-            yield {"type": "usage", "usage": data["usage"]}
+            yield {"type": "usage", "usage": data["usage"], "generation_id": data.get("id")}
         choices = data.get("choices") or []
         if not choices:
             continue
@@ -311,6 +314,37 @@ class LLMClient:
         return result["text"]
 
     async def chat_once_meta(
+        self, model: str, messages: list[dict], *, timeout: float = 120.0,
+        max_tokens: int | None = None, temperature: float | None = None,
+    ) -> dict:
+        """Captura uso do OpenRouter para TODAS as chamadas não-streaming."""
+        user_id = usage_owner()
+        hold = None
+        if settings.PROVIDER == "openrouter":
+            try:
+                hold = reserve_budget(user_id, category="llm")
+            except BudgetExceeded as exc:
+                raise LLMError(429, str(exc)) from exc
+        try:
+            result = await self._chat_once_meta_inner(
+                model, messages, timeout=timeout, max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            if settings.PROVIDER == "openrouter" and user_id:
+                try:
+                    record_usage(user_id, provider="openrouter", category="llm",
+                                 model=self.resolve_model(model), usage=result.get("usage") or {},
+                                 generation_id=result.get("generation_id"))
+                except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
+                    logger.warning("Falha ao registrar usage do LLM: %s", type(exc).__name__)
+            return result
+        finally:
+            try:
+                release_budget(hold)
+            except (OSError, sqlite3.Error, ValueError) as exc:
+                logger.warning("Reserva de custo LLM não liberada: %s", type(exc).__name__)
+
+    async def _chat_once_meta_inner(
         self,
         model: str,
         messages: list[dict],
@@ -353,12 +387,13 @@ class LLMClient:
             if settings.PROVIDER == "openrouter":
                 choices = data.get("choices") or []
                 if not choices:
-                    return {"text": "", "finish_reason": None, "usage": data.get("usage") or {}}
+                    return {"text": "", "finish_reason": None, "usage": data.get("usage") or {}, "generation_id": data.get("id")}
                 choice = choices[0] or {}
                 return {
                     "text": str((choice.get("message") or {}).get("content") or "").strip(),
                     "finish_reason": choice.get("finish_reason"),
                     "usage": data.get("usage") or {},
+                    "generation_id": data.get("id"),
                 }
             return {
                 "text": str((data.get("message") or {}).get("content") or "").strip(),
@@ -369,6 +404,46 @@ class LLMClient:
 
     # ---- streaming com eventos (agente) -------------------------------------
     async def stream_events(
+        self, model: str, messages: list[dict], *, tools: Optional[list[dict]] = None,
+        raw: bool = False, max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+    ) -> AsyncIterator[dict]:
+        """Registra uma cobrança por chamada, não por chunk SSE ou token."""
+        user_id = usage_owner()
+        hold = None
+        try:
+            try:
+                hold = reserve_budget(user_id, category="llm")
+            except BudgetExceeded as exc:
+                raise LLMError(429, str(exc)) from exc
+            last_usage = None
+            generation_id = None
+            received_any = False
+            try:
+                async for event in self._stream_events_inner(
+                    model, messages, tools=tools, raw=raw,
+                    max_tokens=max_tokens, temperature=temperature,
+                ):
+                    received_any = True
+                    if event.get("type") == "usage":
+                        last_usage = event.get("usage")
+                        generation_id = event.get("generation_id") or generation_id
+                    yield event
+            finally:
+                if received_any and settings.PROVIDER == "openrouter" and user_id:
+                    try:
+                        record_usage(user_id, provider="openrouter", category="llm",
+                                     model=self.resolve_model(model), usage=last_usage or {},
+                                     generation_id=generation_id)
+                    except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
+                        logger.warning("Falha ao registrar streaming LLM: %s", type(exc).__name__)
+        finally:
+            try:
+                release_budget(hold)
+            except (OSError, sqlite3.Error, ValueError) as exc:
+                logger.warning("Reserva de streaming LLM não liberada: %s", type(exc).__name__)
+
+    async def _stream_events_inner(
         self,
         model: str,
         messages: list[dict],
