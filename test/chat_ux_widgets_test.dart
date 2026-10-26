@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gama/services/settings_service.dart';
 import 'package:gama/widgets/chat_composer.dart';
@@ -11,6 +13,72 @@ Widget _testApp(Widget child) => MaterialApp(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('ChatComposer: envio no Windows', () {
+    setUp(() => debugDefaultTargetPlatformOverride = TargetPlatform.windows);
+    tearDown(() => debugDefaultTargetPlatformOverride = null);
+
+    testWidgets('Enter chama envio com texto; Shift+Enter nao envia', (tester) async {
+      var enviados = 0;
+      final controller = TextEditingController();
+      final focusNode = FocusNode();
+      await tester.pumpWidget(_testApp(ChatComposer(
+        controller: controller,
+        focusNode: focusNode,
+        isLoading: false,
+        isListening: false,
+        mode: GamaMode.conversar,
+        onAttach: () {},
+        onToggleListen: () {},
+        onSend: () => enviados++,
+        onSpeakSend: () {},
+        onModeChanged: (_) {},
+      )));
+      await tester.enterText(find.byType(TextField), 'Teste no Windows');
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+      expect(enviados, 0);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(enviados, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+      focusNode.dispose();
+      controller.dispose();
+    });
+
+    testWidgets('botao e Enter numerico acionam o mesmo envio', (tester) async {
+      var enviados = 0;
+      final controller = TextEditingController(text: 'Oi no Windows');
+      final focusNode = FocusNode();
+      await tester.pumpWidget(_testApp(ChatComposer(
+        controller: controller,
+        focusNode: focusNode,
+        isLoading: false,
+        isListening: false,
+        mode: GamaMode.conversar,
+        onAttach: () {},
+        onToggleListen: () {},
+        onSend: () => enviados++,
+        onSpeakSend: () {},
+        onModeChanged: (_) {},
+      )));
+      await tester.tap(find.byTooltip('Enviar mensagem'));
+      await tester.pump();
+      expect(enviados, 1);
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.numpadEnter);
+      await tester.pump();
+      expect(enviados, 2);
+      await tester.pumpWidget(const SizedBox.shrink());
+      focusNode.dispose();
+      controller.dispose();
+    });
+  });
 
   group('ChatComposer', () {
     testWidgets('envia ao tocar no botão de enviar', (tester) async {

@@ -9,6 +9,7 @@ void main() {
       'Gere uma foto de Saturno em versão futurista',
       'Crie uma variação original de uma cidade cyberpunk',
       'Transforme minha ideia em uma ilustração',
+      'Transforme essa descrição em uma imagem',
       'Desenhe uma versão minimalista de uma floresta',
       'Uma foto realista de uma mulher fictícia',
       'Faz uma imagem mais minimalista de Saturno',
@@ -30,12 +31,29 @@ void main() {
       'Refaça a última imagem com fundo azul',
       'Adicione estrelas nessa imagem',
       'Faz um pouco mais simples e minimalista',
+      'Faz mais minimalista',
       'Deixa mais clean e elegante',
       'Troca a cor do fundo',
       'Muda a paleta para azul',
     ]) {
       test(prompt, () {
         expect(ImageReferenceIntent.requiresPreviousImage(prompt), isTrue);
+      });
+    }
+  });
+
+  group('Regressão: mensagens comuns não podem bloquear o envio', () {
+    for (final message in <String>[
+      'tudo bem?',
+      'Olá, Gamma!',
+      'Me ajude a resolver um bug no Flutter',
+      'Quanto é 2 + 2?',
+      'Você pode explicar o código?',
+      'Faz um resumo do texto abaixo',
+      'Oi!\nTudo bem?',
+    ]) {
+      test(message, () {
+        expect(ImageReferenceIntent.requiresPreviousImage(message), isFalse);
       });
     }
   });

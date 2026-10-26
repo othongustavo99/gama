@@ -44,11 +44,13 @@ class ImageReferenceIntent {
   );
 
   static final RegExp _contextualFollowUp = RegExp(
-    r'(?is)^\s*(?:por favor[,:!\s]*)?(?:'
-    r'(?:faz|fa[cç]a|deixa|deixe|torna|torne|quero|prefiro)\b[\s\S]{0,120}?\b(?:mais|menos)\s+'
+    r'^\s*(?:por favor[,:!\s]*)?(?:'
+    r'(?:faz|fa[cç]a|deixa|deixe|torna|torne|quero|prefiro)\b[\s\S]{0,120}?\b(?:(?:um\s+)?pouco\s+)?(?:mais|menos)\s+'
     r'(?:simples?|minimalista|clean|escur[oa]|clar[oa]|vibrante|suave|forte|'
     r'detalhad[oa]|realista|cartunesc[oa]|futurista|moderno|elegante|'
-    r'colorid[oa]|s[oó]brio|dram[aá]tic[oa])\b'
+    r'colorid[oa]|s[oó]brio|dram[aá]tic[oa])\b(?:\s+e\s+'
+    r'(?:simples?|minimalista|clean|elegante|moderno|realista|vibrante|suave|'
+    r's[oó]brio|colorid[oa]|clar[oa]|escur[oa]))?'
     r'|(?:troca|troque|muda|mude|altera|altere|ajusta|ajuste|simplifica|'
     r'simplifique|refa[cç]a|recrie)\b[\s\S]{0,80}?\b(?:cor(?:es)?|paleta|'
     r'fundo|estilo|luz|ilumina[cç][aã]o|contraste|satura[cç][aã]o|'
@@ -56,6 +58,17 @@ class ImageReferenceIntent {
     r'|(?:outra|nova)\s+vers[aã]o\b'
     r'|\bvaria[cç][aã]o\b'
     r')\s*$',
+    caseSensitive: false,
+  );
+
+  // "Transforme minha ideia em uma ilustração" descreve um projeto novo,
+  // não uma alteração em uma imagem já gerada.
+  static final RegExp _conceptToVisual = RegExp(
+    r'\b(?:transforma|transforme|transformar)\s+'
+    r'(?:(?:a|essa|esta)\s+)?(?:minha|uma|essa|esta)?\s*'
+    r'(?:ideia|descri[cç][aã]o|conceito)\b[\s\S]{0,120}?'
+    r'\b(?:em|numa?|para)\s+(?:uma?\s+)?'
+    r'(?:imagem|ilustra[cç][aã]o|foto|desenho|arte|logo|[ií]cone)\b',
     caseSensitive: false,
   );
 
@@ -71,6 +84,7 @@ class ImageReferenceIntent {
     final request = text.trim();
     if (request.isEmpty || _information.hasMatch(request)) return false;
     if (_explicitReference.hasMatch(request)) return true;
+    if (_conceptToVisual.hasMatch(request)) return false;
 
     final hasExplicitNewCreation =
         _newCreation.hasMatch(request) && _mediaNoun.hasMatch(request);

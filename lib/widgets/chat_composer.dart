@@ -104,9 +104,13 @@ class ChatComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shortcuts = <ShortcutActivator, Intent>{
-      if (_usesDesktopEnterShortcut)
+      if (_usesDesktopEnterShortcut) ...{
+        // Enter envia; Shift+Enter permanece livre para inserir nova linha.
         const SingleActivator(LogicalKeyboardKey.enter):
             const _SendMessageIntent(),
+        const SingleActivator(LogicalKeyboardKey.numpadEnter):
+            const _SendMessageIntent(),
+      },
     };
 
     final slashCommands =
@@ -530,7 +534,7 @@ class ChatComposer extends StatelessWidget {
                                               : canSend
                                               ? () {
                                                   HapticFeedback.lightImpact();
-                                                  onSend();
+                                                  _submitIfPossible();
                                                 }
                                               : null,
                                           child: SizedBox(

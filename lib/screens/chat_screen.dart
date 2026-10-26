@@ -103,6 +103,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _videoGenerateAudio = true;
   String? _beforeImagePath;
   bool _isLoading = false;
+  // Protege o intervalo assíncrono entre o clique/Enter e o início do stream.
+  bool _submittingMessage = false;
   String _streamPhase = '';
   final Map<String, List<Map<String, dynamic>>> _artifactsByMessageId = {};
   final Map<String, String> _videoPathsByArtifactId = {};
@@ -2556,6 +2558,10 @@ class _ChatScreenState extends State<ChatScreen> {
           setState(() {
             _processingAttachment = false;
             _processingLabel = null;
+            // Um anexo que falhou não entra em _attachments: o erro já foi
+            // mostrado ao usuário. Não mantenha botão/Enter desativados
+            // indefinidamente após a falha (especialmente no Windows).
+            _attachmentProcessingFailed = false;
           });
         }
         if (ready != null && !ready.isCompleted) ready.complete();
@@ -2861,7 +2867,44 @@ class _ChatScreenState extends State<ChatScreen> {
     await _sendMessage();
   }
 
+  /// Ponto único de entrada para botão, Enter, sugestões e ditado.
+  /// Falhas antes do stream (preferências, Hive etc.) também devem ser
+  /// visíveis: no Windows eram exceções fora do catch da geração.
   Future<void> _sendMessage() async {
+    if (_submittingMessage || _isLoading || _waitingForAttachment) return;
+    _submittingMessage = true;
+    final originalDraft = _controller.text;
+    try {
+      await _sendMessageImpl();
+    } catch (error, stack) {
+      debugPrint('Gamma: falha ao preparar envio: $error');
+      debugPrintStack(stackTrace: stack);
+      _stopGenerationClock();
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _streamPhase = '';
+          _speakNextReply = false;
+          _voiceResponsePending = false;
+          _isSpeaking = false;
+          _chatErrorMessage =
+              'Falha ao preparar o envio. Confira o console do Flutter.';
+        });
+        // Se o campo já tiver sido limpo, preserve o rascunho para reenvio.
+        if (_controller.text.isEmpty && originalDraft.trim().isNotEmpty) {
+          _controller.text = originalDraft;
+          _controller.selection = TextSelection.collapsed(
+            offset: originalDraft.length,
+          );
+        }
+        _snack('Não foi possível iniciar o envio. Veja o erro no terminal.');
+      }
+    } finally {
+      _submittingMessage = false;
+    }
+  }
+
+  Future<void> _sendMessageImpl() async {
     if (_isLoading || _waitingForAttachment) return;
 
     // Continuidade visual: a API precisa receber os bytes da imagem de
@@ -2922,7 +2965,26 @@ class _ChatScreenState extends State<ChatScreen> {
     var rawText = _controller.text.trim();
     if ((rawText.isEmpty && _attachments.isEmpty) || _isLoading) return;
 
-    final pluginFlags = await PluginSettingsService.instance.load();
+    // SharedPreferences pode falhar em uma instalação Desktop com plugins
+    // não registrados. Um envio de TEXTO não depende desses toggles:
+    // degrade com segurança, sem habilitar rede/memória/arquivos extras.
+    late final Map<String, bool> pluginFlags;
+    try {
+      pluginFlags = await PluginSettingsService.instance.load()
+          .timeout(const Duration(seconds: 5));
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'carregar preferências antes do envio');
+      pluginFlags = <String, bool>{
+        'web_search': false,
+        'memory': false,
+        'attachments': false,
+        'vision': false,
+        'code_analyzer': false,
+        'tts': false,
+        'scheduled': false,
+      };
+      debugPrint('Gamma: preferências de plugins indisponíveis; envio de texto com recursos opcionais desativados.');
+    }
     if (_attachments.isNotEmpty && pluginFlags['attachments'] == false) {
       _snack(
         'Anexos está desativado em Plugins. Ative o recurso para enviar arquivos.',
@@ -3047,7 +3109,15 @@ class _ChatScreenState extends State<ChatScreen> {
         _isLoading = true;
         _streamPhase = 'thinking';
       });
-      await _service.addMessage(userMessage);
+      try {
+        await _service.addMessage(userMessage)
+            .timeout(const Duration(seconds: 7));
+      } catch (error, stack) {
+        // O chat utiliza _messages em memória para montar a requisição.
+        // Um bloqueio do Hive/sync no Windows não deve impedir a API de receber.
+        logSwallowed(error, stack, context: 'salvar mensagem local');
+        _snack('Histórico local indisponível; tentando enviar normalmente.');
+      }
     } else {
       setState(() {
         _isLoading = true;
@@ -3087,10 +3157,15 @@ class _ChatScreenState extends State<ChatScreen> {
       _voiceReplyDisplayedText.value = '';
     });
     try {
-      await ConversationSyncService.instance.trackPendingGeneration(
-        conversationId: widget.conversationId,
-        assistantMessageId: assistantMessage.id,
-      );
+      try {
+        await ConversationSyncService.instance.trackPendingGeneration(
+          conversationId: widget.conversationId,
+          assistantMessageId: assistantMessage.id,
+        ).timeout(const Duration(seconds: 5));
+      } catch (error, stack) {
+        // Checkpoint de recuperação é auxiliar, não pré-requisito do chat.
+        logSwallowed(error, stack, context: 'checkpoint da geração');
+      }
       final apiMessages = <Message>[
         for (final m in _messages)
           if (m.content.isNotEmpty)

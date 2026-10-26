@@ -1012,7 +1012,8 @@ List<_CodePart> _splitStableParagraphs(List<_CodePart> parts) {
   final output = <_CodePart>[];
   final blank = RegExp(r'\r?\n[ \t]*\r?\n');
   final structural = RegExp(
-    r'(?m)^(?:[ \t]{4}|\t|[ \t]{0,3}(?:[-+*][ \t]+|\d+[.)][ \t]+|>[ \t]?|#{1,6}[ \t]+|~~~|```|---[ \t]*$|\[.+\]:|<))',
+    r'^(?:[ \t]{4}|\t|[ \t]{0,3}(?:[-+*][ \t]+|\d+[.)][ \t]+|>[ \t]?|#{1,6}[ \t]+|~~~|```|---[ \t]*$|\[.+\]:|<))',
+    multiLine: true,
   );
   for (final part in parts) {
     if (part.isCode || part.isOpenCode || part.content.isEmpty) {
