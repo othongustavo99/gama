@@ -10,6 +10,7 @@ import '../services/local_account_scope.dart';
 import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
 import '../core/design_tokens.dart';
+import '../core/responsive_layout.dart';
 import '../models/conversation.dart';
 import '../models/oficina_kind.dart';
 import '../services/conversation_service.dart';
@@ -95,7 +96,10 @@ class _OficinaScreenState extends State<OficinaScreen> {
             codeComparisonLanguage: kind == OficinaKind.programar
                 ? widget.initialLanguage
                 : null,
-            persistentSidebar: defaultTargetPlatform == TargetPlatform.windows,
+            persistentSidebar: GamaResponsiveLayout.showPersistentSidebar(
+              isWindows: defaultTargetPlatform == TargetPlatform.windows,
+              windowWidth: MediaQuery.sizeOf(context).width,
+            ),
           ),
         ),
       ),
@@ -116,7 +120,10 @@ class _OficinaScreenState extends State<OficinaScreen> {
           child: ChatScreen(
             conversationId: conversation.id,
             oficinaKind: kind,
-            persistentSidebar: defaultTargetPlatform == TargetPlatform.windows,
+            persistentSidebar: GamaResponsiveLayout.showPersistentSidebar(
+              isWindows: defaultTargetPlatform == TargetPlatform.windows,
+              windowWidth: MediaQuery.sizeOf(context).width,
+            ),
           ),
         ),
       ),
@@ -133,9 +140,13 @@ class _OficinaScreenState extends State<OficinaScreen> {
       child: ColoredBox(
         color: g.background,
         child: LayoutBuilder(
-          builder: (context, _) {
-            final desktop = defaultTargetPlatform == TargetPlatform.windows;
-            final columns = desktop ? 3 : 1;
+          builder: (context, constraints) {
+            // Use a largura *disponível* após a barra lateral, não apenas o SO.
+            final columns = GamaResponsiveLayout.oficinaColumns(
+              constraints.maxWidth,
+            );
+            final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+            final cardHeight = textScale > 1.25 ? 365.0 : 320.0;
             final conversations = [
               ...ConversationService.instance.pinnedConversations,
               ...ConversationService.instance.recentConversations,
@@ -202,7 +213,7 @@ class _OficinaScreenState extends State<OficinaScreen> {
                           crossAxisCount: columns,
                           crossAxisSpacing: 16,
                           mainAxisSpacing: 16,
-                          mainAxisExtent: desktop ? 300 : 290,
+                          mainAxisExtent: cardHeight,
                         ),
                         delegate: SliverChildBuilderDelegate((context, index) {
                           final kind = OficinaKind.values[index];
@@ -311,11 +322,12 @@ class _OficinaScaffold extends StatelessWidget {
 
   const _OficinaScaffold({required this.child, this.title});
 
-  bool get _desktop => defaultTargetPlatform == TargetPlatform.windows;
-
   @override
   Widget build(BuildContext context) {
-    final desktop = _desktop;
+    final desktop = GamaResponsiveLayout.showPersistentSidebar(
+      isWindows: defaultTargetPlatform == TargetPlatform.windows,
+      windowWidth: MediaQuery.sizeOf(context).width,
+    );
     final service = ConversationService.instance;
     final drawer = AppDrawer(
       persistent: desktop,
@@ -464,18 +476,19 @@ class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
     final g = context.gama;
     final kind = widget.kind;
     final color = kind.color(g);
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
 
     return AnimatedOpacity(
-      opacity: _visible ? 1 : 0,
-      duration: const Duration(milliseconds: 360),
+      opacity: (_visible || reduceMotion) ? 1 : 0,
+      duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 360),
       curve: Curves.easeOut,
       child: AnimatedSlide(
-        offset: _visible ? Offset.zero : const Offset(0, 0.08),
-        duration: const Duration(milliseconds: 360),
+        offset: (_visible || reduceMotion) ? Offset.zero : const Offset(0, 0.08),
+        duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 360),
         curve: Curves.easeOutCubic,
         child: AnimatedScale(
           scale: _pressed ? 0.98 : 1,
-          duration: const Duration(milliseconds: 110),
+          duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 110),
           curve: Curves.easeOut,
           child: Material(
             color: g.surfaceCard,

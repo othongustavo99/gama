@@ -12,6 +12,8 @@ import '../services/download_service.dart';
 import '../services/local_account_scope.dart';
 import '../widgets/video_jobs_panel.dart';
 import '../widgets/recovery_panel.dart';
+import '../widgets/gama_section_intro.dart';
+import '../widgets/gama_empty_panel.dart';
 import '../utils/error_logger.dart';
 import '../utils/library_filter.dart';
 
@@ -436,6 +438,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
       body: Column(
         children: [
+          if (MediaQuery.sizeOf(context).width >= 720)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 16, 24, 5),
+              child: GamaSectionIntro(
+                title: 'Suas entregas',
+                description: 'Arquivos locais e tarefas recuperáveis da Gamma.',
+                icon: Icons.folder_open_rounded,
+              ),
+            ),
           VideoJobsPanel(onLibraryChanged: _load),
           RecoveryPanel(onLibraryChanged: _load),
           if (_loadError != null)
@@ -504,18 +515,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     child: filtered.isEmpty
                         ? ListView(children: [
                             SizedBox(
-                              height: 220,
-                              child: Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(24),
-                                  child: Text(
-                                    _items.isEmpty
-                                        ? 'Sua Biblioteca está vazia.\nAnexe arquivos no chat ou crie algo na Oficina.'
-                                        : 'Nenhum arquivo corresponde à busca ou filtro.',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(color: context.gama.textMuted),
-                                  ),
-                                ),
+                              height: 250,
+                              child: GamaEmptyPanel(
+                                icon: _items.isEmpty
+                                    ? Icons.folder_open_outlined
+                                    : Icons.manage_search_rounded,
+                                title: _items.isEmpty
+                                    ? 'Sua Biblioteca está vazia'
+                                    : 'Nenhum arquivo encontrado',
+                                description: _items.isEmpty
+                                    ? 'Anexe um arquivo na conversa ou crie algo na Oficina. As entregas aparecerão aqui.'
+                                    : 'Altere a pesquisa ou escolha outra categoria.',
                               ),
                             ),
                           ])

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
-import '../widgets/gama_orb.dart';
+import '../widgets/gama_brand_mark.dart';
 import '../services/auth_service.dart';
 import '../services/account_privacy_service.dart';
 import '../services/identity_service.dart';
@@ -67,23 +67,74 @@ class _SplashScreenState extends State<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final g = context.gama;
     return Scaffold(
-      backgroundColor: context.gama.background,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(
-            'assets/images/image.jpeg',
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
-          ),
-          Positioned(
-            bottom: 53,
-            left: 0,
-            right: 0,
-            child: Center(child: const GamaOrb(size: 84)),
-          ),
-        ],
+      backgroundColor: g.background,
+      body: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Uma única composição responsiva, sem recortar a imagem vertical
+            // em janelas largas ou em dispositivos com formatos incomuns.
+            Positioned(
+              left: -110,
+              top: -130,
+              child: IgnorePointer(
+                child: Container(
+                  width: 340,
+                  height: 340,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(colors: [
+                      g.accentGlow,
+                      g.background.withValues(alpha: 0),
+                    ]),
+                  ),
+                ),
+              ),
+            ),
+            Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const GamaBrandMark(size: 96),
+                      const SizedBox(height: 24),
+                      Text('Gamma',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: g.textPrimary, fontSize: 30,
+                          fontWeight: FontWeight.w700, letterSpacing: -0.7),
+                      ),
+                      const SizedBox(height: 9),
+                      Text('Converse, crie e trabalhe com inteligência.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: g.textSecondary, fontSize: 14,
+                          height: 1.5),
+                      ),
+                      const SizedBox(height: 34),
+                      SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.1,
+                          color: g.accent,
+                          semanticsLabel: 'Preparando a Gamma',
+                        ),
+                      ),
+                      const SizedBox(height: 11),
+                      Text('Preparando seu espaço',
+                        style: TextStyle(color: g.textMuted, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

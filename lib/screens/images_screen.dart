@@ -9,6 +9,8 @@ import '../core/gama_colors.dart';
 import '../utils/error_logger.dart';
 import '../utils/library_filter.dart';
 import '../widgets/loading_skeleton.dart';
+import '../widgets/gama_section_intro.dart';
+import '../widgets/gama_empty_panel.dart';
 import 'library_screen.dart';
 
 /// Galeria leve sobre a mesma Biblioteca; não cria cópias adicionais.
@@ -82,6 +84,15 @@ class _ImagesScreenState extends State<ImagesScreen> {
           ? const GamaSkeletonGrid(itemCount: 6)
           : Column(
               children: [
+                if (MediaQuery.sizeOf(context).width >= 720)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(24, 16, 24, 0),
+                    child: GamaSectionIntro(
+                      title: 'Galeria',
+                      description: 'Suas imagens geradas e recebidas em um só lugar.',
+                      icon: Icons.collections_outlined,
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                   child: TextField(
@@ -116,16 +127,17 @@ class _ImagesScreenState extends State<ImagesScreen> {
                               ? ListView(children: [
                                   SizedBox(
                                     height: 250,
-                                    child: Center(child: Padding(
-                                      padding: const EdgeInsets.all(24),
-                                      child: Text(
-                                        _items.isEmpty
-                                            ? 'Nenhuma imagem por enquanto.\nAnexe ou crie uma imagem na Gamma.'
-                                            : 'Nenhuma imagem encontrada.',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(color: context.gama.textMuted),
-                                      ),
-                                    )),
+                                    child: GamaEmptyPanel(
+                                      icon: _items.isEmpty
+                                          ? Icons.image_outlined
+                                          : Icons.manage_search_rounded,
+                                      title: _items.isEmpty
+                                          ? 'Sua galeria está vazia'
+                                          : 'Nenhuma imagem encontrada',
+                                      description: _items.isEmpty
+                                          ? 'Crie imagens na Oficina ou envie uma imagem na conversa.'
+                                          : 'Tente pesquisar com outro nome.',
+                                    ),
                                   ),
                                 ])
                               : LayoutBuilder(builder: (context, constraints) {

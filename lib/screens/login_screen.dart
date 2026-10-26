@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
+import '../widgets/gama_brand_mark.dart';
 import '../core/launch_policy.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/auth_service.dart';
@@ -187,7 +188,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         border: Border.all(color: context.gama.borderSoft),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.25),
+                            color: context.gama.textPrimary.withValues(alpha: 0.07),
                             blurRadius: 32,
                             offset: const Offset(0, 16),
                           ),
@@ -196,28 +197,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Container(
-                            width: 78,
-                            height: 78,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: context.gama.surfaceCard,
-                              borderRadius: BorderRadius.circular(24),
-                              border: Border.all(color: context.gama.border),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: context.gama.accent.withValues(
-                                    alpha: 0.13,
-                                  ),
-                                  blurRadius: 24,
-                                ),
-                              ],
-                            ),
-                            child: Image.asset(
-                              'assets/images/image3.png',
-                              fit: BoxFit.contain,
-                            ),
-                          ),
+                          const GamaBrandMark(size: 78),
                           const SizedBox(height: 20),
                           Text(
                             'Gamma',

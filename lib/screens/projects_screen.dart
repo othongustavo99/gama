@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
 import '../services/conversation_service.dart';
+import '../widgets/gama_empty_panel.dart';
+import '../widgets/gama_section_intro.dart';
 
 /// Projetos = conversas fixadas / espaços de trabalho leves.
 class ProjectsScreen extends StatelessWidget {
@@ -22,55 +24,28 @@ class ProjectsScreen extends StatelessWidget {
         builder: (context, _) {
           final pinned = service.pinnedConversations;
           if (pinned.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 64,
-                      height: 64,
-                      decoration: BoxDecoration(
-                        color: context.gama.accentSoft,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Icon(
-                        Icons.folder_special_rounded,
-                        color: context.gama.accent,
-                        size: 32,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      'Nenhum projeto ainda',
-                      style: TextStyle(
-                        color: context.gama.textPrimary,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Fixe uma conversa no menu ⋮ do histórico (drawer) '
-                      'para ela aparecer aqui como espaço de trabalho.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: context.gama.textMuted,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            return const GamaEmptyPanel(
+              icon: Icons.folder_special_outlined,
+              title: 'Nenhum projeto ainda',
+              description: 'Fixe uma conversa no menu do histórico para encontrá-la aqui como espaço de trabalho.',
             );
           }
           return ListView.separated(
             padding: const EdgeInsets.all(16),
-            itemCount: pinned.length,
+            itemCount: pinned.length + 1,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (_, i) {
-              final c = pinned[i];
+              if (i == 0) {
+                return const Padding(
+                  padding: EdgeInsets.fromLTRB(8, 8, 8, 14),
+                  child: GamaSectionIntro(
+                    title: 'Projetos fixados',
+                    description: 'Encontre rapidamente suas conversas de trabalho.',
+                    icon: Icons.folder_special_outlined,
+                  ),
+                );
+              }
+              final c = pinned[i - 1];
               final updated = c.updatedAt;
               final dd = updated.day.toString().padLeft(2, '0');
               final mm = updated.month.toString().padLeft(2, '0');
