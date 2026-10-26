@@ -257,24 +257,54 @@ def build_context(
         )
         return "\n".join(parts)
 
-    # Teto por arquivo. Mesmo arquivos explicitamente pedidos dividem o orçamento
-    # total, para que a montagem do contexto não ultrapasse o limite do provedor.
+    # O orçamento pertence ao conjunto dos arquivos pedidos, não ao primeiro.
+    # Antes, forced_budget podia ser igual a *todo* o espaço restante para cada
+    # arquivo. Um main.dart longo consumia tudo e os providers/repos seguintes
+    # recebiam só trechos ou nem apareciam, apesar de estarem no ZIP.
     FULL_FILE_CAP = 200_000
     FORCED_CAP = 80_000
-
-    n_forced = max(len(forced), 1)
     n_others = max(len(others), 1)
 
-    if full_intent and forced:
-        # quase todo o orçamento para os forced
-        forced_budget = min(FULL_FILE_CAP, max(remaining - 500, remaining // n_forced))
-        other_budget = max(400, (remaining - forced_budget * len(forced)) // n_others) if others else 0
-    elif forced:
-        forced_budget = min(FORCED_CAP, max(3000, remaining // (n_forced + max(n_others // 2, 1))))
-        other_budget = max(600, (remaining - forced_budget * len(forced)) // n_others) if others else 0
-    else:
-        forced_budget = 0
-        other_budget = max(800, remaining // max(len(selected), 1))
+    def _balanced_forced_caps(items: list[dict[str, Any]], total: int) -> list[int]:
+        """Water-filling: inclui arquivos curtos integralmente e divide o resto."""
+        needs = [
+            min(FULL_FILE_CAP, len(str(item.get("text") or item.get("preview") or "")))
+            for item in items
+        ]
+        allocated = [0 for _ in needs]
+        active = set(range(len(needs)))
+        available = max(0, total)
+        while active and available > 0:
+            per_file = available // len(active)
+            if per_file <= 0:
+                break
+            completed = [i for i in active if needs[i] - allocated[i] <= per_file]
+            if completed:
+                for i in completed:
+                    added = max(0, needs[i] - allocated[i])
+                    allocated[i] += added
+                    available -= added
+                    active.remove(i)
+            else:
+                for i in active:
+                    allocated[i] += per_file
+                    available -= per_file
+                break
+        return allocated
+
+    forced_caps: list[int] = []
+    if forced:
+        # Reserve cabeçalhos, marcadores de truncamento e relatório de cobertura.
+        overhead = len(forced) * 320 + 1_300
+        if full_intent:
+            available_for_forced = max(0, remaining - overhead)
+        else:
+            available_for_forced = max(0, remaining * 2 // 3 - overhead)
+        forced_caps = _balanced_forced_caps(forced, available_for_forced)
+    # Os demais arquivos só usam a sobra; nunca retiram orçamento do pedido.
+    allocated_forced = sum(forced_caps)
+    other_available = max(0, remaining - allocated_forced - len(forced) * 320 - 1_300)
+    other_budget = max(400, other_available // n_others) if others else 0
 
     parts.append("\n--- Arquivos relevantes ---")
     evidence_entries: list[str] = []
@@ -364,10 +394,10 @@ def build_context(
         return True
 
     # Requested files first; large sources are represented by explicit excerpts.
-    for item in forced:
+    for i, item in enumerate(forced):
         ok = _append_file(
             item,
-            cap=forced_budget if forced_budget else FORCED_CAP,
+            cap=max(400, forced_caps[i]) if i < len(forced_caps) else 400,
         )
         if not ok and not full_intent:
             break

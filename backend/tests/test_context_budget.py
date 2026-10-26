@@ -70,6 +70,34 @@ class ContextBudgetTests(unittest.TestCase):
         self.assertIn("mensagem atual abreviada", latest)
         self.assertGreater(len(latest), 20)
 
+    def test_code_analyzer_system_source_not_clipped_at_12000_chars(self):
+        code = "[Code Analyzer — contexto selecionado]\n" + "a" * 17000 + "MIDDLE_SOURCE_MARKER" + "b" * 17000
+        messages = [
+            {"role": "system", "content": "PROMPT PRINCIPAL"},
+            {"role": "system", "content": code},
+            {"role": "user", "content": "Corrija os arquivos"},
+        ]
+        result, report = budget_messages_with_report(
+            messages, max_message_chars=12000, max_last_user_chars=100000,
+            max_total_chars=80000,
+        )
+        self.assertIn("MIDDLE_SOURCE_MARKER", result[1]["content"])
+        self.assertEqual(result[1]["content"], code)
+        self.assertEqual(report["truncated_parts"], 0)
+        self.assertLessEqual(report["sent_chars"], 80000)
+
+    def test_other_long_system_text_keeps_regular_limit(self):
+        messages = [
+            {"role": "system", "content": "PROMPT PRINCIPAL"},
+            {"role": "system", "content": "outro contexto " + "X" * 40000},
+            {"role": "user", "content": "oi"},
+        ]
+        result, report = budget_messages_with_report(
+            messages, max_message_chars=12000, max_total_chars=80000,
+        )
+        self.assertLess(len(result[1]["content"]), 13000)
+        self.assertGreater(report["truncated_parts"], 0)
+
     def test_raw_tool_budget_preserves_tool_protocol(self):
         messages = [
             {"role": "system", "content": "root"},

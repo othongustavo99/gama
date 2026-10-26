@@ -30,6 +30,10 @@ def _env_int(name: str, default: int, *, minimum: int = 1, maximum: int = 5_000_
 MAX_MESSAGE_CHARS = _env_int("GAMA_LLM_MAX_MESSAGE_CHARS", 12_000, minimum=256)
 MAX_LAST_USER_CHARS = _env_int("GAMA_LLM_MAX_LAST_USER_CHARS", 100_000, minimum=256)
 MAX_TOTAL_INPUT_CHARS = _env_int("GAMA_LLM_MAX_TOTAL_INPUT_CHARS", 280_000, minimum=1_024)
+# Code Analyzer coloca arquivos já selecionados em um system separado. Não
+# aplique o limite geral de 12 mil caracteres a esse contexto de evidências.
+# Seu limite próprio ainda respeita o orçamento total do provedor.
+MAX_CODE_CONTEXT_CHARS = _env_int("GAMA_LLM_MAX_CODE_CONTEXT_CHARS", 180_000, minimum=12_000)
 CONTEXT_MAX_MESSAGES = _env_int("GAMA_CONTEXT_MAX_MESSAGES", 48, minimum=4, maximum=2_000)
 CONTEXT_KEEP_RECENT = _env_int("GAMA_CONTEXT_KEEP_RECENT", 24, minimum=1, maximum=1_000)
 CONTEXT_SUMMARY_MAX_CHARS = _env_int("GAMA_CONTEXT_SUMMARY_MAX_CHARS", 2_500, minimum=256)
@@ -54,6 +58,21 @@ def _strip_heavy_content(text: str, max_chars: int = MAX_MESSAGE_CHARS) -> str:
         back = max(1, max_chars - front)
         text = text[:front] + _TRUNCATION_MARKER + text[-back:]
     return text
+
+
+def _is_code_analyzer_context(text: str) -> bool:
+    """Reconhece somente os blocos de sistema gerados pelo Code Analyzer.
+
+    O prefixo do context_builder inclui uma instrução de segurança e depois
+    o cabeçalho Code Analyzer; procuramos no início para não elevar o limite
+    de outro tipo de conteúdo que apenas mencione o nome do Analyzer.
+    """
+    prefix = (text or "")[:1600]
+    return ("[Code Analyzer" in prefix or "[Project Analyzer" in prefix) and (
+        prefix.startswith("Instrução de segurança:")
+        or prefix.startswith("[Code Analyzer")
+        or prefix.startswith("[Project Analyzer")
+    )
 
 
 def _clip_latest_user(text: str, max_chars: int = MAX_LAST_USER_CHARS) -> str:
@@ -96,6 +115,25 @@ def budget_messages_with_report(
         -1,
     )
 
+    # Reserva um espaço mínimo para as instruções e a pergunta atuais. Mesmo
+    # um projeto extenso não pode expulsá-las por consumir todo o orçamento.
+    first_system_source = next(
+        (m for m in source if (m.get("role") or "") == "system"), None
+    )
+    base_size = min(
+        _text_size(first_system_source.get("content")) if first_system_source else 0,
+        max_message_chars,
+    )
+    latest_size = min(
+        _text_size(source[last_user].get("content")) if last_user >= 0 else 0,
+        max_last_user_chars,
+    )
+    reserve = min(2_048, max_total_chars // 12)
+    code_context_budget = max(
+        0,
+        min(MAX_CODE_CONTEXT_CHARS, max_total_chars - base_size - latest_size - reserve),
+    )
+
     cleaned: list[dict] = []
     truncated_count = 0
     for i, original in enumerate(source):
@@ -114,7 +152,12 @@ def budget_messages_with_report(
                     new_text = (
                         _clip_latest_user(original_text, max_last_user_chars)
                         if is_last_user
-                        else _strip_heavy_content(original_text, max_message_chars)
+                        else _strip_heavy_content(
+                            original_text,
+                            code_context_budget
+                            if role == "system" and i != 0 and _is_code_analyzer_context(original_text)
+                            else max_message_chars,
+                        )
                     )
                     if new_text != original_text:
                         truncated_count += 1
@@ -126,7 +169,12 @@ def budget_messages_with_report(
             new_text = (
                 _clip_latest_user(original_text, max_last_user_chars)
                 if is_last_user
-                else _strip_heavy_content(original_text, max_message_chars)
+                else _strip_heavy_content(
+                    original_text,
+                    code_context_budget
+                    if role == "system" and i != 0 and _is_code_analyzer_context(original_text)
+                    else max_message_chars,
+                )
             )
             if new_text != original_text:
                 truncated_count += 1
