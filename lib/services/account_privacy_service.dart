@@ -11,6 +11,7 @@ import 'local_notification_service.dart';
 import 'conversation_service.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
+import 'local_account_scope.dart';
 
 /// Endpoints protegidos por ID token Google, nunca por X-User-Id do cliente.
 class AccountPrivacyService {
@@ -97,6 +98,7 @@ class AccountPrivacyService {
   /// atuais são compartilhados no dispositivo, por isso a interface avisa que
   /// esses arquivos locais serão apagados mesmo se houve outras sessões.
   Future<void> clearDeviceAfterDeletion({bool keepGoogleSession = false}) async {
+    final scope = LocalAccountScope.current();
     final identity = IdentityService.instance;
     final savedUserId = identity.userId;
     final savedDisplayName = identity.displayName;
@@ -114,16 +116,34 @@ class AccountPrivacyService {
     }
     await ConversationService.instance.clearLocalForAccountDeletion();
     final docs = await getApplicationDocumentsDirectory();
-    final library = Directory(p.join(docs.path, 'gama_library'));
+    final library = Directory(p.join(docs.path, scope.libraryDirectoryName));
     if (await library.exists()) await library.delete(recursive: true);
     // Downloads internos são privados do app. Arquivos exportados para pastas
     // externas de usuário (Downloads padrão) não podem ser apagados aqui.
-    final internalDownloads = Directory(p.join(docs.path, 'GamaDownloads'));
+    final internalDownloads = Directory(p.join(docs.path, scope.internalDownloadsDirectoryName));
     if (await internalDownloads.exists()) {
       await internalDownloads.delete(recursive: true);
     }
     final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    // Nunca apague preferências / biblioteca de outras contas neste dispositivo.
+    await prefs.remove(scope.libraryPrefsKey);
+    await prefs.remove(scope.pendingGenerationsPrefsKey);
+    await prefs.remove(scope.remindersPrefsKey);
+    await prefs.remove('gama_memory_migrate_from');
+    await prefs.remove('gama_memory_migrate_from_numeric');
+    final draftKeys = prefs.getKeys()
+        .where((key) => key.startsWith(scope.draftPrefix)).toList();
+    for (final key in draftKeys) {
+      await prefs.remove(key);
+    }
+    for (final key in prefs.getKeys().toList()) {
+      if (key.startsWith(scope.feedbackPrefix) ||
+          (key.endsWith(savedUserId) &&
+          (key.startsWith('gama_sync_') ||
+           key.startsWith('gama_pending_message_deletes_')))) {
+        await prefs.remove(key);
+      }
+    }
     await identity.clearAll();
     if (keepGoogleSession && savedUserId.startsWith('google_')) {
       await identity.setSession(

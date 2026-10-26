@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/local_account_scope.dart';
 
 import '../core/gama_colors.dart';
 import '../utils/error_logger.dart';
@@ -41,7 +42,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
     if (mounted) setState(() => _loading = true);
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString('gama_library') ?? '[]';
+      final raw = prefs.getString(LocalAccountScope.current().libraryPrefsKey) ?? '[]';
       final list = (jsonDecode(raw) as List)
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))

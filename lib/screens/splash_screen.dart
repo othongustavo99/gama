@@ -7,6 +7,7 @@ import '../widgets/gama_orb.dart';
 import '../services/auth_service.dart';
 import '../services/account_privacy_service.dart';
 import '../services/identity_service.dart';
+import '../services/conversation_service.dart';
 import 'home_screen.dart';
 import 'login_screen.dart';
 
@@ -46,6 +47,9 @@ class _SplashScreenState extends State<SplashScreen> {
       }
     }
 
+    if (allowed) {
+      await ConversationService.instance.activateForCurrentIdentity();
+    }
     if (!mounted) return;
 
     final next = allowed ? const HomeScreen() : const LoginScreen();

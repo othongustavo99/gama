@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import 'conversation_sync_service.dart';
+import 'local_account_scope.dart';
+import 'local_notification_service.dart';
 
 class ConversationService extends ChangeNotifier {
   ConversationService._();
@@ -20,7 +22,9 @@ class ConversationService extends ChangeNotifier {
   final Map<String, String> _drafts = <String, String>{};
   final Set<String> _pendingConversationDeletes = <String>{};
   final Map<String, Timer> _conversationDeleteTimers = <String, Timer>{};
-  static const _draftPrefix = 'gama_chat_draft_';
+  LocalAccountScope _scope = LocalAccountScope.current();
+  bool _initialized = false;
+  String get _draftPrefix => _scope.draftPrefix;
 
   String? get currentConversationId => _currentConversationId;
 
@@ -43,8 +47,30 @@ class ConversationService extends ChangeNotifier {
   }
 
   Future<void> init() async {
-    _conversationsBox = await Hive.openBox<Conversation>('conversations');
-    _messagesBox = await Hive.openBox<Message>('messages');
+    final next = LocalAccountScope.current();
+    if (_initialized && next.key == _scope.key) return;
+    if (_initialized) {
+      if (_scope.key != next.key) {
+        try {
+          await LocalNotificationService.instance.cancelRemindersFrom(_scope);
+        } catch (error) {
+          debugPrint('Não consegui cancelar lembretes da sessão anterior: $error');
+        }
+      }
+      for (final timer in _conversationDeleteTimers.values) {
+        timer.cancel();
+      }
+      _conversationDeleteTimers.clear();
+      _pendingConversationDeletes.clear();
+      _drafts.clear();
+      _currentConversationId = null;
+      await _conversationsBox.close();
+      await _messagesBox.close();
+    }
+    _scope = next;
+    _conversationsBox = await Hive.openBox<Conversation>(_scope.conversationsBox);
+    _messagesBox = await Hive.openBox<Message>(_scope.messagesBox);
+    _initialized = true;
 
     final prefs = await SharedPreferences.getInstance();
     for (final key in prefs.getKeys()) {
@@ -63,6 +89,14 @@ class ConversationService extends ChangeNotifier {
     if (_conversationsBox.isEmpty) {
       await createConversation(title: 'Nova conversa');
     }
+  }
+
+  /// Troca para as caixas da sessão autenticada antes de abrir o Home.
+  /// NUNCA copia caixas legadas sem prova de propriedade.
+  Future<void> activateForCurrentIdentity() async {
+    await init();
+    ConversationSyncService.instance.resetAfterIdentityChange();
+    notifyListeners();
   }
 
   /// Apaga dados locais sem acionar deleções remotas nem timers pendentes.

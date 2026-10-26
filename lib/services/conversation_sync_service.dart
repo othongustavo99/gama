@@ -11,6 +11,7 @@ import '../models/message.dart';
 import 'conversation_service.dart';
 import 'identity_service.dart';
 import 'settings_service.dart';
+import 'local_account_scope.dart';
 import '../utils/error_logger.dart';
 import '../utils/conversation_sync_planner.dart';
 
@@ -34,11 +35,17 @@ class ConversationSyncService {
   bool _syncing = false;
   bool _syncingPendingGenerations = false;
   DateTime? _lastFullSync;
-  static const _pendingGenerationsKey = 'gama_pending_generations';
+  String get _pendingGenerationsKey =>
+      LocalAccountScope.current().pendingGenerationsPrefsKey;
   static const _pendingDeletesPrefix = 'gama_pending_message_deletes_';
   static const _remoteRevisionsPrefix = 'gama_sync_remote_revisions_v3_';
   static const _uploadedSnapshotsPrefix = 'gama_sync_uploaded_snapshots_v3_';
   Future<void> _pendingDeleteQueue = Future<void>.value();
+
+  /// As checkpoints/timers lógicos não podem ser reutilizados após troca de conta.
+  void resetAfterIdentityChange() {
+    _lastFullSync = null;
+  }
 
   Future<bool> _hasGoogleSession() async {
     if (IdentityService.instance.provider != 'google') return false;

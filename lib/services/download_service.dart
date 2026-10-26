@@ -13,6 +13,7 @@ import '../core/constants.dart';
 import 'auth_service.dart';
 import 'auth_interceptor.dart';
 import 'identity_service.dart';
+import 'local_account_scope.dart';
 import 'settings_service.dart';
 import '../utils/error_logger.dart';
 
@@ -36,7 +37,7 @@ class DownloadService {
       }
     }
     final docs = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(docs.path, 'GamaDownloads'));
+    final dir = Directory(p.join(docs.path, LocalAccountScope.current().internalDownloadsDirectoryName));
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
   }

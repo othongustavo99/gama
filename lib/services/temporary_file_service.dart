@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'conversation_service.dart';
+import 'local_account_scope.dart';
 import '../utils/error_logger.dart';
 
 /// Remove somente sobras conhecidas da Gama, nunca anexos do usuário,
@@ -30,7 +31,7 @@ class TemporaryFileService {
 
       final docs = await getApplicationDocumentsDirectory();
       await _cleanupDir(
-        Directory(p.join(docs.path, 'GamaDownloads')),
+        Directory(p.join(docs.path, LocalAccountScope.current().internalDownloadsDirectoryName)),
         _partName,
         now.subtract(const Duration(days: 7)),
       );

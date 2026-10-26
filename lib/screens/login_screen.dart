@@ -7,6 +7,7 @@ import '../services/auth_service.dart';
 import '../services/account_privacy_service.dart';
 import '../services/identity_service.dart';
 import '../services/memory_service.dart';
+import '../services/conversation_service.dart';
 import 'home_screen.dart';
 import '../utils/error_logger.dart';
 
@@ -47,8 +48,9 @@ class _LoginScreenState extends State<LoginScreen> {
         // Uma sessão antiga em outro aparelho não reativa uma conta apagada.
         final accountStatus = await AccountPrivacyService.instance.status();
         if (accountStatus == 'deleted') {
-          // Histórico Hive e biblioteca são locais e compartilhados entre
-          // sessões; jamais sincronizar dados da conta apagada em outra conta.
+          // Troca as caixas ANTES da limpeza; jamais apagar o histórico
+          // de outra conta que tenha usado este mesmo dispositivo.
+          await ConversationService.instance.activateForCurrentIdentity();
           await AccountPrivacyService.instance.clearDeviceAfterDeletion(
             keepGoogleSession: true,
           );
@@ -88,6 +90,7 @@ class _LoginScreenState extends State<LoginScreen> {
         } catch (error, stack) {
           logSwallowed(error, stack);
         }
+        await ConversationService.instance.activateForCurrentIdentity();
         await _goHome();
       } else {
         setState(() {

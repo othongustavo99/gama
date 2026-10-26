@@ -101,6 +101,17 @@ def canonical_google_user_id(*, google_id: str, email: str | None) -> str:
     return f"google_{gid}"
 
 
+def canonical_user_from_verified_google_claims(payload: dict) -> str:
+    """Somente `sub` e e-mail comprovado podem derivar um namespace persistente."""
+    gid = str(payload.get("sub") or "").strip()
+    email = str(payload.get("email") or "").strip()
+    if not gid:
+        raise PermissionError("perfil Google sem id")
+    if email and payload.get("email_verified", payload.get("verified_email")) not in (True, "true", "True", 1):
+        raise PermissionError("e-mail da conta Google não verificado")
+    return canonical_google_user_id(google_id=gid, email=email)
+
+
 async def verify_google_id_token(token: str) -> str:
     """Valida ID token, incluindo issuer, validade e audiência do app."""
     allowed_client_ids = google_oauth_client_ids()
@@ -128,15 +139,7 @@ async def verify_google_id_token(token: str) -> str:
         allowed_audiences=allowed_client_ids,
         allowed_authorized_parties=google_oauth_authorized_party_ids(),
     )
-    gid = str(payload.get("sub") or "").strip()
-    email = str(payload.get("email") or "").strip()
-    # Se o provedor indicar explicitamente que o e-mail não é verificado,
-    # não podemos usar esse endereço como namespace de dados.
-    if str(payload.get("email_verified", payload.get("verified_email", "true"))).lower() == "false":
-        raise PermissionError("e-mail da conta Google não verificado")
-    if not gid:
-        raise PermissionError("perfil Google sem id")
-    return canonical_google_user_id(google_id=gid, email=email)
+    return canonical_user_from_verified_google_claims(payload)
 
 
 async def verify_google_legacy_user_id(token: str) -> str:

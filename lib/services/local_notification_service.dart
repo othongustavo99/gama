@@ -9,6 +9,7 @@ import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../utils/error_logger.dart';
+import 'local_account_scope.dart';
 
 /// Agendamento local dos lembretes salvos na tela Agendado.
 /// As notificações não dependem do backend nem de o PC estar ligado.
@@ -16,7 +17,7 @@ class LocalNotificationService {
   LocalNotificationService._();
   static final LocalNotificationService instance = LocalNotificationService._();
 
-  static const String remindersKey = 'gama_local_reminders';
+  static String get remindersKey => LocalAccountScope.current().remindersPrefsKey;
   static const String channelId = 'gama_reminders';
   static const String channelName = 'Lembretes da Gama';
 
@@ -166,6 +167,22 @@ class LocalNotificationService {
     if (kIsWeb) return;
     await initialize();
     await _plugin.cancel(id: _notificationId(id));
+  }
+
+  /// Ao trocar de usuário, cancelar apenas alarmes da conta anterior,
+  /// sem remover os dados salvos dela nem os agendamentos das demais contas.
+  Future<void> cancelRemindersFrom(LocalAccountScope scope) async {
+    if (kIsWeb) return;
+    await initialize();
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(scope.remindersPrefsKey);
+    if (raw == null) return;
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return;
+    for (final reminder in decoded.whereType<Map>()) {
+      final id = reminder['id']?.toString() ?? '';
+      if (id.isNotEmpty) await _plugin.cancel(id: _notificationId(id));
+    }
   }
 
   Future<void> syncSavedReminders({required bool enabled}) async {

@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
 import '../services/download_service.dart';
+import '../services/local_account_scope.dart';
 import '../widgets/video_jobs_panel.dart';
 import '../utils/error_logger.dart';
 import '../utils/library_filter.dart';
@@ -30,7 +31,7 @@ class LibraryScreen extends StatefulWidget {
     if ((sourcePath != null && sourcePath.isNotEmpty) || sourceBytes != null) {
       try {
         final dir = await getApplicationDocumentsDirectory();
-        final libDir = Directory(p.join(dir.path, 'gama_library'));
+        final libDir = Directory(p.join(dir.path, LocalAccountScope.current().libraryDirectoryName));
         if (!await libDir.exists()) {
           await libDir.create(recursive: true);
         }
@@ -61,7 +62,7 @@ class LibraryScreen extends StatefulWidget {
         ? await File(savedPath).length()
         : (sourceBytes?.length ?? bytes);
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('gama_library') ?? '[]';
+    final raw = prefs.getString(LocalAccountScope.current().libraryPrefsKey) ?? '[]';
     // Nunca substitui uma biblioteca existente se seus metadados estiverem
     // ilegíveis. O conteúdo antigo precisa permanecer recuperável.
     final list = (jsonDecode(raw) as List)
@@ -77,7 +78,7 @@ class LibraryScreen extends StatefulWidget {
       if (conversationId != null) 'conversationId': conversationId,
     });
     // Não descartar os metadados mais antigos (nem deixar arquivos órfãos).
-    await prefs.setString('gama_library', jsonEncode(list));
+    await prefs.setString(LocalAccountScope.current().libraryPrefsKey, jsonEncode(list));
     return savedPath;
   }
 
@@ -268,7 +269,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString('gama_library') ?? '[]';
+      final raw = prefs.getString(LocalAccountScope.current().libraryPrefsKey) ?? '[]';
       final list = (jsonDecode(raw) as List)
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
@@ -333,9 +334,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final dir = await getApplicationDocumentsDirectory();
-      final libDir = Directory(p.join(dir.path, 'gama_library'));
+      final libDir = Directory(p.join(dir.path, LocalAccountScope.current().libraryDirectoryName));
       if (await libDir.exists()) await libDir.delete(recursive: true);
-      if (!await prefs.setString('gama_library', '[]')) {
+      if (!await prefs.setString(LocalAccountScope.current().libraryPrefsKey, '[]')) {
         throw const FileSystemException('Falha ao atualizar o índice local');
       }
       if (mounted) {
@@ -364,7 +365,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     setState(() => _busy = true);
     try {
       final prefs = await SharedPreferences.getInstance();
-      final all = (jsonDecode(prefs.getString('gama_library') ?? '[]') as List)
+      final all = (jsonDecode(prefs.getString(LocalAccountScope.current().libraryPrefsKey) ?? '[]') as List)
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
@@ -374,14 +375,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
           candidate['path'] == entry['path'] &&
           candidate['at'] == entry['at'];
       all.removeWhere(isSame);
-      if (!await prefs.setString('gama_library', jsonEncode(all))) {
+      if (!await prefs.setString(LocalAccountScope.current().libraryPrefsKey, jsonEncode(all))) {
         throw const FileSystemException('Não foi possível salvar o índice');
       }
       var cleanupFailed = false;
       if (path != null && path.isNotEmpty &&
           !all.any((e) => e['path'] == path)) {
         final root = await getApplicationDocumentsDirectory();
-        final ownedDir = p.join(root.path, 'gama_library');
+        final ownedDir = p.join(root.path, LocalAccountScope.current().libraryDirectoryName);
         // Nunca apagar diretamente arquivos anexados fora da pasta da Gamma.
         if (p.isWithin(ownedDir, path)) {
           try {

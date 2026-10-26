@@ -43,6 +43,7 @@ import '../utils/message_sanitize.dart';
 import '../services/tts_service.dart';
 import '../services/plugin_settings_service.dart';
 import '../services/identity_service.dart';
+import '../services/local_account_scope.dart';
 import 'oficina_screen.dart';
 import '../utils/error_logger.dart';
 import '../utils/speech_recovery_policy.dart';
@@ -352,7 +353,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _loadFeedback() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final prefix = 'gama_message_feedback_';
+      final prefix = LocalAccountScope.current().feedbackPrefix;
       final loaded = <String, int>{};
       for (final key in prefs.getKeys()) {
         if (!key.startsWith(prefix)) continue;
@@ -378,7 +379,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     try {
       final prefs = await SharedPreferences.getInstance();
-      final key = 'gama_message_feedback_${message.id}';
+      final key = '${LocalAccountScope.current().feedbackPrefix}${message.id}';
       if (next == 0) {
         await prefs.remove(key);
       } else {

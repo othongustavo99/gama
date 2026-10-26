@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/local_account_scope.dart';
 
 import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
@@ -57,7 +58,7 @@ class _OficinaScreenState extends State<OficinaScreen> {
 
   Future<List<Map<String, dynamic>>> _loadLibrary() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('gama_library') ?? '[]';
+    final raw = prefs.getString(LocalAccountScope.current().libraryPrefsKey) ?? '[]';
     try {
       return (jsonDecode(raw) as List)
           .whereType<Map>()

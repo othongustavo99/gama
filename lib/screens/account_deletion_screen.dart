@@ -82,7 +82,7 @@ class _AccountDeletionScreenState extends State<AccountDeletionScreen> {
           const SizedBox(height: 12),
           const Text('Também serão apagados neste dispositivo: histórico local, '
               'rascunhos, biblioteca e arquivos internos do aplicativo. '
-              'Se houver dados locais de outras sessões, eles também serão removidos.'),
+              'Os dados locais de outras contas autenticadas serão preservados.'),
           const SizedBox(height: 12),
           const Text('Arquivos que você exportou para Downloads ou outros locais '
               'fora do aplicativo não serão excluídos. Backups externos e dados '

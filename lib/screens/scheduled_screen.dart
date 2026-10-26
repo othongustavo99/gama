@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../core/gama_colors.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/local_notification_service.dart';
+import '../services/local_account_scope.dart';
 import '../services/plugin_settings_service.dart';
 import '../utils/error_logger.dart';
 
@@ -47,7 +48,7 @@ class ScheduledScreen extends StatefulWidget {
 }
 
 class _ScheduledScreenState extends State<ScheduledScreen> {
-  static const _prefsKey = 'gama_local_reminders';
+  String get _prefsKey => LocalAccountScope.current().remindersPrefsKey;
   final _uuid = const Uuid();
   List<_Reminder> _items = [];
   bool _loading = true;

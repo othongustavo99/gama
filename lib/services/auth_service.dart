@@ -19,7 +19,6 @@ import '../utils/error_logger.dart';
 /// Credenciais via --dart-define (não commitar secrets):
 ///   GOOGLE_SERVER_CLIENT_ID
 ///   GOOGLE_DESKTOP_CLIENT_ID
-///   GOOGLE_DESKTOP_CLIENT_SECRET
 ///
 /// userId gravado pelo IdentityService: google_email_<email-normalizado>.
 /// O backend valida o Bearer e deriva a mesma identidade canônica.
@@ -27,6 +26,8 @@ class AuthService {
   AuthService._();
   static final AuthService instance = AuthService._();
   static const _desktopRefreshTokenKey = 'google_desktop_refresh_token';
+  static const _desktopRefreshOwnerKey = 'google_desktop_refresh_owner';
+  static const _desktopRefreshClientKey = 'google_desktop_refresh_client_id';
   static const _secureStorage = FlutterSecureStorage();
 
   static const String serverClientId = String.fromEnvironment(
@@ -36,11 +37,6 @@ class AuthService {
 
   static const String desktopClientId = String.fromEnvironment(
     'GOOGLE_DESKTOP_CLIENT_ID',
-    defaultValue: '',
-  );
-
-  static const String desktopClientSecret = String.fromEnvironment(
-    'GOOGLE_DESKTOP_CLIENT_SECRET',
     defaultValue: '',
   );
 
@@ -93,6 +89,8 @@ class AuthService {
   /// protegido pelo armazenamento seguro do sistema; no mobile pede ao plugin
   /// Google uma sessão silenciosa atualizada.
   Future<String?> refreshBearerToken() async {
+    if (!IdentityService.instance.isLoggedIn ||
+        IdentityService.instance.provider != 'google') return null;
     if (isDesktop) return _refreshDesktopIdToken(force: true);
     try {
       final account = await _google.signInSilently(suppressErrors: false);
@@ -125,17 +123,20 @@ class AuthService {
       return _idToken;
     }
     try {
-      final refreshToken = await _secureStorage.read(
-        key: _desktopRefreshTokenKey,
-      );
+      final owner = await _secureStorage.read(key: _desktopRefreshOwnerKey);
+      final client = await _secureStorage.read(key: _desktopRefreshClientKey);
+      final identity = IdentityService.instance;
+      // Tokens de versões antigas sem proprietário validado não são reutilizados.
+      if (owner == null || owner != identity.googleNumericId ||
+          client != desktopClientId || !identity.isLoggedIn ||
+          identity.provider != 'google') return null;
+      final refreshToken = await _secureStorage.read(key: _desktopRefreshTokenKey);
       if (refreshToken == null || refreshToken.isEmpty) return null;
       final body = <String, String>{
         'client_id': desktopClientId,
         'grant_type': 'refresh_token',
         'refresh_token': refreshToken,
       };
-      final secret = desktopClientSecret.trim();
-      if (secret.isNotEmpty) body['client_secret'] = secret;
       final response = await http.post(
         Uri.parse('https://oauth2.googleapis.com/token'),
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
@@ -144,6 +145,8 @@ class AuthService {
       if (response.statusCode != 200) {
         if (response.statusCode == 400 || response.statusCode == 401) {
           await _secureStorage.delete(key: _desktopRefreshTokenKey);
+          await _secureStorage.delete(key: _desktopRefreshOwnerKey);
+          await _secureStorage.delete(key: _desktopRefreshClientKey);
           _idToken = null;
           _idTokenExpiry = null;
         }
@@ -235,14 +238,11 @@ class AuthService {
   }
 
   Future<bool> _signInDesktop() async {
-    final clientId = desktopClientId?.trim();
-    final clientSecret = desktopClientSecret?.trim();
+    final clientId = desktopClientId.trim();
 
-    if (clientId == null || clientId.isEmpty) {
-      throw StateError(
-        'Windows: passe --dart-define=GOOGLE_DESKTOP_CLIENT_ID=...\n'
-        'e GOOGLE_DESKTOP_CLIENT_SECRET=... (OAuth tipo Desktop no Google Cloud).',
-      );
+    if (clientId.isEmpty) {
+      throw StateError('Windows: configure GOOGLE_DESKTOP_CLIENT_ID '
+          '(cliente OAuth do tipo Aplicativo para computador).');
     }
 
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -253,14 +253,6 @@ class AuthService {
         .encode(sha256.convert(utf8.encode(codeVerifier)).bytes)
         .replaceAll('=', '');
 
-    String? existingRefreshToken;
-    try {
-      existingRefreshToken = await _secureStorage.read(
-        key: _desktopRefreshTokenKey,
-      );
-    } catch (e) {
-      debugPrint('secure storage read: $e');
-    }
     final authUri = Uri.https('accounts.google.com', '/o/oauth2/v2/auth', {
       'client_id': clientId,
       'redirect_uri': redirectUri,
@@ -270,9 +262,7 @@ class AuthService {
       'code_challenge': codeChallenge,
       'code_challenge_method': 'S256',
       'access_type': 'offline',
-      'prompt': existingRefreshToken == null || existingRefreshToken.isEmpty
-          ? 'select_account consent'
-          : 'select_account',
+      'prompt': 'select_account consent',
     });
 
     final completer = Completer<String?>();
@@ -280,13 +270,13 @@ class AuthService {
     server.listen((request) async {
       try {
         final q = request.uri.queryParameters;
-        if (q['state'] != null && q['state'] != state) {
+        if (request.method != 'GET' || request.uri.path != '/' ||
+            q['state'] != state) {
           request.response
             ..statusCode = 400
             ..headers.contentType = ContentType.html
             ..write('<html><body>State inválido.</body></html>');
           await request.response.close();
-          if (!completer.isCompleted) completer.complete(null);
           return;
         }
         if (q['error'] != null) {
@@ -299,6 +289,14 @@ class AuthService {
           return;
         }
         final code = q['code'];
+        if (code == null || code.isEmpty) {
+          request.response
+            ..statusCode = 400
+            ..write('Codigo de autorizacao ausente');
+          await request.response.close();
+          if (!completer.isCompleted) completer.complete(null);
+          return;
+        }
         request.response
           ..statusCode = 200
           ..headers.contentType = ContentType.html
@@ -313,7 +311,8 @@ class AuthService {
       } catch (e) {
         if (!completer.isCompleted) completer.completeError(e);
       } finally {
-        await server.close(force: true);
+        // Callback externo inválido não pode encerrar o listener legítimo.
+        if (completer.isCompleted) await server.close(force: true);
       }
     });
 
@@ -340,9 +339,6 @@ class AuthService {
       'grant_type': 'authorization_code',
       'code_verifier': codeVerifier,
     };
-    if (clientSecret != null && clientSecret.isNotEmpty) {
-      body['client_secret'] = clientSecret;
-    }
 
     final tokenRes = await http.post(
       Uri.parse('https://oauth2.googleapis.com/token'),
@@ -350,23 +346,12 @@ class AuthService {
       body: body,
     );
     if (tokenRes.statusCode != 200) {
-      throw StateError(
-        'Token Google (${tokenRes.statusCode}): ${tokenRes.body}',
-      );
+      throw StateError('O Google recusou a autenticação '
+          '(HTTP ${tokenRes.statusCode}). Confira o cliente OAuth Desktop.');
     }
 
     final tokenJson = jsonDecode(tokenRes.body) as Map<String, dynamic>;
     final refreshToken = tokenJson['refresh_token']?.toString();
-    if (refreshToken != null && refreshToken.isNotEmpty) {
-      try {
-        await _secureStorage.write(
-          key: _desktopRefreshTokenKey,
-          value: refreshToken,
-        );
-      } catch (e) {
-        debugPrint('secure storage write: $e');
-      }
-    }
     final idToken = tokenJson['id_token'] as String?;
     if (idToken == null || idToken.isEmpty) {
       throw StateError(
@@ -382,7 +367,7 @@ class AuthService {
       headers: {'Authorization': 'Bearer ${tokenJson['access_token']}'},
     );
     if (userRes.statusCode != 200) {
-      throw StateError('Perfil Google: ${userRes.body}');
+      throw StateError('Não consegui consultar o perfil Google (HTTP ${userRes.statusCode}).');
     }
 
     final user = jsonDecode(userRes.body) as Map<String, dynamic>;
@@ -395,6 +380,23 @@ class AuthService {
       email: user['email']?.toString(),
       photoUrl: user['picture']?.toString(),
     );
+    // Só vincular o token de renovação após conhecer a identidade que
+    // realmente concluiu o login. Troca de Google invalida a sessão anterior.
+    try {
+      final existingOwner = await _secureStorage.read(key: _desktopRefreshOwnerKey);
+      final existingClient = await _secureStorage.read(key: _desktopRefreshClientKey);
+      if (existingOwner != id || existingClient != clientId) {
+        await _secureStorage.delete(key: _desktopRefreshTokenKey);
+      }
+      if (refreshToken != null && refreshToken.isNotEmpty) {
+        await _secureStorage.write(key: _desktopRefreshTokenKey, value: refreshToken);
+      }
+      await _secureStorage.write(key: _desktopRefreshOwnerKey, value: id);
+      await _secureStorage.write(key: _desktopRefreshClientKey, value: clientId);
+    } catch (e) {
+      // A sessão atual funciona mesmo se o Windows não persistir o token.
+      debugPrint('Não foi possível persistir a sessão: $e');
+    }
     return true;
   }
 
@@ -412,6 +414,8 @@ class AuthService {
     if (isDesktop) {
       try {
         await _secureStorage.delete(key: _desktopRefreshTokenKey);
+        await _secureStorage.delete(key: _desktopRefreshOwnerKey);
+        await _secureStorage.delete(key: _desktopRefreshClientKey);
       } catch (e) {
         debugPrint('secure storage delete: $e');
       }

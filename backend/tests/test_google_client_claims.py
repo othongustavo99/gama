@@ -4,10 +4,30 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.core.identity import validate_google_client_claims  # noqa: E402
+from app.core.identity import canonical_user_from_verified_google_claims, validate_google_client_claims  # noqa: E402
 
 
 class GoogleClientClaimsTest(unittest.TestCase):
+    def test_unverified_or_missing_email_claim_is_rejected(self):
+        for verified in [False, None, "false", 0]:
+            with self.subTest(verified=verified), self.assertRaises(PermissionError):
+                canonical_user_from_verified_google_claims({
+                    "sub": "123", "email": "user@example.com",
+                    "email_verified": verified,
+                })
+
+    def test_verified_email_matches_legacy_canonical_namespace(self):
+        self.assertEqual(
+            canonical_user_from_verified_google_claims({
+                "sub": "123", "email": "USER@EXAMPLE.COM", "email_verified": True,
+            }),
+            "google_email_user@example.com",
+        )
+        self.assertEqual(
+            canonical_user_from_verified_google_claims({"sub": "123"}),
+            "google_123",
+        )
+
     def test_native_authorized_party_is_separate_from_web_audience(self):
         validate_google_client_claims(
             {"aud": "web-client.apps.googleusercontent.com", "azp": "android-client.apps.googleusercontent.com"},
