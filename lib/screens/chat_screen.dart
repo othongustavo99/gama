@@ -31,6 +31,7 @@ import '../services/memory_service.dart';
 import '../services/ollama_service.dart';
 import 'library_screen.dart';
 import 'settings_screen.dart';
+import 'commercial_screen.dart';
 import '../widgets/message_content.dart';
 import '../widgets/chat_status_indicator.dart';
 import '../widgets/chat_composer.dart';
@@ -40,6 +41,7 @@ import '../widgets/loading_skeleton.dart';
 import '../services/settings_service.dart';
 import '../services/download_service.dart';
 import '../utils/message_sanitize.dart';
+import '../utils/commercial_limit_message.dart';
 import '../services/tts_service.dart';
 import '../services/plugin_settings_service.dart';
 import '../services/identity_service.dart';
@@ -1614,7 +1616,7 @@ class _ChatScreenState extends State<ChatScreen> {
       case 'typing':
         return 'Escrevendo a resposta…';
       default:
-        return 'Gama está respondendo…';
+        return 'Gamma está respondendo…';
     }
   }
 
@@ -3958,7 +3960,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                widget.oficinaKind?.label ?? 'Gama 2.0',
+                                widget.oficinaKind?.label ?? 'Gamma 2.0',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -4294,7 +4296,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                       explicitChildNodes: true,
                                       label: isUser
                                           ? 'Você disse'
-                                          : 'Gama respondeu',
+                                          : 'Gamma respondeu',
                                       child: GestureDetector(
                                         behavior: HitTestBehavior.translucent,
                                         onLongPress: () =>
@@ -4438,6 +4440,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                                               label:
                                                                   _chatErrorMessage!,
                                                               isError: true,
+                                                              onViewPlan:
+                                                                  CommercialLimitMessage.isPlanLimit(_chatErrorMessage)
+                                                                      ? () => Navigator.of(context).push(
+                                                                          GamaPageRoute(builder: (_) =>
+                                                                              const CommercialScreen()),
+                                                                        )
+                                                                      : null,
                                                               onRetry:
                                                                   _isLoading || !_failedRequestRetryable
                                                                   ? null

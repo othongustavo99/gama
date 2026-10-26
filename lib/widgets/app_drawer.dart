@@ -9,6 +9,7 @@ import '../services/identity_service.dart';
 import '../services/auth_service.dart';
 import '../screens/login_screen.dart';
 import '../screens/settings_screen.dart';
+import '../screens/commercial_screen.dart';
 import '../screens/memory_screen.dart';
 import '../utils/error_logger.dart';
 
@@ -434,6 +435,26 @@ class _AppDrawerState extends State<AppDrawer> {
 
             // ===== RODAPÉ =====
             Divider(color: context.gama.divider, height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+              child: ListTile(
+                leading: Icon(Icons.workspace_premium_outlined,
+                  color: context.gama.accent),
+                title: Text('Meu plano e consumo', style: TextStyle(
+                  color: context.gama.textPrimary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                )),
+                dense: true,
+                onTap: () {
+                  _close(context);
+                  Navigator.of(context).push(GamaPageRoute(
+                    builder: (_) => const CommercialScreen(),
+                  ));
+                },
+              ),
+            ),
+
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
               child: ListTile(

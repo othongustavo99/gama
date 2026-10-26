@@ -12,6 +12,7 @@ class ChatStatusIndicator extends StatelessWidget {
   final bool isError;
   final VoidCallback? onRetry;
   final VoidCallback? onContinue;
+  final VoidCallback? onViewPlan;
 
   const ChatStatusIndicator({
     super.key,
@@ -19,6 +20,7 @@ class ChatStatusIndicator extends StatelessWidget {
     this.isError = false,
     this.onRetry,
     this.onContinue,
+    this.onViewPlan,
   });
 
   @override
@@ -69,6 +71,17 @@ class ChatStatusIndicator extends StatelessWidget {
     );
 
     final actions = <Widget>[
+      if (onViewPlan != null)
+        TextButton.icon(
+          onPressed: onViewPlan,
+          icon: const Icon(Icons.workspace_premium_outlined, size: 17),
+          label: const Text('Ver meu plano'),
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            minimumSize: const Size(48, 48),
+          ),
+        ),
+
       if (onRetry != null)
         TextButton.icon(
           onPressed: onRetry,

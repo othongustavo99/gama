@@ -7,6 +7,7 @@ import '../core/constants.dart';
 import 'auth_interceptor.dart';
 import '../models/message.dart';
 import '../utils/message_sanitize.dart';
+import '../utils/commercial_limit_message.dart';
 import 'identity_service.dart';
 import 'location_service.dart';
 import 'settings_service.dart';
@@ -98,6 +99,13 @@ ChatApiException _friendlyDioException(DioException error) {
   if (status == 403) {
     return const ChatApiException(
       'A conta autenticada não tem permissão para esta operação.',
+      retryable: false,
+    );
+  }
+  if (status == 429 && boundedDetail != null &&
+      CommercialLimitMessage.isPlanLimit(boundedDetail)) {
+    return ChatApiException(
+      CommercialLimitMessage.display(boundedDetail),
       retryable: false,
     );
   }
@@ -478,6 +486,13 @@ class OllamaService {
             ),
             type: DioExceptionType.badResponse,
           ),
+        );
+      }
+      if (CommercialLimitMessage.isPlanLimit(error) ||
+          CommercialLimitMessage.isPlanLimit(detail)) {
+        throw ChatApiException(
+          CommercialLimitMessage.display(detail.isNotEmpty ? detail : error),
+          retryable: false,
         );
       }
       if (lowerError.contains('429') || lowerError.contains('rate limit')) {
