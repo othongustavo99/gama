@@ -131,6 +131,40 @@ _REFERENCED_VARIANT = re.compile(
     r"(?:imagem|foto|ilustra[cç][aã]o|figura|arte|desenho)\b"
 )
 
+# Pedidos curtos de continuidade visual como "faz mais simples" ou
+# "troca a cor" devem reutilizar a última imagem/briefing, não virar
+# uma criação totalmente nova e desconectada.
+_FOLLOWUP_VARIATION = re.compile(
+    r"(?is)^\s*(?:por\s+favor[,:!\s]*)?(?:"
+    r"(?:faz|fa[cç]a|deixa|deixe|torna|torne|quero|prefiro)\b[\s\S]{0,120}?\b(?:mais|menos)\s+"
+    r"(?:simples?|minimalista|clean|esc(?:ur|ur[ao])|clar(?:o|a)|vibrante|"
+    r"suave|forte|detalhad[oa]|realista|cartunesc[oa]|futurista|moderno|"
+    r"elegante|colorid[oa]|s[oó]brio|dram[aá]tic[oa])\b"
+    r"|(?:troca|troque|muda|mude|altera|altere|ajusta|ajuste|simplifica|"
+    r"simplifique|refa[cç]a|recrie)\b[\s\S]{0,80}?\b(?:cor(?:es)?|paleta|"
+    r"fundo|estilo|luz|ilumina[cç][aã]o|contraste|satura[cç][aã]o|"
+    r"composi[cç][aã]o|visual|detalhes?)\b"
+    r"|(?:outra|nova)\s+vers[aã]o\b"
+    r"|\bvaria[cç][aã]o\b"
+    r")\s*$"
+)
+
+_FOLLOWUP_ACTION = re.compile(
+    r"(?i)\b(faz|fa[cç]a|deixa|deixe|torna|torne|troca|troque|muda|mude|"
+    r"altera|altere|ajusta|ajuste|simplifica|simplifique|refa[cç]a|recrie)\b"
+)
+_FOLLOWUP_TRAIT = re.compile(
+    r"(?i)\b(mais|menos|simples?|minimalista|clean|escur[oa]?|clar[oa]?|"
+    r"vibrante|suave|forte|detalhad[oa]|realista|cartunesc[oa]|futurista|"
+    r"moderno|elegante|colorid[oa]|s[oó]brio|dram[aá]tic[oa]|cor(?:es)?|"
+    r"paleta|fundo|estilo|luz|ilumina[cç][aã]o|contraste|satura[cç][aã]o|"
+    r"composi[cç][aã]o|visual|detalhes?)\b"
+)
+_MEDIA_NOUN = re.compile(
+    r"(?i)\b(imagem|foto|ilustra[cç][aã]o|desenho|arte|logo|logotipo|"
+    r"[ií]cone|avatar|capa|p[oô]ster|banner|wallpaper|retrato)\b"
+)
+
 # Criar uma foto "em versão humana" é criação nova. Descritores como
 # "modifique o cabelo" dentro de um briefing novo não exigem imagem prévia.
 _CREATE_REQUEST = re.compile(
@@ -188,6 +222,41 @@ _PROGRAMMING_INSTRUCTION = re.compile(
     r"[\s\S]{0,100}?\b(?:gerar|criar|renderizar|processar)\s+"
     r"(?:uma?s?\s+)?(?:imagens?|fotos?|v[ií]deos?)\b"
 )
+
+
+def _new_creation_with_media(text: str) -> bool:
+    return bool(_CREATE_REQUEST.search(text) and _MEDIA_NOUN.search(text))
+
+
+def is_contextual_image_followup(user_text: str) -> bool:
+    """True quando o texto parece um refinamento/variação da imagem anterior."""
+    text = (user_text or "").strip()
+    if not text or len(text) < 4:
+        return False
+    if _INFO_REQUEST.search(text) or _NON_EXECUTION.search(text):
+        return False
+    if _REFERENCED_VARIANT.search(text):
+        return True
+    if _FOLLOWUP_VARIATION.search(text):
+        return True
+
+    has_explicit_new_creation = bool(_new_creation_with_media(text))
+    if has_explicit_new_creation:
+        return False
+
+    if re.search(r"(?i)\b(?:outra|nova)\s+vers[aã]o\b|\bvaria[cç][aã]o\b", text):
+        return True
+    if _FOLLOWUP_ACTION.search(text) and _FOLLOWUP_TRAIT.search(text):
+        return True
+    if re.search(
+        r"(?i)\b(?:mais|menos)(?:\s+um\s+pouco)?\s+"
+        r"(?:simples?|minimalista|clean|escura?|clara?|vibrante|suave|forte|"
+        r"detalhad[oa]|realista|cartunesc[oa]|futurista|moderno|elegante|"
+        r"s[oó]brio|dram[aá]tic[oa])\b",
+        text,
+    ):
+        return True
+    return False
 
 
 def detect_image_intent(
@@ -259,6 +328,16 @@ def detect_image_intent(
             intent=ImageIntent.GENERATE,
             prompt=_clean_prompt(text, mode="generate"),
             confidence=0.90,
+        )
+
+    # Follow-ups curtos como "faz mais simples" ou "troca a cor"
+    # devem continuar a última imagem quando houver referência visual
+    # disponível na mensagem atual (geralmente anexada automaticamente pelo app).
+    if is_contextual_image_followup(text):
+        return ImageRequest(
+            intent=ImageIntent.EDIT,
+            prompt=_clean_prompt(text, mode="edit"),
+            confidence=0.90 if has_attached_images else 0.74,
         )
 
     # 1. Análise pura (só se tiver imagem anexada e não pedir edição/geração)

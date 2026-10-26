@@ -25,7 +25,8 @@ class ImageReferenceIntent {
     r'inclui|inclua|incluir|transforma|transforme|transformar|'
     r'deixa|deixe|coloca|coloque|recorta|recorte|'
     r'melhora|melhore|melhorar|aprimora|aprimore|'
-    r'varia|varie|variar|refa[cç]a|recrie|regenere)\b',
+    r'varia|varie|variar|refa[cç]a|recrie|regenere|'
+    r'simplifica|simplifique|ajusta|ajuste|torna|torne)\b',
     caseSensitive: false,
   );
 
@@ -33,6 +34,28 @@ class ImageReferenceIntent {
     r'\b(?:cria|crie|criar|gera|gere|gerar|desenha|desenhe|'
     r'desenhar|imagina|imagine|imaginar|produza|produzir|'
     r'fa[cç]a|faz|fazer|quero|create|generate|draw|make)\b',
+    caseSensitive: false,
+  );
+
+  static final RegExp _mediaNoun = RegExp(
+    r'\b(?:imagem|foto|ilustra[cç][aã]o|desenho|arte|logo|logotipo|'
+    r'[ií]cone|avatar|capa|p[oô]ster|banner|wallpaper|retrato)\b',
+    caseSensitive: false,
+  );
+
+  static final RegExp _contextualFollowUp = RegExp(
+    r'(?is)^\s*(?:por favor[,:!\s]*)?(?:'
+    r'(?:faz|fa[cç]a|deixa|deixe|torna|torne|quero|prefiro)\b[\s\S]{0,120}?\b(?:mais|menos)\s+'
+    r'(?:simples?|minimalista|clean|escur[oa]|clar[oa]|vibrante|suave|forte|'
+    r'detalhad[oa]|realista|cartunesc[oa]|futurista|moderno|elegante|'
+    r'colorid[oa]|s[oó]brio|dram[aá]tic[oa])\b'
+    r'|(?:troca|troque|muda|mude|altera|altere|ajusta|ajuste|simplifica|'
+    r'simplifique|refa[cç]a|recrie)\b[\s\S]{0,80}?\b(?:cor(?:es)?|paleta|'
+    r'fundo|estilo|luz|ilumina[cç][aã]o|contraste|satura[cç][aã]o|'
+    r'composi[cç][aã]o|visual|detalhes?)\b'
+    r'|(?:outra|nova)\s+vers[aã]o\b'
+    r'|\bvaria[cç][aã]o\b'
+    r')\s*$',
     caseSensitive: false,
   );
 
@@ -48,6 +71,13 @@ class ImageReferenceIntent {
     final request = text.trim();
     if (request.isEmpty || _information.hasMatch(request)) return false;
     if (_explicitReference.hasMatch(request)) return true;
+
+    final hasExplicitNewCreation =
+        _newCreation.hasMatch(request) && _mediaNoun.hasMatch(request);
+    if (hasExplicitNewCreation) return false;
+
+    if (_contextualFollowUp.hasMatch(request)) return true;
+
     if (_newCreation.hasMatch(request)) return false;
     return _editAction.hasMatch(request);
   }

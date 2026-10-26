@@ -20,6 +20,7 @@ from ..core.image_gen import (
     generate_image,
     detect_image_intent,
     parse_image_aspect_ratio,
+    is_contextual_image_followup,
     ImageIntent,
 )
 from ..config import settings as app_settings
@@ -190,6 +191,8 @@ def _office_media_action(
                 return "generate"
             # Preserve edit intent without a reference so the image handler can
             # ask for the missing image instead of falling through to generate.
+            return "edit"
+        if is_contextual_image_followup(cleaned):
             return "edit"
         # Oficina Imagem é criação: até um briefing nominal curto é text-to-image.
         return "generate"
@@ -1423,11 +1426,14 @@ async def chat(
                         r"(?i)\b(?:outra\s+vers[aã]o|nova\s+vers[aã]o|varia[cç][aã]o|mais\s+escura?|mais\s+clara?)\b",
                         last_user,
                     ))
-                    if (image_intent in {ImageIntent.EDIT, ImageIntent.IMPROVE}
+                    contextual_followup = is_contextual_image_followup(last_user)
+                    if ((image_intent in {ImageIntent.EDIT, ImageIntent.IMPROVE}
                             and not has_image_refs and text_variation
-                            and previous_media.get("prompt")):
-                        # Só muda o briefing de uma nova imagem: sem pixels da
-                        # referência não se promete uma edição idêntica.
+                            and previous_media.get("prompt"))
+                            or (contextual_followup and not has_image_refs and previous_media.get("prompt"))):
+                        # Sem pixels da referência, reutilize ao menos o briefing
+                        # anterior para manter continuidade visual em follow-ups
+                        # como "faz mais simples" ou "troca a cor".
                         image_intent = ImageIntent.GENERATE
                         args["_variation_base"] = previous_media["prompt"]
                     if image_intent in {ImageIntent.EDIT, ImageIntent.IMPROVE} and not has_image_refs:

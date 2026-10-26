@@ -63,12 +63,15 @@ class MediaIntentMatrix(unittest.TestCase):
             ("Quero que a imagem se mexa", True, ("generate_video", "animate")),
             ("Melhore essa foto", True, ("generate_image", "improve")),
             ("Remova o fundo desta imagem", True, ("generate_image", "edit")),
+            ("Faz um pouco mais simples e minimalista", True, ("generate_image", "edit")),
+            ("Troca a cor do fundo", True, ("generate_image", "edit")),
             ("Edite este vídeo", False, ("generate_video", "edit")),
         )
         for prompt, image, expected in cases:
             with self.subTest(prompt=prompt):
                 self.assertEqual(select(prompt, image=image), expected)
         self.assertEqual(select("Uma praia à noite", "oficina_imagem"), ("generate_image", "generate"))
+        self.assertEqual(select("Faz um pouco mais simples e minimalista", "oficina_imagem"), ("generate_image", "edit"))
         self.assertEqual(select("Um trem na montanha", "oficina_video"), ("generate_video", "create"))
         self.assertEqual(select("Crie um vídeo de um lago", "oficina_imagem"), ("generate_video", "create"))
         self.assertEqual(select("Crie uma imagem de um lago", "oficina_video"), ("generate_image", "generate"))

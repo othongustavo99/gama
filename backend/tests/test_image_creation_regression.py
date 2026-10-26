@@ -26,6 +26,8 @@ class ImageCreationIntentRegressionTests(unittest.TestCase):
             'Faça uma variação da foto anterior',
             'Edite esta imagem',
             'Modifique a imagem anterior para ficar azul',
+            'Faz um pouco mais simples e minimalista',
+            'Troca a cor do fundo',
         ):
             with self.subTest(prompt=prompt):
                 self.assertEqual(
@@ -48,6 +50,10 @@ class ImageCreationIntentRegressionTests(unittest.TestCase):
     def test_pergunta_nao_inicia_geracao(self):
         self.assertIsNone(_office_media_action('oficina_imagem', 'Como crio uma imagem?',
                                                has_images=False, has_video=False))
+
+    def test_followup_curto_com_imagem_anexada_vira_edicao(self):
+        self.assertEqual(detect_image_intent('Faz um pouco mais simples e minimalista', True).intent, ImageIntent.EDIT)
+        self.assertEqual(detect_image_intent('Deixa mais clean e elegante', True).intent, ImageIntent.EDIT)
 
 # Exercita a rota de fato: pedido sem imagem de entrada deve chegar a
 # generate_image(reference_images=None), sem gerar cobrança real.

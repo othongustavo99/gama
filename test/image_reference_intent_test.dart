@@ -11,6 +11,7 @@ void main() {
       'Transforme minha ideia em uma ilustração',
       'Desenhe uma versão minimalista de uma floresta',
       'Uma foto realista de uma mulher fictícia',
+      'Faz uma imagem mais minimalista de Saturno',
     ]) {
       test(prompt, () {
         expect(ImageReferenceIntent.requiresPreviousImage(prompt), isFalse);
@@ -28,12 +29,17 @@ void main() {
       'Mude a cor dela',
       'Refaça a última imagem com fundo azul',
       'Adicione estrelas nessa imagem',
+      'Faz um pouco mais simples e minimalista',
+      'Deixa mais clean e elegante',
+      'Troca a cor do fundo',
+      'Muda a paleta para azul',
     ]) {
       test(prompt, () {
         expect(ImageReferenceIntent.requiresPreviousImage(prompt), isTrue);
       });
     }
   });
+
   test('Pergunta conceitual não inicia edição', () {
     expect(
       ImageReferenceIntent.requiresPreviousImage('Como editar uma imagem?'),
