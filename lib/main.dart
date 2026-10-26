@@ -16,6 +16,7 @@ import 'services/conversation_sync_service.dart';
 import 'services/settings_service.dart';
 import 'services/identity_service.dart';
 import 'services/temporary_file_service.dart';
+import 'services/play_billing_service.dart';
 
 const _gamaLightSystemUiOverlayStyle = SystemUiOverlayStyle(
   statusBarColor: Color(0xFFFFFFFF),
@@ -99,6 +100,7 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
       if (!mounted) return;
       unawaited(TemporaryFileService.instance.cleanupAbandonedFiles());
     });
+    unawaited(GammaPlayBillingService.instance.initialize());
     unawaited(ConversationSyncService.instance.syncPendingGenerations());
     _pendingGenerationSyncTimer = Timer.periodic(const Duration(seconds: 15), (
       _,

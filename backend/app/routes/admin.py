@@ -42,7 +42,13 @@ async def require_admin(user_id: str = Depends(current_user_id)) -> str:
 @router.get("/access")
 async def admin_access(_admin: str = Depends(require_admin)):
     """Sonda mínima para habilitar navegação; não expõe allowlist ou contas."""
-    return {"is_admin": True, "payments_active": False}
+    from ..core.store_billing import entitlements_enabled
+    return {"is_admin": True, "payments_active": entitlements_enabled()}
+
+
+def _billing_enabled() -> bool:
+    from ..core.store_billing import entitlements_enabled
+    return entitlements_enabled()
 
 
 @router.get("/overview")
@@ -53,7 +59,7 @@ async def commercial_overview(days: int = Query(default=7, ge=1, le=30), _admin:
         "media_reservations_note": "Reservations may include failed attempts; not confirmed provider costs.",
         "currency": None,
         "provider_cost_total": None,
-        "billing_enabled": False,
+        "billing_enabled": _billing_enabled(),
         "provider_usage": cost_overview(days),
     }
 

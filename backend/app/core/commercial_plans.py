@@ -115,10 +115,17 @@ def _plan_row(db: sqlite3.Connection, owner: str, now: datetime) -> tuple[str, s
         "SELECT plan_code,expires_at FROM plan_assignments WHERE owner=?", (owner,)
     ).fetchone()
     if not row:
-        return "free", None
-    code, expiry = row
-    if code not in CATALOG or (expiry and expiry <= now.isoformat()):
-        return "free", None
+        code, expiry = "free", None
+    else:
+        code, expiry = row
+        if code not in CATALOG or (expiry and expiry <= now.isoformat()):
+            code, expiry = "free", None
+    # Entitlement pertence ao backend, nunca ao cliente. Não altera os planos
+    # atribuídos manualmente; qualquer direito Play tem validade obrigatória.
+    from .store_billing import active_entitlement
+    paid = active_entitlement(owner)
+    if paid and {'free': 0, 'pro': 1, 'creator': 2}[paid[0]] > {'free': 0, 'pro': 1, 'creator': 2}[code]:
+        return paid
     return code, expiry
 
 
@@ -128,6 +135,11 @@ def _balance(db: sqlite3.Connection, owner: str) -> int:
 
 def public_catalog() -> list[dict]:
     return [{"code": code, "daily_limits_preview": dict(limits)} for code, limits in CATALOG.items()]
+
+
+def _payments_active() -> bool:
+    from .store_billing import entitlements_enabled
+    return entitlements_enabled()
 
 
 def account_snapshot(owner: str) -> dict:
@@ -155,10 +167,12 @@ def account_snapshot(owner: str) -> dict:
         "usage_today": {feature: counts.get(feature, 0) for feature in CATALOG[code]},
         "day_utc": day,
         "enforcement_active": enforcement_enabled(),
-        "payments_active": False,
+        "payments_active": _payments_active(),
         "limits_preview_only": not enforcement_enabled(),
-        "note": ("Franquias beta aplicadas, sem pagamentos externos."
-                 if enforcement_enabled() else "Franquias de teste; aplicação desativada."),
+        "note": ("Plano Play verificado em ambiente de teste."
+                 if _payments_active() else (
+                     "Franquias beta aplicadas, sem pagamentos externos."
+                     if enforcement_enabled() else "Franquias de teste; aplicação desativada.")),
     }
 
 

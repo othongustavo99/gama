@@ -21,6 +21,7 @@ from .routes.media import router as media_router, public_router as media_public_
 from .routes.account import router as account_router
 from .routes.jobs import router as jobs_router
 from .routes.admin import router as admin_router
+from .routes.billing import router as billing_router
 from .security import body_too_large, rate_limit_chat, rate_limit_default, require_api_key
 from .core.identity import require_auth, google_oauth_client_ids, current_user_id
 from .storage_status import inspect_data_storage
@@ -116,6 +117,7 @@ app.include_router(tts_router, dependencies=_chat_guard)
 app.include_router(artifacts_router, dependencies=_guard)
 app.include_router(jobs_router, dependencies=_guard)
 app.include_router(admin_router, dependencies=_guard)
+app.include_router(billing_router, dependencies=_guard)
 app.include_router(media_router, dependencies=_guard)
 # Autenticação própria: /account/status e /account/start-new precisam funcionar
 # mesmo quando o titular já excluiu a conta. Não aceitam X-User-Id.

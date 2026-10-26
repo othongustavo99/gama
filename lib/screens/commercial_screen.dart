@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
@@ -7,8 +9,9 @@ import '../services/identity_service.dart';
 import '../services/admin_service.dart';
 import '../core/gama_page_route.dart';
 import 'admin_dashboard_screen.dart';
+import 'play_subscription_screen.dart';
 
-/// Visão somente leitura. Não contém checkout, preços nem botões de compra.
+/// Visão de consumo e acesso ao checkout oficial Google Play (Android).
 /// Atualiza sempre ao abrir/recarregar, sem cache compartilhado entre contas.
 class CommercialScreen extends StatefulWidget {
   final Future<CommercialAccount> Function()? loadAccount;
@@ -201,6 +204,16 @@ class _AccountBody extends StatelessWidget {
             ],
           ),
         ),
+        if (Platform.isAndroid) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(GamaPageRoute(
+              builder: (_) => const PlaySubscriptionScreen(),
+            )),
+            icon: const Icon(Icons.shopping_bag_outlined),
+            label: const Text('Assinaturas na Google Play'),
+          ),
+        ],
         const SizedBox(height: 24),
         Text('Utilização de hoje', style: TextStyle(
           fontSize: 19, fontWeight: FontWeight.w700,
@@ -260,9 +273,9 @@ class _AccountBody extends StatelessWidget {
               color: context.gama.textSecondary, size: 20),
             const SizedBox(width: 10),
             Expanded(child: Text(
-              'Assinaturas e compras ainda não estão disponíveis. '
-              'Os planos e limites apresentados são experimentais e '
-              'podem mudar antes do lançamento comercial.',
+              'Assinaturas pela Google Play permanecem em testes. '
+              'Os limites apresentados são experimentais e podem mudar '
+              'antes da publicação comercial. Compras exigem validação no servidor.',
               style: TextStyle(color: context.gama.textSecondary,
                 fontSize: 13, height: 1.45),
             )),

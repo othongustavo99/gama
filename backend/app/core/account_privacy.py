@@ -191,6 +191,13 @@ def delete_account_data(user_id: str) -> dict:
             logger.warning("Falha ao excluir planos e créditos: %s", type(exc).__name__)
             errors.append("planos e créditos")
         try:
+            from .store_billing import delete_user as delete_play_checks
+            if delete_play_checks(uid):
+                removed.append("verificações de compras")
+        except (sqlite3.Error, OSError) as exc:
+            logger.warning("Falha ao excluir verificações de compras: %s", type(exc).__name__)
+            errors.append("verificações de compras")
+        try:
             if _remove_quota(base, uid):
                 removed.append("cotas de mídia")
         except (sqlite3.Error, OSError) as exc:
