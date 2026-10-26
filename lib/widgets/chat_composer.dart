@@ -394,176 +394,249 @@ class ChatComposer extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 6),
-                          // Linha de ferramentas (igual à captura).
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              // Botão único "Oficina" (substitui o toggle Programar/Conversar).
-                              // Visual: fundo escuro + traços brancos. Abre a tela Oficina.
-                              _ModeChip(
-                                label: oficinaKind == null
-                                    ? 'Oficina'
-                                    : '${oficinaKind!.label}  ×',
-                                icon:
-                                    oficinaKind?.icon ?? Icons.handyman_rounded,
-                                selected: true,
-                                onTap: oficinaKind == null
-                                    ? () {
-                                        Navigator.of(context).push(
-                                          GamaPageRoute<void>(
-                                            builder: (_) =>
-                                                const OficinaScreen(),
-                                          ),
-                                        );
-                                      }
-                                    : (onExitOficina ?? () {}),
-                              ),
-                              const Spacer(),
-                              IconButton(
-                                onPressed: isLoading
-                                    ? null
-                                    : () {
-                                        HapticFeedback.selectionClick();
-                                        onAttach();
-                                      },
-                                tooltip: 'Anexar',
-                                style: IconButton.styleFrom(
-                                  foregroundColor: context.gama.textSecondary,
-                                  disabledForegroundColor:
-                                      context.gama.textHint,
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                                icon: const Icon(
-                                  Icons.add_circle_outline_rounded,
-                                  size: 22,
-                                ),
-                              ),
-                              GestureDetector(
-                                onLongPress: onOpenVoice == null || isLoading
-                                    ? null
-                                    : () {
-                                        HapticFeedback.mediumImpact();
-                                        onOpenVoice!();
-                                      },
-                                child: IconButton(
-                                  onPressed: isLoading
-                                      ? null
-                                      : () {
-                                          HapticFeedback.selectionClick();
-                                          onToggleListen();
-                                        },
-                                  tooltip: onOpenVoice == null
-                                      ? (isListening
-                                            ? 'Parar gravação'
-                                            : 'Gravar voz → texto')
-                                      : 'Ditado: toque. Conversa por voz: segure.',
-                                  style: IconButton.styleFrom(
-                                    foregroundColor: isListening
-                                        ? context.gama.accent
-                                        : context.gama.textSecondary,
-                                    disabledForegroundColor:
-                                        context.gama.textHint,
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                  icon: Icon(
-                                    isListening
-                                        ? Icons.mic
-                                        : Icons.mic_none_rounded,
-                                    size: 22,
-                                  ),
-                                ),
-                              ),
-                              if (oficinaKind == null)
+                          // Ferramentas responsivas: no celular estreito os
+                          // controles ficam em duas linhas, sem reduzir a area
+                          // de toque ou ocultar a conversa por voz.
+                          LayoutBuilder(
+                            builder: (context, constraints) {
+                              final scaledLabel = MediaQuery.textScalerOf(
+                                context,
+                              ).scale(14);
+                              final compact = constraints.maxWidth <
+                                      (oficinaKind == null ? 356 : 402) ||
+                                  scaledLabel > 17;
+                              final actions = <Widget>[
                                 IconButton(
                                   onPressed: isLoading
                                       ? null
                                       : () {
-                                          HapticFeedback.lightImpact();
-                                          onSpeakSend();
+                                          HapticFeedback.selectionClick();
+                                          onAttach();
                                         },
-                                  tooltip: 'Enviar e ouvir resposta',
-                                  style: IconButton.styleFrom(
-                                    foregroundColor: context.gama.accent,
-                                    disabledForegroundColor:
-                                        context.gama.textHint,
-                                    visualDensity: VisualDensity.compact,
+                                  tooltip: 'Anexar arquivo ou imagem',
+                                  constraints: const BoxConstraints(
+                                    minWidth: 44, minHeight: 44,
                                   ),
+                                  padding: EdgeInsets.zero,
+                                  color: context.gama.textSecondary,
                                   icon: const Icon(
-                                    Icons.graphic_eq_rounded,
-                                    size: 22,
+                                    Icons.add_circle_outline_rounded, size: 22,
                                   ),
                                 ),
-                              const SizedBox(width: 4),
-                              ValueListenableBuilder<TextEditingValue>(
-                                valueListenable: controller,
-                                builder: (context, value, _) {
-                                  final canSend = attachmentsReady &&
-                                      (value.text.trim().isNotEmpty || hasAttachments);
-                                  return Tooltip(
-                                    message: isLoading
-                                        ? 'Parar geração'
-                                        : 'Enviar mensagem',
-                                    child: AnimatedScale(
-                                      duration: reducedMotion
-                                          ? Duration.zero
-                                          : const Duration(milliseconds: 210),
-                                      curve: Curves.easeOutBack,
-                                      scale: (canSend || isLoading) ? 1 : 0.88,
-                                      child: Material(
-                                        color: isLoading
-                                            ? palette.accent.withValues(
-                                                alpha: 0.55,
-                                              )
-                                            : canSend
-                                            ? palette.accent
-                                            : palette.surfaceHover,
-                                        borderRadius: BorderRadius.circular(14),
-                                        elevation: canSend && !isLoading
-                                            ? 3
-                                            : 0,
-                                        shadowColor: palette.accentGlow,
-                                        child: InkWell(
-                                          borderRadius: BorderRadius.circular(
-                                            14,
-                                          ),
-                                          onTap: isLoading
-                                              ? () {
-                                                  HapticFeedback.lightImpact();
-                                                  onStop?.call();
-                                                }
-                                              : canSend
-                                              ? () {
-                                                  HapticFeedback.lightImpact();
-                                                  _submitIfPossible();
-                                                }
-                                              : null,
-                                          child: SizedBox(
-                                            width: 40,
-                                            height: 40,
-                                            child: AnimatedSwitcher(
-                                              duration: reducedMotion
-                                                  ? Duration.zero
-                                                  : const Duration(
-                                                      milliseconds: 160,
-                                                    ),
-                                              child: Icon(
-                                                key: ValueKey(isLoading),
-                                                isLoading
-                                                    ? Icons.stop_rounded
-                                                    : Icons
-                                                          .arrow_upward_rounded,
-                                                color: Colors.white,
-                                                size: isLoading ? 22 : 20,
+                                GestureDetector(
+                                  onLongPress: onOpenVoice == null || isLoading
+                                      ? null
+                                      : () {
+                                          HapticFeedback.mediumImpact();
+                                          onOpenVoice!();
+                                        },
+                                  child: IconButton(
+                                    onPressed: isLoading
+                                        ? null
+                                        : () {
+                                            HapticFeedback.selectionClick();
+                                            onToggleListen();
+                                          },
+                                    tooltip: isListening
+                                        ? 'Parar ditado'
+                                        : 'Ditar mensagem',
+                                    constraints: const BoxConstraints(
+                                      minWidth: 44, minHeight: 44,
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    color: isListening
+                                        ? context.gama.accent
+                                        : context.gama.textSecondary,
+                                    icon: Icon(
+                                      isListening
+                                          ? Icons.mic
+                                          : Icons.mic_none_rounded,
+                                      size: 22,
+                                    ),
+                                  ),
+                                ),
+                                // A conversa por voz deve estar disponível
+                                // também por teclado, toque e leitor de tela;
+                                // nao apenas por long press no microfone.
+                                if (onOpenVoice != null)
+                                  IconButton(
+                                    onPressed: isLoading
+                                        ? null
+                                        : () {
+                                            HapticFeedback.selectionClick();
+                                            onOpenVoice!();
+                                          },
+                                    tooltip: 'Abrir conversa por voz',
+                                    constraints: const BoxConstraints(
+                                      minWidth: 44, minHeight: 44,
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    color: context.gama.textSecondary,
+                                    icon: const Icon(
+                                      Icons.record_voice_over_outlined,
+                                      size: 22,
+                                    ),
+                                  ),
+                                if (oficinaKind == null)
+                                  ValueListenableBuilder<TextEditingValue>(
+                                    valueListenable: controller,
+                                    builder: (context, value, _) {
+                                      final canSpeakSend = !isLoading &&
+                                          attachmentsReady &&
+                                          (value.text.trim().isNotEmpty ||
+                                              hasAttachments);
+                                      return IconButton(
+                                        onPressed: !canSpeakSend
+                                            ? null
+                                            : () {
+                                                HapticFeedback.lightImpact();
+                                                onSpeakSend();
+                                              },
+                                        tooltip: 'Enviar e ouvir resposta',
+                                        constraints: const BoxConstraints(
+                                          minWidth: 44, minHeight: 44,
+                                        ),
+                                        padding: EdgeInsets.zero,
+                                        color: context.gama.accent,
+                                        icon: const Icon(
+                                          Icons.graphic_eq_rounded, size: 22,
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ValueListenableBuilder<TextEditingValue>(
+                                  valueListenable: controller,
+                                  builder: (context, value, _) {
+                                    final canSend = attachmentsReady &&
+                                        (value.text.trim().isNotEmpty ||
+                                            hasAttachments);
+                                    final actionEnabled = isLoading
+                                        ? onStop != null
+                                        : canSend;
+                                    return Tooltip(
+                                      message: isLoading
+                                          ? 'Parar geração'
+                                          : canSend
+                                              ? 'Enviar mensagem'
+                                              : attachmentsReady
+                                                  ? 'Digite uma mensagem para enviar'
+                                                  : 'Aguarde os anexos',
+                                      child: Semantics(
+                                        button: true,
+                                        enabled: actionEnabled,
+                                        label: isLoading
+                                            ? 'Parar geração'
+                                            : 'Enviar mensagem',
+                                        child: AnimatedScale(
+                                          duration: reducedMotion
+                                              ? Duration.zero
+                                              : const Duration(
+                                                  milliseconds: 210),
+                                          curve: Curves.easeOutBack,
+                                          scale: (canSend || isLoading)
+                                              ? 1 : 0.92,
+                                          child: Material(
+                                            color: isLoading
+                                                ? palette.accent.withValues(
+                                                    alpha: 0.55,
+                                                  )
+                                                : canSend
+                                                    ? palette.accent
+                                                    : palette.surfaceHover,
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                            elevation: canSend && !isLoading
+                                                ? 3 : 0,
+                                            shadowColor: palette.accentGlow,
+                                            child: InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(14),
+                                              canRequestFocus: actionEnabled,
+                                              onTap: isLoading
+                                                  ? onStop == null
+                                                      ? null
+                                                      : () {
+                                                          HapticFeedback
+                                                              .lightImpact();
+                                                          onStop!();
+                                                        }
+                                                  : canSend
+                                                      ? () {
+                                                          HapticFeedback
+                                                              .lightImpact();
+                                                          _submitIfPossible();
+                                                        }
+                                                      : null,
+                                              child: SizedBox(
+                                                width: 44,
+                                                height: 44,
+                                                child: AnimatedSwitcher(
+                                                  duration: reducedMotion
+                                                      ? Duration.zero
+                                                      : const Duration(
+                                                          milliseconds: 160),
+                                                  child: Icon(
+                                                    key: ValueKey(isLoading),
+                                                    isLoading
+                                                        ? Icons.stop_rounded
+                                                        : Icons.arrow_upward_rounded,
+                                                    color: Colors.white,
+                                                    size: isLoading ? 22 : 20,
+                                                  ),
+                                                ),
                                               ),
                                             ),
                                           ),
                                         ),
                                       ),
+                                    );
+                                  },
+                                ),
+                              ];
+                              final modeChip = _ModeChip(
+                                label: oficinaKind == null
+                                    ? 'Oficina'
+                                    : '${oficinaKind!.label}  ×',
+                                icon: oficinaKind?.icon ??
+                                    Icons.handyman_rounded,
+                                selected: true,
+                                onTap: oficinaKind == null
+                                    ? () => Navigator.of(context).push(
+                                          GamaPageRoute<void>(
+                                            builder: (_) =>
+                                                const OficinaScreen(),
+                                          ),
+                                        )
+                                    : (onExitOficina ?? () {}),
+                              );
+                              if (compact) {
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    modeChip,
+                                    const SizedBox(height: 4),
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Wrap(
+                                        alignment: WrapAlignment.end,
+                                        crossAxisAlignment:
+                                            WrapCrossAlignment.center,
+                                        spacing: 2,
+                                        runSpacing: 2,
+                                        children: actions,
+                                      ),
                                     ),
-                                  );
-                                },
-                              ),
-                            ],
+                                  ],
+                                );
+                              }
+                              return Row(
+                                children: [
+                                  modeChip,
+                                  const Spacer(),
+                                  ...actions,
+                                ],
+                              );
+                            },
                           ),
                         ],
                       ),

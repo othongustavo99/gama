@@ -131,10 +131,29 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
             ),
           ]),
           if (_loading) const LinearProgressIndicator(minHeight: 2),
-          if (_error != null) Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
-            child: Text(_error!, style: TextStyle(color: g.textMuted, fontSize: 12)),
-          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: g.error, fontSize: 12),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _loading ? null : () => _refresh(),
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('Tentar novamente'),
+                  ),
+                ],
+              ),
+            ),
           if (_expanded) ...[
             if (jobs.isEmpty && artifacts.isEmpty && !_loading)
               Text('Suas tarefas e arquivos gerados aparecerão aqui.',

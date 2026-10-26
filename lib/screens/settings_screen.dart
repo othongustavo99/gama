@@ -23,6 +23,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _resettingMemory = false;
 
   bool _testing = false;
+  bool _saving = false;
   String? _statusMessage;
   bool? _statusOk;
   bool _ttsAuto = false;
@@ -49,27 +50,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _testConnection() async {
+    if (_testing) return;
     setState(() {
       _testing = true;
       _statusMessage = null;
     });
 
     final previous = SettingsService.instance.baseUrl;
-    await SettingsService.instance.setBaseUrl(_urlController.text);
-    final ok = await _api.ping();
-
-    if (!ok) {
-      await SettingsService.instance.setBaseUrl(previous);
+    var ok = false;
+    try {
+      await SettingsService.instance.setBaseUrl(_urlController.text);
+      ok = await _api.ping();
+    } catch (_) {
+      ok = false;
+    } finally {
+      if (!ok) {
+        await SettingsService.instance.setBaseUrl(previous);
+        if (mounted) _urlController.text = previous;
+      }
     }
 
     if (!mounted) return;
-
     setState(() {
       _testing = false;
       _statusOk = ok;
       _statusMessage = ok
           ? 'API online. Modelos e chat disponíveis.'
-          : 'Falha ao conectar. Verifique a URL e se o backend está no ar.';
+          : 'Falha ao conectar. O endereço anterior foi restaurado.';
     });
   }
 
@@ -117,12 +124,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _save() async {
-    await SettingsService.instance.setBaseUrl(_urlController.text);
-    await SettingsService.instance.setTtsAuto(_ttsAuto);
-    await SettingsService.instance.setFontScale(_fontScale);
-    await SettingsService.instance.setDeveloperMode(_developerMode);
-    await SettingsService.instance.setAppearance(_appearance);
-    await SettingsService.instance.setReduceMotion(_reduceMotion);
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await SettingsService.instance.setBaseUrl(_urlController.text);
+      await SettingsService.instance.setTtsAuto(_ttsAuto);
+      await SettingsService.instance.setFontScale(_fontScale);
+      await SettingsService.instance.setDeveloperMode(_developerMode);
+      await SettingsService.instance.setAppearance(_appearance);
+      await SettingsService.instance.setReduceMotion(_reduceMotion);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Não foi possível salvar as configurações.'),
+        ));
+      }
+      return;
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
 
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -141,84 +161,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
         children: [
-          const _SectionTitle('API'),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _urlController,
-            style: TextStyle(color: context.gama.textPrimary, fontSize: 15),
-            decoration: InputDecoration(
-              hintText: 'https://sua-api.com',
-              hintStyle: TextStyle(color: context.gama.textHint),
-              filled: true,
-              fillColor: context.gama.surfaceInput,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: context.gama.border),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: context.gama.border),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: context.gama.accent, width: 1.2),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 14,
-              ),
-            ),
-            keyboardType: TextInputType.url,
-            autocorrect: false,
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _testing ? null : _testConnection,
-              icon: _testing
-                  ? const GamaSkeleton(width: 16, height: 16, radius: 8)
-                  : const Icon(Icons.wifi_tethering_rounded, size: 18),
-              label: Text(_testing ? 'Testando…' : 'Testar conexão'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: context.gama.textPrimary,
-                side: BorderSide(color: context.gama.border),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
+          if (_developerMode) ...[
+            const _SectionTitle('API'),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _urlController,
+              style: TextStyle(color: context.gama.textPrimary, fontSize: 15),
+              decoration: InputDecoration(
+                hintText: 'https://sua-api.com',
+                hintStyle: TextStyle(color: context.gama.textHint),
+                filled: true,
+                fillColor: context.gama.surfaceInput,
+                border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: context.gama.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: context.gama.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: context.gama.accent, width: 1.2),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 14,
                 ),
               ),
+              keyboardType: TextInputType.url,
+              autocorrect: false,
             ),
-          ),
-          if (_statusMessage != null) ...[
             const SizedBox(height: 12),
-            Container(
+            SizedBox(
               width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: (_statusOk == true)
-                    ? context.gama.success.withValues(alpha: 0.12)
-                    : context.gama.error.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: (_statusOk == true)
-                      ? context.gama.success.withValues(alpha: 0.4)
-                      : context.gama.error.withValues(alpha: 0.4),
-                ),
-              ),
-              child: Text(
-                _statusMessage!,
-                style: TextStyle(
-                  color: (_statusOk == true)
-                      ? context.gama.success
-                      : context.gama.error,
-                  fontSize: 13,
-                  height: 1.35,
+              child: OutlinedButton.icon(
+                onPressed: _testing ? null : _testConnection,
+                icon: _testing
+                    ? const GamaSkeleton(width: 16, height: 16, radius: 8)
+                    : const Icon(Icons.wifi_tethering_rounded, size: 18),
+                label: Text(_testing ? 'Testando…' : 'Testar conexão'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: context.gama.textPrimary,
+                  side: BorderSide(color: context.gama.border),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
               ),
             ),
+            if (_statusMessage != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: (_statusOk == true)
+                      ? context.gama.success.withValues(alpha: 0.12)
+                      : context.gama.error.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: (_statusOk == true)
+                        ? context.gama.success.withValues(alpha: 0.4)
+                        : context.gama.error.withValues(alpha: 0.4),
+                  ),
+                ),
+                child: Text(
+                  _statusMessage!,
+                  style: TextStyle(
+                    color: (_statusOk == true)
+                        ? context.gama.success
+                        : context.gama.error,
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 28),
           ],
-          const SizedBox(height: 28),
           const _SectionTitle('Modelo em uso'),
           const SizedBox(height: 8),
           ListTile(
@@ -332,7 +354,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               style: TextStyle(color: context.gama.textPrimary, fontSize: 15),
             ),
             subtitle: Text(
-              'Exibe resultados de validação, diagnósticos e custos informados pelo provedor.',
+              'Mostra a conexão com o servidor e informações avançadas para diagnóstico.',
               style: TextStyle(color: context.gama.textMuted, fontSize: 12),
             ),
             value: _developerMode,
@@ -394,7 +416,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: _save,
+              onPressed: _saving ? null : _save,
               style: ElevatedButton.styleFrom(
                 backgroundColor: context.gama.accent,
                 foregroundColor: Colors.white,
@@ -404,14 +426,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text(
-                'Salvar',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              child: Text(
+                _saving ? 'Salvando…' : 'Salvar',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
             ),
           ),
           const SizedBox(height: 20),
-          Text(
+          if (_developerMode) Text(
             'Emulador Android: http://10.0.2.2:8000\n'
             'Celular físico: IP da máquina onde a API está rodando.\n'
             'Release: use sempre HTTPS.',
