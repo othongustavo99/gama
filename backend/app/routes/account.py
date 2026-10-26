@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from ..core.account_privacy import delete_account_data, deletion_status, start_new_account
 from ..core.identity import require_auth, current_user_id
 from ..core.usage_ledger import owner_overview
+from ..core.commercial_plans import account_snapshot, CommercialError
 
 router = APIRouter(prefix="/account", tags=["account"])
 
@@ -66,3 +67,17 @@ async def new_account(body: DeleteConfirmation, authorization: str | None = Head
 async def my_usage(days: int = Query(default=7, ge=1, le=30), user_id: str = Depends(current_user_id)):
     """Resumo financeiro somente da conta autenticada, sem dados de outras contas."""
     return owner_overview(user_id, days)
+
+
+@router.get("/commercial")
+async def my_commercial_preview(user_id: str = Depends(current_user_id)):
+    """Visualização por conta: sem pagamento e sem limites ativos nesta fase.
+
+    Exige autenticação individual mesmo se o backend estiver em modo legado.
+    """
+    if not require_auth():
+        raise HTTPException(403, "Informações comerciais exigem autenticação Google")
+    try:
+        return account_snapshot(user_id)
+    except CommercialError as exc:
+        raise HTTPException(403, str(exc)) from exc
