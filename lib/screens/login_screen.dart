@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
+import '../core/launch_policy.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/auth_service.dart';
 import '../services/identity_service.dart';
@@ -66,6 +67,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _onGuest() async {
+    if (!GamaLaunchPolicy.guestLoginEnabled) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -260,22 +262,26 @@ class _LoginScreenState extends State<LoginScreen> {
                                     ),
                             ),
                           ),
-                          const SizedBox(height: 10),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: OutlinedButton(
-                              onPressed: _loading ? null : _onGuest,
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: context.gama.textPrimary,
-                                side: BorderSide(color: context.gama.border),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
+                          if (GamaLaunchPolicy.guestLoginEnabled) ...[
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: OutlinedButton(
+                                onPressed: _loading ? null : _onGuest,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: context.gama.textPrimary,
+                                  side: BorderSide(color: context.gama.border),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Convidado (somente desenvolvimento)',
                                 ),
                               ),
-                              child: const Text('Continuar como convidado'),
                             ),
-                          ),
+                          ],
                           const SizedBox(height: 20),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,

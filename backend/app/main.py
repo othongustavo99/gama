@@ -17,8 +17,9 @@ from .routes.tts import router as tts_router
 from .routes.artifacts import router as artifacts_router
 from .routes.media import router as media_router, public_router as media_public_router
 from .security import body_too_large, rate_limit_chat, rate_limit_default, require_api_key
-from .core.identity import require_auth, google_oauth_client_ids
+from .core.identity import require_auth, google_oauth_client_ids, current_user_id
 from .storage_status import inspect_data_storage
+from .core.production_guard import assert_safe_production_configuration
 
 logger = logging.getLogger("gama")
 VERSION = "0.13.0"
@@ -26,6 +27,9 @@ VERSION = "0.13.0"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Em modo comercial, falha antes de aceitar requisições se OAuth ou
+    # configurações de segurança estiverem incompletas.
+    assert_safe_production_configuration()
     storage = inspect_data_storage()
     if storage["status"] == "persistent":
         logger.info("Armazenamento persistente confirmado no volume Railway.")
@@ -77,8 +81,11 @@ async def limit_body(request: Request, call_next):
     return await call_next(request)
 
 
-_guard = [Depends(require_api_key), Depends(rate_limit_default)]
-_chat_guard = [Depends(require_api_key), Depends(rate_limit_chat)]
+# Todas as rotas não públicas também precisam de identidade autenticada,
+# inclusive /models, /extract, /search e /tts, que antes dependiam somente da
+# chave de app distribuída ao cliente (não sigilosa em um APK/EXE).
+_guard = [Depends(require_api_key), Depends(rate_limit_default), Depends(current_user_id)]
+_chat_guard = [Depends(require_api_key), Depends(rate_limit_chat), Depends(current_user_id)]
 
 app.include_router(chat_router, dependencies=_chat_guard)
 app.include_router(memory_router, dependencies=_guard)

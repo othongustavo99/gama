@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'identity_service.dart';
+import '../core/launch_policy.dart';
 import '../utils/error_logger.dart';
 
 /// Login Google multiplataforma.
@@ -59,6 +60,12 @@ class AuthService {
   /// ID token Google para o backend (`Authorization: Bearer`), com aud validável.
   /// Null = sem sessão válida; o chamador segue no modo legado ou pede login.
   Future<String?> bearerToken() async {
+    // Nunca envie um token Google de uma sessão anterior ao atuar como
+    // convidado (nem tente autenticação silenciosa nessa identidade).
+    if (!IdentityService.instance.isLoggedIn ||
+        IdentityService.instance.provider != 'google') {
+      return null;
+    }
     if (isDesktop) {
       final exp = _idTokenExpiry;
       if (_idToken != null &&
@@ -413,9 +420,11 @@ class AuthService {
   }
 
   Future<bool> trySilentGoogle() async {
-    // Sessões convidadas permanecem locais e não tentam sincronização remota.
+    // Sessões convidadas só entram em builds de desenvolvimento autorizados.
+    // Builds comerciais sempre apresentam o login Google novamente.
     if (IdentityService.instance.provider != 'google') {
-      return IdentityService.instance.isLoggedIn;
+      return GamaLaunchPolicy.guestLoginEnabled &&
+          IdentityService.instance.isLoggedIn;
     }
     if (isDesktop) return (await bearerToken()) != null;
     try {
