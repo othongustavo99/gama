@@ -129,6 +129,11 @@ async def resume_video_job(job_id: str, user_id: str = Depends(current_user_id))
         if item is None:
             raise HTTPException(404, "Trabalho não encontrado")
         if item.get("status") == "completed":
+            # O artefato tem TTL: não apresentar um vídeo expirado como disponível.
+            if item.get("artifact_id") and load_artifact(str(item["artifact_id"]), user_id=user_id):
+                return {"ok": True, "job": public_job(item)}
+            item = update_job(user_id, job_id, status="failed", phase="expired",
+                              error="Este vídeo expirou no servidor. Gere outro apenas se necessário.")
             return {"ok": True, "job": public_job(item)}
         url = str(item.get("polling_url") or "")
         base = str(getattr(settings, "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")).rstrip("/")

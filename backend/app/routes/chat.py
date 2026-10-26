@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 import logging
 import re
+import sqlite3
 from urllib.parse import quote
 from typing import Optional
 
@@ -49,6 +50,7 @@ from ..core.video_gen import (
 )
 from ..core.document_builder.store import load_artifact, save_artifact
 from ..core.video_jobs import create_job, get_job, update_job
+from ..core import long_jobs
 from ..core.media_links import create_media_reference_url
 from ..core.code_analyzer.index_store import load_meta
 
@@ -2158,18 +2160,41 @@ async def chat(
             ) + "\n"
 
     async def stream_for_client():
-        """Keep generation alive if its mobile client disconnects."""
-        queue = asyncio.Queue()
+        """Permite finalizar a geração mesmo se a conexão do app cair.
+
+        A fila tem limite; após a desconexão, não acumula mais tokens ou
+        imagens em memória. O resultado final vai ao histórico remoto e o
+        journal registra o estado, inclusive após reiniciar o aplicativo.
+        """
+        queue = asyncio.Queue(maxsize=8)
         client_disconnected = asyncio.Event()
         user_cancelled = asyncio.Event()
         assistant_id = getattr(request, "assistant_message_id", None) or uuid.uuid4().hex
         conversation_id = getattr(request, "conversation_id", None)
+        try:
+            journal = long_jobs.start(user_id, conversation_id=conversation_id or "", message_id=assistant_id)
+            journal_id = journal["id"]
+        except (OSError, ValueError, PermissionError, sqlite3.Error) as exc:
+            logger.warning("Generation journal unavailable: %s", type(exc).__name__)
+            journal_id = None
+
+        def journal_update(**changes):
+            if journal_id is None:
+                return
+            try:
+                long_jobs.update(user_id, journal_id, **changes)
+            except (OSError, ValueError, sqlite3.Error) as exc:
+                logger.warning("Generation journal update failed: %s", type(exc).__name__)
 
         async def produce():
             response_parts: list[str] = []
             image_blocks: list[str] = []
             sources: list = []
             artifacts: list[dict] = []
+            saw_done = False
+            had_error = False
+            cancelled = False
+            heartbeat = asyncio.create_task(keep_job_alive())
             try:
                 async for chunk in stream_with_meta():
                     for line in chunk.splitlines():
@@ -2177,11 +2202,25 @@ async def chat(
                             event = json.loads(line)
                         except (TypeError, ValueError):
                             continue
+                        if not isinstance(event, dict):
+                            continue
+                        if event.get("error"):
+                            had_error = True
+                        if event.get("done") is True:
+                            saw_done = True
                         message = event.get("message") or {}
+                        if not isinstance(message, dict):
+                            message = {}
                         content = message.get("content")
                         if message.get("role") == "assistant" and isinstance(content, str) and content:
                             response_parts.append(content)
                         meta = event.get("gama_meta") or {}
+                        if not isinstance(meta, dict):
+                            meta = {}
+                        new_phase = meta.get("phase")
+                        if isinstance(new_phase, str) and new_phase != phase_state[0]:
+                            phase_state[0] = new_phase
+                            journal_update(phase=phase_state[0])
                         event_sources = meta.get("sources")
                         if isinstance(event_sources, list):
                             sources = event_sources
@@ -2189,6 +2228,8 @@ async def chat(
                         if isinstance(event_artifact, dict) and event_artifact.get("artifact_id"):
                             if not any(a.get("artifact_id") == event_artifact["artifact_id"] for a in artifacts):
                                 artifacts.append(event_artifact)
+                            journal_update(artifact_id=str(event_artifact["artifact_id"]),
+                                           filename=str(event_artifact.get("filename") or ""))
                         image = meta.get("image")
                         if isinstance(image, dict) and image.get("data"):
                             mime = str(image.get("mime") or "image/png").replace("\n", "")
@@ -2196,13 +2237,21 @@ async def chat(
                             image_blocks.append(
                                 f"\n[gama_image]\nmime:{mime}\ndata:{data}\n[/gama_image]\n"
                             )
-                    await queue.put(chunk)
+                    if not client_disconnected.is_set():
+                        await queue.put(chunk)
             except asyncio.CancelledError:
+                cancelled = True
                 raise
             except Exception:
+                had_error = True
                 logger.exception("background chat generation failed")
             finally:
-                await queue.put(None)
+                heartbeat.cancel()
+                final_status = ("cancelled" if user_cancelled.is_set()
+                                else "interrupted" if cancelled or not saw_done
+                                else "failed" if had_error else "completed")
+                if not client_disconnected.is_set():
+                    await queue.put(None)
                 current_task = asyncio.current_task()
                 if (
                     not user_cancelled.is_set()
@@ -2241,7 +2290,16 @@ async def chat(
                             )
                         except Exception:
                             logger.exception("could not persist response after client disconnect")
+                            final_status = "interrupted"
+                journal_update(status=final_status,
+                               phase="finished" if final_status == "completed" else "connection_lost")
 
+        async def keep_job_alive():
+            while True:
+                await asyncio.sleep(15)
+                journal_update(phase=phase_state[0])
+
+        phase_state = ["thinking"]
         task = asyncio.create_task(produce())
         task_key = (user_id, assistant_id)
         _background_generation_tasks[task_key] = (task, user_cancelled)
@@ -2263,6 +2321,10 @@ async def chat(
         finally:
             if not completed:
                 client_disconnected.set()
+                # Desbloqueia um produtor aguardando vaga na fila; novos
+                # pedaços não serão mais enfileirados após a desconexão.
+                while not queue.empty():
+                    queue.get_nowait()
 
     return StreamingResponse(
         stream_for_client(),

@@ -161,6 +161,14 @@ def delete_account_data(user_id: str) -> dict:
             root = base / folder_name
             for path in list(_owned_dirs(root, uid)):
                 cleanup(folder_name, path)
+        # Fase 1E: o journal de tarefas compartilha SQLite entre contas.
+        try:
+            from .long_jobs import delete_user
+            if delete_user(uid):
+                removed.append("histórico de tarefas")
+        except (sqlite3.Error, OSError) as exc:
+            logger.warning("Falha ao excluir histórico de tarefas: %s", type(exc).__name__)
+            errors.append("histórico de tarefas")
         try:
             if _remove_quota(base, uid):
                 removed.append("cotas de mídia")

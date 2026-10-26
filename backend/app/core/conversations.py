@@ -168,12 +168,20 @@ class ConversationStore:
             return None
 
     def _write(self, data: dict) -> None:
+        from .account_privacy import deletion_status
+        if deletion_status(self.user_id) != "active":
+            raise PermissionError("Conta excluída: não é permitido salvar conversas")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data["user_id"] = self.user_id
         data["updated_at"] = _utc_now()
         self._atomic_json_write(self.path, data)
 
     def _write_conversation(self, item: dict) -> None:
+        # Uma geração iniciada antes da exclusão nunca pode recriar uma conversa
+        # após a lápide ter sido gravada pela Fase 1B.
+        from .account_privacy import deletion_status
+        if deletion_status(self.user_id) != "active":
+            raise PermissionError("Conta excluída: não é permitido salvar conversas")
         # Versão opaca que muda a cada gravação confirmada. Diferente de
         # updatedAt, não depende do relógio do telefone e inclui tombstones,
         # edições de mensagem e alterações de metadados.
