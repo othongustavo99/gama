@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
 import '../core/design_tokens.dart';
+import '../core/welcome_policy.dart';
+import '../services/local_account_scope.dart';
+import '../widgets/welcome_experience.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/conversation_service.dart';
 import '../services/conversation_sync_service.dart';
@@ -45,11 +49,48 @@ class _HomeScreenState extends State<HomeScreen> {
     _booted = true;
     await _service.openFreshConversation();
     if (mounted) setState(() {});
-    // Sync em background: puxa conversas do celular/PC e envia as locais.
-    // ignore: unawaited_futures
-    ConversationSyncService.instance.syncAll().then((_) {
-      if (mounted) setState(() {});
+    // Primeiro sincroniza: o tutorial nunca deve aparecer por engano para
+    // alguém que já tem histórico salvo na outra plataforma.
+    // A sincronização não bloqueia a apresentação da conversa atual.
+    try {
+      await ConversationSyncService.instance.syncAll();
+    } catch (error) {
+      debugPrint('Sincronização inicial não concluída: $error');
+    }
+    if (!mounted) return;
+    setState(() {});
+    await _offerWelcomeOnce();
+  }
+
+  Future<void> _offerWelcomeOnce() async {
+    final scope = LocalAccountScope.current().key;
+    if (scope == 'signed_out') return;
+    final prefs = await SharedPreferences.getInstance();
+    final key = GamaWelcomePolicy.preferenceKey(scope);
+    final shouldOffer = GamaWelcomePolicy.shouldOffer(
+      alreadySeen: prefs.getBool(key) ?? false,
+      hasConversationHistory: _service.recentConversations.isNotEmpty ||
+          _service.pinnedConversations.isNotEmpty,
+    );
+    if (!shouldOffer || !mounted) return;
+    // Salvar ao oferecer evita popups repetidos ao voltar de outra tela.
+    await prefs.setBool(key, true);
+    if (!mounted || LocalAccountScope.current().key != scope) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _openWelcome();
     });
+  }
+
+  Future<void> _openWelcome() async {
+    if (!mounted) return;
+    final choice = await GamaWelcomeExperience.show(context);
+    if (!mounted) return;
+    if (choice == GamaWelcomeAction.oficina) {
+      _push(const OficinaScreen());
+    } else if (choice == GamaWelcomeAction.biblioteca) {
+      _push(const LibraryScreen());
+    }
+    // Conversar ou dispensar: a pessoa já está na tela de conversa.
   }
 
   void _push(Widget page) {
@@ -147,6 +188,10 @@ class _HomeScreenState extends State<HomeScreen> {
             onOpenOficina: () {
               if (!desktopSidebar) Navigator.pop(context);
               _push(const OficinaScreen());
+            },
+            onOpenWelcome: () {
+              if (!desktopSidebar) Navigator.pop(context);
+              _openWelcome();
             },
           );
 

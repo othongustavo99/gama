@@ -303,25 +303,15 @@ class EmptyState extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 15),
-              ShaderMask(
-                blendMode: BlendMode.srcIn,
-                shaderCallback: (bounds) => LinearGradient(
-                  colors: [
-                    context.gama.accentBright,
-                    context.gama.textPrimary,
-                    context.gama.accentCool,
-                  ],
-                ).createShader(bounds),
-                child: Text(
-                  _headline,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 27,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.8,
-                    height: 1.12,
-                  ),
+              Text(
+                _headline,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: context.gama.textPrimary,
+                  fontSize: 27,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.8,
+                  height: 1.12,
                 ),
               ),
               const SizedBox(height: 10),
@@ -353,31 +343,87 @@ class EmptyState extends StatelessWidget {
 
   Widget _suggestionChips(BuildContext context) {
     final g = context.gama;
-    return Wrap(
-      spacing: 9,
-      runSpacing: 10,
-      alignment: WrapAlignment.center,
-      children: [
-        for (var i = 0; i < _activeSuggestions.length; i++)
-          ActionChip(
-            tooltip: _activeDescriptions[i],
-            avatar: Icon(_activeIcons[i], size: 17, color: g.accentBright),
-            label: Text(_activeTitles[i]),
-            onPressed: () =>
-                onSuggestion(_activeActions[i], _activeSuggestions[i]),
-            padding: const EdgeInsets.fromLTRB(9, 11, 13, 11),
-            labelStyle: TextStyle(
-              color: g.textPrimary,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 510;
+        final tileWidth = wide
+            ? (constraints.maxWidth - 20) / 3
+            : constraints.maxWidth;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 11),
+              child: Text(
+                'PARA COMEÇAR',
+                textAlign: wide ? TextAlign.left : TextAlign.center,
+                style: TextStyle(
+                  color: g.textMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.0,
+                ),
+              ),
             ),
-            side: BorderSide(color: g.border),
-            backgroundColor: g.surfaceCard,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              alignment: WrapAlignment.center,
+              children: [
+                for (var i = 0; i < _activeSuggestions.length; i++)
+                  SizedBox(
+                    width: tileWidth,
+                    child: Material(
+                      color: g.surfaceCard,
+                      borderRadius: BorderRadius.circular(16),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => onSuggestion(
+                          _activeActions[i], _activeSuggestions[i]),
+                        child: Container(
+                          padding: const EdgeInsets.all(13),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: g.borderSoft),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Icon(_activeIcons[i], size: 21, color: g.accent),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(_activeTitles[i], style: TextStyle(
+                                      color: g.textPrimary,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                    )),
+                                    const SizedBox(height: 4),
+                                    Text(_activeDescriptions[i],
+                                      maxLines: wide ? 3 : 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: g.textSecondary,
+                                        fontSize: 11,
+                                        height: 1.4,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
-          ),
-      ],
+          ],
+        );
+      },
     );
   }
 }

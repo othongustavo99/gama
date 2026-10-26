@@ -21,6 +21,7 @@ class AppDrawer extends StatefulWidget {
   final VoidCallback? onOpenScheduled;
   final VoidCallback? onOpenPlugins;
   final VoidCallback? onOpenOficina;
+  final VoidCallback? onOpenWelcome;
   final bool persistent;
 
   const AppDrawer({
@@ -33,6 +34,7 @@ class AppDrawer extends StatefulWidget {
     this.onOpenScheduled,
     this.onOpenPlugins,
     this.onOpenOficina,
+    this.onOpenWelcome,
     this.persistent = false,
   });
 
@@ -52,6 +54,7 @@ class _AppDrawerState extends State<AppDrawer> {
   VoidCallback? get onOpenScheduled => widget.onOpenScheduled;
   VoidCallback? get onOpenPlugins => widget.onOpenPlugins;
   VoidCallback? get onOpenOficina => widget.onOpenOficina;
+  VoidCallback? get onOpenWelcome => widget.onOpenWelcome;
   bool get persistent => widget.persistent;
 
   @override
@@ -125,6 +128,12 @@ class _AppDrawerState extends State<AppDrawer> {
                         ],
                       ),
                     ),
+                    if (onOpenWelcome != null)
+                      IconButton(
+                        icon: const Icon(Icons.help_outline_rounded, size: 20),
+                        tooltip: 'Conheça a Gamma',
+                        onPressed: onOpenWelcome,
+                      ),
                     IconButton(
                       icon: const Icon(Icons.edit_square, size: 20),
                       tooltip: 'Nova conversa',
@@ -208,35 +217,26 @@ class _AppDrawerState extends State<AppDrawer> {
                       vertical: 12,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF191F29),
+                      color: context.gama.surfaceCard,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.62),
-                        width: 1.2,
+                        color: context.gama.border,
+                        width: 1,
                       ),
                     ),
-                    child: const Row(
+                    child: Row(
                       children: [
-                        Icon(
-                          Icons.handyman_rounded,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                        SizedBox(width: 10),
-                        Text(
-                          'Oficina',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Spacer(),
-                        Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          color: Colors.white70,
-                          size: 13,
-                        ),
+                        Icon(Icons.handyman_rounded,
+                          color: context.gama.accent, size: 20),
+                        const SizedBox(width: 10),
+                        Text('Oficina', style: TextStyle(
+                          color: context.gama.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        )),
+                        const Spacer(),
+                        Icon(Icons.arrow_forward_ios_rounded,
+                          color: context.gama.textMuted, size: 13),
                       ],
                     ),
                   ),
@@ -246,14 +246,14 @@ class _AppDrawerState extends State<AppDrawer> {
 
             // ===== MENU PRINCIPAL =====
             _DrawerItem(
-              icon: Icons.image_outlined,
-              label: 'Imagens',
-              onTap: onOpenImages ?? () => _comingSoon(context),
-            ),
-            _DrawerItem(
               icon: Icons.menu_book_outlined,
               label: 'Biblioteca',
               onTap: onOpenLibrary ?? () => _comingSoon(context),
+            ),
+            _DrawerItem(
+              icon: Icons.image_outlined,
+              label: 'Imagens',
+              onTap: onOpenImages ?? () => _comingSoon(context),
             ),
             _DrawerItem(
               icon: Icons.folder_outlined,

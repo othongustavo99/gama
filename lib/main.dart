@@ -267,7 +267,7 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
           GamaAppearance.dark => ThemeMode.dark,
         };
         return MaterialApp(
-          title: 'Gama',
+          title: 'Gamma',
           debugShowCheckedModeBanner: false,
           theme: _theme(Brightness.light),
           darkTheme: _theme(Brightness.dark),

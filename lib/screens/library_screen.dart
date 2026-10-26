@@ -11,6 +11,7 @@ import '../core/gama_colors.dart';
 import '../services/download_service.dart';
 import '../services/local_account_scope.dart';
 import '../widgets/video_jobs_panel.dart';
+import '../widgets/recovery_panel.dart';
 import '../utils/error_logger.dart';
 import '../utils/library_filter.dart';
 
@@ -436,6 +437,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       body: Column(
         children: [
           VideoJobsPanel(onLibraryChanged: _load),
+          RecoveryPanel(onLibraryChanged: _load),
           if (_loadError != null)
             Padding(
               padding: const EdgeInsets.all(16),

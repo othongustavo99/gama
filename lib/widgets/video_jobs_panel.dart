@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -22,12 +23,22 @@ class _VideoJobsPanelState extends State<VideoJobsPanel> {
   String? _error;
   bool _loading = true;
   bool _expanded = true;
+  Timer? _pollTimer;
   final Set<String> _busy = <String>{};
 
   @override
   void initState() {
     super.initState();
     _refresh();
+    _pollTimer = Timer.periodic(const Duration(seconds: 35), (_) {
+      if (mounted && !_loading) _refresh();
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _refresh() async {
@@ -38,7 +49,23 @@ class _VideoJobsPanelState extends State<VideoJobsPanel> {
     });
     try {
       final jobs = await VideoJobsService.instance.list();
-      if (mounted) setState(() => _jobs = jobs);
+      if (mounted) {
+        setState(() => _jobs = jobs);
+        // Retoma apenas o polling de gerações JÁ enviadas ao provedor.
+        // /resume consulta o ID existente e jamais cria uma geração paga.
+        for (final job in jobs.take(3)) {
+          final status = job['status']?.toString();
+          final id = job['job_id']?.toString() ?? '';
+          final updated = int.tryParse(job['updated_at']?.toString() ?? '') ?? 0;
+          final age = DateTime.now().millisecondsSinceEpoch ~/ 1000 - updated;
+          final recoverable = status == 'recoverable' ||
+              (status == 'processing' && age >= 100);
+          if (recoverable && RegExp(r'^[a-f0-9]{16}$').hasMatch(id) &&
+              !_busy.contains(id)) {
+            unawaited(_resume(id, silent: true));
+          }
+        }
+      }
     } catch (_) {
       if (mounted) {
         setState(() => _error = 'Não consegui consultar as gerações.');
@@ -59,13 +86,13 @@ class _VideoJobsPanelState extends State<VideoJobsPanel> {
     });
   }
 
-  Future<void> _resume(String id) async {
+  Future<void> _resume(String id, {bool silent = false}) async {
     if (_busy.contains(id)) return;
     setState(() => _busy.add(id));
     try {
       _updateJob(await VideoJobsService.instance.resume(id));
     } catch (_) {
-      if (mounted) {
+      if (mounted && !silent) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Não foi possível verificar o vídeo. Tente novamente.'),
         ));
