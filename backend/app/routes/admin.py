@@ -1,7 +1,11 @@
-"""Painel administrativo somente leitura. Nunca expõe prompts ou lista de usuários."""
+"""Administração comercial autenticada: indicadores agregados e operações beta.
+
+A API não enumera contas e nunca confia em owner informado por usuários comuns.
+"""
 from __future__ import annotations
 
 import os
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -9,7 +13,8 @@ from pydantic import BaseModel, Field
 from ..core.commercial_metrics import media_quota_overview, overview
 from ..core.usage_ledger import overview as cost_overview
 from ..core.commercial_plans import (
-    CommercialError, public_catalog, assign_plan, adjust_credits, account_snapshot, enforcement_enabled,
+    CommercialError, public_catalog, assign_plan, adjust_credits,
+    account_snapshot, enforcement_enabled,
 )
 from ..core.identity import canonical_google_user_id, current_user_id, require_auth
 
@@ -17,7 +22,7 @@ router = APIRouter(prefix="/admin", tags=["commercial-admin"])
 
 
 def _allowed_users() -> set[str]:
-    # Explicit allowlist. Empty by default means admin endpoints are disabled.
+    # Allowlist obrigatória; vazia desabilita o painel.
     raw = os.getenv("GAMA_ADMIN_GOOGLE_EMAILS", "")
     accounts = set()
     for email in raw.replace(";", ",").split(","):
@@ -28,10 +33,16 @@ def _allowed_users() -> set[str]:
 
 
 async def require_admin(user_id: str = Depends(current_user_id)) -> str:
-    # Never allow the legacy X-User-Id path to impersonate an admin.
+    # Nunca autoriza a identificação legada via X-User-Id.
     if not require_auth() or user_id not in _allowed_users():
         raise HTTPException(status_code=403, detail="Acesso administrativo não autorizado")
     return user_id
+
+
+@router.get("/access")
+async def admin_access(_admin: str = Depends(require_admin)):
+    """Sonda mínima para habilitar navegação; não expõe allowlist ou contas."""
+    return {"is_admin": True, "payments_active": False}
 
 
 @router.get("/overview")
@@ -68,7 +79,7 @@ async def admin_commercial_catalog(_admin: str = Depends(require_admin)):
 
 @router.post("/commercial/assign-plan")
 async def admin_assign_plan(payload: PlanAssignment, _admin: str = Depends(require_admin)):
-    """Atribuição manual de beta. Não cria uma compra nem uma assinatura."""
+    """Compatibilidade com API da Fase 3C: identificador canônico."""
     try:
         result = assign_plan(payload.owner, payload.plan, payload.request_id, duration_days=payload.duration_days)
         return {**result, "payments_active": False}
@@ -80,6 +91,67 @@ async def admin_assign_plan(payload: PlanAssignment, _admin: str = Depends(requi
 async def admin_adjust_credits(payload: CreditAdjustment, _admin: str = Depends(require_admin)):
     try:
         result = adjust_credits(payload.owner, payload.delta, payload.request_id, reason=payload.reason)
+        return {**result, "payments_active": False}
+    except CommercialError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+# Operações da Fase 3F por e-mail exato, sem pedir ao administrador IDs técnicos.
+# Nunca são rotas públicas, não fazem listagem de usuários ou pagamentos.
+_EMAIL = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+
+
+class EmailTarget(BaseModel):
+    email: str = Field(min_length=5, max_length=120)
+
+
+def _owner_for_email(email: str) -> str:
+    normalized = email.strip().lower()
+    if not _EMAIL.fullmatch(normalized) or ".." in normalized:
+        raise HTTPException(status_code=422, detail="Informe um e-mail Google válido")
+    # Mesma transformação canônica validada em JWT Google do usuário.
+    return canonical_google_user_id(google_id="", email=normalized)
+
+
+@router.post("/commercial/account-by-email")
+async def admin_account_by_email(payload: EmailTarget, _admin: str = Depends(require_admin)):
+    try:
+        result = account_snapshot(_owner_for_email(payload.email))
+    except CommercialError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        **result,
+        "lookup_note": "Conta calculada a partir do e-mail. Não comprova que esta pessoa já entrou na Gamma.",
+    }
+
+
+class EmailPlanAssignment(EmailTarget):
+    plan: str
+    request_id: str = Field(min_length=8, max_length=80)
+    duration_days: int | None = Field(default=None, ge=1, le=365)
+
+
+class EmailCreditAdjustment(EmailTarget):
+    delta: int = Field(ge=-100000, le=100000)
+    request_id: str = Field(min_length=8, max_length=80)
+    reason: str = Field(min_length=3, max_length=100)
+
+
+@router.post("/commercial/assign-plan-by-email")
+async def admin_assign_plan_by_email(payload: EmailPlanAssignment, _admin: str = Depends(require_admin)):
+    try:
+        result = assign_plan(_owner_for_email(payload.email), payload.plan, payload.request_id,
+                             duration_days=payload.duration_days)
+        return {**result, "payments_active": False}
+    except CommercialError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/commercial/adjust-credits-by-email")
+async def admin_adjust_credits_by_email(payload: EmailCreditAdjustment, _admin: str = Depends(require_admin)):
+    try:
+        result = adjust_credits(_owner_for_email(payload.email), payload.delta, payload.request_id,
+                                reason=payload.reason)
         return {**result, "payments_active": False}
     except CommercialError as exc:
         raise HTTPException(409, str(exc)) from exc

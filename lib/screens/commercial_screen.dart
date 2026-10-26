@@ -4,6 +4,9 @@ import '../core/gama_colors.dart';
 import '../models/commercial_account.dart';
 import '../services/commercial_service.dart';
 import '../services/identity_service.dart';
+import '../services/admin_service.dart';
+import '../core/gama_page_route.dart';
+import 'admin_dashboard_screen.dart';
 
 /// Visão somente leitura. Não contém checkout, preços nem botões de compra.
 /// Atualiza sempre ao abrir/recarregar, sem cache compartilhado entre contas.
@@ -26,6 +29,8 @@ class _CommercialScreenState extends State<CommercialScreen> {
   String? _error;
   bool _loading = false;
   int _loadVersion = 0;
+  bool _canAdmin = false;
+  String? _adminIdentity;
 
   bool get _isGoogle => !widget.requireGoogleAccount ||
       IdentityService.instance.provider == 'google';
@@ -34,6 +39,25 @@ class _CommercialScreenState extends State<CommercialScreen> {
   void initState() {
     super.initState();
     if (_isGoogle) _refresh();
+    if (widget.requireGoogleAccount && IdentityService.instance.provider == 'google') {
+      _checkAdmin();
+    }
+  }
+
+  Future<void> _checkAdmin() async {
+    final identity = IdentityService.instance.userId;
+    _adminIdentity = identity;
+    try {
+      final authorized = await AdminService.instance.checkAccess();
+      if (!mounted || IdentityService.instance.userId != identity ||
+          _adminIdentity != identity) return;
+      setState(() => _canAdmin = authorized);
+    } catch (_) {
+      // Não mostramos o painel até o servidor autorizar explicitamente.
+      if (mounted && IdentityService.instance.userId == identity) {
+        setState(() => _canAdmin = false);
+      }
+    }
   }
 
   Future<void> _refresh() async {
@@ -72,6 +96,14 @@ class _CommercialScreenState extends State<CommercialScreen> {
         backgroundColor: context.gama.surface,
         title: const Text('Meu plano e consumo'),
         actions: [
+          if (_canAdmin && _adminIdentity == IdentityService.instance.userId)
+            IconButton(
+              tooltip: 'Painel administrativo',
+              icon: const Icon(Icons.admin_panel_settings_outlined),
+              onPressed: () => Navigator.of(context).push(GamaPageRoute(
+                builder: (_) => const AdminDashboardScreen(),
+              )),
+            ),
           IconButton(
             tooltip: 'Atualizar informações do plano',
             onPressed: _loading || !_isGoogle ? null : _refresh,
