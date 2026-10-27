@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -283,9 +284,13 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
 
     return Scaffold(
       backgroundColor: context.gama.background,
-      appBar: AppBar(
-        backgroundColor: context.gama.surface,
-        title: const Text('Agendado'),
+      
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: context.gama.accent,
+        onPressed: _add,
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+      body: GamaFloatingPage(
         actions: [
           IconButton(
             tooltip: 'Novo lembrete',
@@ -293,13 +298,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
             icon: const Icon(Icons.add_rounded),
           ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: context.gama.accent,
-        onPressed: _add,
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
-      body: _loading
+        child: _loading
           ? const GamaSkeletonList(itemCount: 5)
           : _items.isEmpty
           ? Center(
@@ -375,7 +374,8 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
                   ...done.map(_tile),
                 ],
               ],
-            ),
+            )
+      ),
     );
   }
 

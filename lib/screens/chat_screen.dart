@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -3861,33 +3862,19 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
               ),
-            // App bar
-            Container(
-              decoration: BoxDecoration(
-                color: context.gama.surface,
-                border: Border(
-                  bottom: BorderSide(color: context.gama.divider, width: 1),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.25),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: SafeArea(
-                bottom: false,
+            // Navegação limpa, sem AppBar ou faixa de fundo.
+            SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
                 child: SizedBox(
-                  height: 56,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
+                  height: 46,
+                  child: Row(
                       children: [
                         // O acesso ao histórico permanece visível, como no layout original.
                         // O Builder garante que o botão encontre o Scaffold que contém o drawer.
                         if (widget.oficinaKind != null)
-                          IconButton(
+                          GamaFloatingControl(child: IconButton(
                             tooltip: 'Voltar à Oficina',
                             icon: const Icon(Icons.arrow_back_rounded),
                             onPressed: () {
@@ -3901,80 +3888,24 @@ class _ChatScreenState extends State<ChatScreen> {
                                 );
                               }
                             },
-                          )
+                          ))
                         else if (!isWideDesktop)
-                          Builder(
-                            builder: (drawerContext) => IconButton(
-                              tooltip: 'Abrir conversas',
-                              style: IconButton.styleFrom(
-                                backgroundColor: context.gama.surfaceCard,
-                                foregroundColor: context.gama.textPrimary,
-                                minimumSize: const Size(42, 42),
-                                padding: EdgeInsets.zero,
+                          GamaFloatingControl(
+                            child: Builder(
+                              builder: (drawerContext) => IconButton(
+                                tooltip: 'Abrir conversas',
+                                icon: const Icon(Icons.menu_rounded, size: 21),
+                                onPressed: () =>
+                                    Scaffold.of(drawerContext).openDrawer(),
                               ),
-                              icon: const Icon(Icons.menu_rounded, size: 21),
-                              onPressed: () =>
-                                  Scaffold.of(drawerContext).openDrawer(),
                             ),
                           ),
                         if (!isWideDesktop) const SizedBox(width: 7),
-                        Container(
-                          width: 32,
-                          height: 32,
-                          padding: const EdgeInsets.all(5),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                context.gama.surfaceHover,
-                                context.gama.surfaceCard,
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: context.gama.border),
-                          ),
-                          child: widget.oficinaKind == null
-                              ? Image.asset(
-                                  'assets/images/image3.png',
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (_, __, ___) => Icon(
-                                    Icons.auto_awesome_rounded,
-                                    color: context.gama.accent,
-                                    size: 22,
-                                  ),
-                                )
-                              : Icon(
-                                  widget.oficinaKind!.icon,
-                                  color: widget.oficinaKind!.color(
-                                    context.gama,
-                                  ),
-                                  size: 21,
-                                ),
-                        ),
-                        const SizedBox(width: 8),
-                        // Os outros controles permanecem no menu de três pontos.
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.oficinaKind?.label ?? 'Gamma 2.0',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: context.gama.textPrimary,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: -0.25,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        // Nada de logomarca/título ocupando a barra superior.
+                        // Cada ação tem seu próprio fundo flutuante.
+                        const Spacer(),
                         if (widget.oficinaKind == null)
-                          PopupMenuButton<GamaMode>(
+                          GamaFloatingControl(child: PopupMenuButton<GamaMode>(
                             enabled: !_isLoading,
                             tooltip: 'Selecionar modo de IA',
                             onSelected: (value) async {
@@ -4028,7 +3959,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ],
                               ),
                             ),
-                          )
+                          ))
                         else if (widget.oficinaKind == OficinaKind.programar)
                           Padding(
                             padding: const EdgeInsets.symmetric(
@@ -4041,7 +3972,8 @@ class _ChatScreenState extends State<ChatScreen> {
                               ),
                             ),
                           ),
-                        PopupMenuButton<String>(
+                        const SizedBox(width: 7),
+                        GamaFloatingControl(child: PopupMenuButton<String>(
                           tooltip: 'Mais opções',
                           icon: const Icon(Icons.more_vert_rounded, size: 24),
                           onSelected: (action) async {
@@ -4151,10 +4083,9 @@ class _ChatScreenState extends State<ChatScreen> {
                               ),
                             ),
                           ],
-                        ),
+                        )),
                       ],
                     ),
-                  ),
                 ),
               ),
             ),
@@ -4330,11 +4261,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                                       margin: EdgeInsets.only(
                                                         bottom: isUser ? 8 : 4,
                                                       ),
-                                                      padding:
-                                                          const EdgeInsets.symmetric(
-                                                            horizontal: 16,
-                                                            vertical: 12,
-                                                          ),
+                                                      padding: isUser
+                                                          ? const EdgeInsets.symmetric(horizontal: 16, vertical: 12)
+                                                          : const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
                                                       decoration: isUser
                                                           ? BoxDecoration(
                                                               gradient: LinearGradient(
@@ -4379,38 +4308,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                     ),
                                                               ),
                                                             )
-                                                          : BoxDecoration(
-                                                              color: context
-                                                                  .gama
-                                                                  .surfaceCard,
-                                                              borderRadius: const BorderRadius.only(
-                                                                topLeft:
-                                                                    Radius.circular(
-                                                                      7,
-                                                                    ),
-                                                                topRight:
-                                                                    Radius.circular(
-                                                                      22,
-                                                                    ),
-                                                                bottomLeft:
-                                                                    Radius.circular(
-                                                                      22,
-                                                                    ),
-                                                                bottomRight:
-                                                                    Radius.circular(
-                                                                      22,
-                                                                    ),
-                                                              ),
-                                                              border: Border.all(
-                                                                color: context
-                                                                    .gama
-                                                                    .border
-                                                                    .withValues(
-                                                                      alpha:
-                                                                          0.45,
-                                                                    ),
-                                                              ),
-                                                            ),
+                                                          : null,
                                                       child: Column(
                                                         crossAxisAlignment:
                                                             CrossAxisAlignment

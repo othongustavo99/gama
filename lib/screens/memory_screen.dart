@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 
 import '../core/gama_colors.dart';
 import '../widgets/loading_skeleton.dart';
@@ -256,14 +257,16 @@ class _MemoryScreenState extends State<MemoryScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Memória da Gama'), actions: [
-      IconButton(tooltip: 'Histórico de memória', icon: const Icon(Icons.history), onPressed: _showHistory),
-    ]),
+    
     floatingActionButton: FloatingActionButton(
       onPressed: _add,
       child: const Icon(Icons.add),
     ),
-    body: FutureBuilder<List<MemoryFact>>(
+    body: GamaFloatingPage(
+        actions: [
+      IconButton(tooltip: 'Histórico de memória', icon: const Icon(Icons.history), onPressed: _showHistory),
+    ],
+        child: FutureBuilder<List<MemoryFact>>(
       future: _facts,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done)
@@ -315,6 +318,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
           },
         );
       },
-    ),
+    )
+      ),
   );
 }

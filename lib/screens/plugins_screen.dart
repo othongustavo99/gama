@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 
 import '../core/gama_colors.dart';
 import '../widgets/loading_skeleton.dart';
@@ -148,11 +149,10 @@ class _PluginsScreenState extends State<PluginsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.gama.background,
-      appBar: AppBar(
-        backgroundColor: context.gama.surface,
-        title: const Text('Plugins'),
-      ),
-      body: _loading
+      
+      body: GamaFloatingPage(
+        actions: const [],
+        child: _loading
           ? const GamaSkeletonList(itemCount: 6)
           : ListView.separated(
               padding: const EdgeInsets.all(16),
@@ -226,7 +226,8 @@ class _PluginsScreenState extends State<PluginsScreen> {
                   ),
                 );
               },
-            ),
+            )
+      ),
     );
   }
 }

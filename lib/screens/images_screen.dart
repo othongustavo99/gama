@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/local_account_scope.dart';
 
@@ -69,9 +70,8 @@ class _ImagesScreenState extends State<ImagesScreen> {
     final filtered = filterLibraryItems(_items, query: _query);
     return Scaffold(
       backgroundColor: context.gama.background,
-      appBar: AppBar(
-        backgroundColor: context.gama.surface,
-        title: const Text('Imagens'),
+      
+      body: GamaFloatingPage(
         actions: [
           IconButton(
             tooltip: 'Atualizar imagens',
@@ -79,8 +79,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],
-      ),
-      body: _loading
+        child: _loading
           ? const GamaSkeletonGrid(itemCount: 6)
           : Column(
               children: [
@@ -231,7 +230,8 @@ class _ImagesScreenState extends State<ImagesScreen> {
                         ),
                 ),
               ],
-            ),
+            )
+      ),
     );
   }
 }

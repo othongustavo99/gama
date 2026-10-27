@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/local_account_scope.dart';
@@ -354,37 +355,26 @@ class _OficinaScaffold extends StatelessWidget {
     );
 
     final content = Builder(
-      // O drawer móvel pertence ao Scaffold externo; o AppBar usa um Scaffold
-      // interno. Este contexto alcança o drawer correto.
+      // O drawer móvel pertence ao Scaffold externo; os controles flutuantes
+      // do hub acessam esse Scaffold por meio deste contexto.
       builder: (drawerContext) => title == null
           ? child
           : Scaffold(
               backgroundColor: context.gama.background,
-              appBar: AppBar(
-                backgroundColor: context.gama.surface,
-                elevation: 0,
-                surfaceTintColor: Colors.transparent,
+
+              body: GamaFloatingPage(
+                showBack: false,
                 leading: Builder(
-                  builder: (ctx) => IconButton(
-                    tooltip: 'Abrir conversas',
-                    icon: Icon(
-                      desktop ? Icons.arrow_back_rounded : Icons.menu_rounded,
-                      color: context.gama.textPrimary,
-                    ),
+                  builder: (buttonContext) => IconButton(
+                    tooltip: desktop ? 'Voltar à conversa' : 'Abrir conversas',
+                    icon: Icon(desktop ? Icons.arrow_back_rounded : Icons.menu_rounded),
                     onPressed: () => desktop
                         ? Navigator.of(context).pop()
                         : Scaffold.of(drawerContext).openDrawer(),
                   ),
                 ),
-                title: Text(
-                  title!,
-                  style: TextStyle(
-                    color: context.gama.textPrimary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+                child: child,
               ),
-              body: child,
             ),
     );
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 
 import 'account_deletion_screen.dart';
 import 'commercial_screen.dart';
@@ -155,11 +156,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.gama.background,
-      appBar: AppBar(
-        backgroundColor: context.gama.surface,
-        title: const Text('Configurações'),
-      ),
-      body: ListView(
+      
+      body: GamaFloatingPage(
+        actions: const [],
+        child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
         children: [
           if (_developerMode) ...[
@@ -460,6 +460,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ],
+      )
       ),
     );
   }

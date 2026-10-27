@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 import 'package:flutter/services.dart';
 
 import '../core/gama_colors.dart';
@@ -124,16 +125,16 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
 
     return Scaffold(
       backgroundColor: palette.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        title: const Text('Conversa por voz'),
+      
+      body: GamaFloatingPage(
+        actions: const [],
+        showBack: false,
         leading: IconButton(
           tooltip: 'Encerrar conversa por voz',
           icon: const Icon(Icons.close_rounded),
           onPressed: () => Navigator.of(context).pop(),
         ),
-      ),
-      body: SafeArea(
+        child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
           child: Column(
@@ -250,6 +251,7 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
             ],
           ),
         ),
+      )
       ),
     );
   }

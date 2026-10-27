@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 
 import '../core/gama_colors.dart';
 import '../models/commercial_account.dart';
@@ -95,9 +96,8 @@ class _CommercialScreenState extends State<CommercialScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.gama.background,
-      appBar: AppBar(
-        backgroundColor: context.gama.surface,
-        title: const Text('Meu plano e consumo'),
+      
+      body: GamaFloatingPage(
         actions: [
           if (_canAdmin && _adminIdentity == IdentityService.instance.userId)
             IconButton(
@@ -113,8 +113,7 @@ class _CommercialScreenState extends State<CommercialScreen> {
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],
-      ),
-      body: Center(
+        child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 780),
           child: !_isGoogle
@@ -140,6 +139,7 @@ class _CommercialScreenState extends State<CommercialScreen> {
                               child: _AccountBody(account: _account!),
                             ),
         ),
+      )
       ),
     );
   }

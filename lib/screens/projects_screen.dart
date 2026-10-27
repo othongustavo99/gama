@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 
 import '../core/gama_colors.dart';
 import '../services/conversation_service.dart';
@@ -15,11 +16,10 @@ class ProjectsScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: context.gama.background,
-      appBar: AppBar(
-        backgroundColor: context.gama.surface,
-        title: const Text('Projetos'),
-      ),
-      body: ListenableBuilder(
+      
+      body: GamaFloatingPage(
+        actions: const [],
+        child: ListenableBuilder(
         listenable: service,
         builder: (context, _) {
           final pinned = service.pinnedConversations;
@@ -116,6 +116,7 @@ class ProjectsScreen extends StatelessWidget {
             },
           );
         },
+      )
       ),
     );
   }

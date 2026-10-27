@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 import 'package:flutter/services.dart';
 
 import '../core/gama_colors.dart';
@@ -27,9 +28,8 @@ class CodeDiffScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: p.background,
-      appBar: AppBar(
-        title: const Text('Prévia das alterações'),
-        backgroundColor: p.background,
+      
+      body: GamaFloatingPage(
         actions: [
           IconButton(
             tooltip: 'Copiar código sugerido',
@@ -45,8 +45,7 @@ class CodeDiffScreen extends StatelessWidget {
             icon: const Icon(Icons.copy_rounded),
           ),
         ],
-      ),
-      body: SafeArea(
+        child: SafeArea(
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1050),
@@ -187,6 +186,7 @@ class CodeDiffScreen extends StatelessWidget {
             ),
           ),
         ),
+      )
       ),
     );
   }

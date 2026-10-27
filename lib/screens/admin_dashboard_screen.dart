@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/gama_colors.dart';
@@ -55,20 +56,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       length: 2,
       child: Scaffold(
         backgroundColor: context.gama.background,
-        appBar: AppBar(
-          backgroundColor: context.gama.surface,
-          title: const Text('Administração Gamma'),
-          actions: [IconButton(
+        
+        body: GamaFloatingPage(
+        actions: [IconButton(
             tooltip: 'Atualizar indicadores',
             onPressed: _loading ? null : _reload,
             icon: const Icon(Icons.refresh_rounded),
           )],
-          bottom: const TabBar(tabs: [
+        tabs: const TabBar(tabs: [
             Tab(icon: Icon(Icons.analytics_outlined), text: 'Indicadores'),
             Tab(icon: Icon(Icons.manage_accounts_outlined), text: 'Planos e créditos'),
           ]),
-        ),
-        body: _loading
+        child: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
                 ? _InfoState(message: _error!, onRetry: _reload)
@@ -79,7 +78,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       onDays: (days) { setState(() => _days = days); _reload(); },
                     ),
                     _ManagementTab(key: ValueKey(_identity)),
-                  ]),
+                  ])
+      ),
       ),
     );
   }

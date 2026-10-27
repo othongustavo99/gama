@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -39,14 +40,16 @@ class _PlaySubscriptionScreenState extends State<PlaySubscriptionScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.gama.background,
-      appBar: AppBar(title: const Text('Assinaturas Gamma'), actions: [
+      
+      body: GamaFloatingPage(
+        actions: [
         IconButton(
           tooltip: 'Atualizar produtos',
           onPressed: billing.loading ? null : billing.loadCatalog,
           icon: const Icon(Icons.refresh_rounded),
         ),
-      ]),
-      body: Center(child: ConstrainedBox(
+      ],
+        child: Center(child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 700),
         child: ListView(padding: const EdgeInsets.all(20), children: [
           Text('Escolha seu plano', style: TextStyle(
@@ -114,7 +117,8 @@ class _PlaySubscriptionScreenState extends State<PlaySubscriptionScreen> {
             'volte à tela Meu plano e consumo e atualize os dados.',
             style: TextStyle(color: context.gama.textSecondary, fontSize: 12)),
         ]),
-      )),
+      ))
+      ),
     );
   }
 }

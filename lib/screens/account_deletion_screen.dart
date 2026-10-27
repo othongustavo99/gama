@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 
 import '../core/gama_colors.dart';
 import '../services/account_privacy_service.dart';
@@ -65,8 +66,10 @@ class _AccountDeletionScreenState extends State<AccountDeletionScreen> {
     final google = IdentityService.instance.provider == 'google';
     return Scaffold(
       backgroundColor: context.gama.background,
-      appBar: AppBar(title: const Text('Conta e privacidade')),
-      body: ListView(
+      
+      body: GamaFloatingPage(
+        actions: const [],
+        child: ListView(
         padding: const EdgeInsets.all(24),
         children: [
           Icon(Icons.shield_outlined, color: context.gama.accent, size: 36),
@@ -123,6 +126,7 @@ class _AccountDeletionScreenState extends State<AccountDeletionScreen> {
             SelectableText(_error!, style: TextStyle(color: context.gama.error)),
           ],
         ],
+      )
       ),
     );
   }

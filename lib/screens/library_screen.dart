@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import '../widgets/gama_floating_page.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -419,9 +420,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
     return Scaffold(
       backgroundColor: context.gama.background,
-      appBar: AppBar(
-        backgroundColor: context.gama.surface,
-        title: const Text('Biblioteca'),
+      
+      body: GamaFloatingPage(
         actions: [
           IconButton(
             tooltip: 'Atualizar Biblioteca',
@@ -435,8 +435,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               icon: Icon(Icons.delete_sweep_outlined, color: context.gama.error),
             ),
         ],
-      ),
-      body: Column(
+        child: Column(
         children: [
           if (MediaQuery.sizeOf(context).width >= 720)
             const Padding(
@@ -612,6 +611,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
           ),
         ],
+      )
       ),
     );
   }
