@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -17,10 +18,12 @@ import 'services/settings_service.dart';
 import 'services/identity_service.dart';
 import 'services/temporary_file_service.dart';
 import 'services/play_billing_service.dart';
+import 'widgets/gama_navigation_bar_surface.dart';
 
 const _gamaLightSystemUiOverlayStyle = SystemUiOverlayStyle(
-  statusBarColor: Color(0xFFFFFFFF),
+  statusBarColor: Colors.transparent,
   statusBarIconBrightness: Brightness.dark,
+  systemStatusBarContrastEnforced: false,
   statusBarBrightness: Brightness.light,
   systemNavigationBarColor: Color(0xFFF7F8FA),
   systemNavigationBarDividerColor: Color(0xFFF7F8FA),
@@ -29,8 +32,9 @@ const _gamaLightSystemUiOverlayStyle = SystemUiOverlayStyle(
 );
 
 const _gamaDarkSystemUiOverlayStyle = SystemUiOverlayStyle(
-  statusBarColor: Color(0xFF10141B),
+  statusBarColor: Colors.transparent,
   statusBarIconBrightness: Brightness.light,
+  systemStatusBarContrastEnforced: false,
   statusBarBrightness: Brightness.dark,
   systemNavigationBarColor: Color(0xFF0B0E13),
   systemNavigationBarDividerColor: Color(0xFF0B0E13),
@@ -41,6 +45,11 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(_gamaDarkSystemUiOverlayStyle);
+  // No Android a tela chega até a barra de status. A própria página aplica
+  // o degradê de sombra; a plataforma não deve pintar uma faixa sólida.
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
 
   await Hive.initFlutter();
 
@@ -155,7 +164,8 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
         systemOverlayStyle: isDark
             ? _gamaDarkSystemUiOverlayStyle
             : _gamaLightSystemUiOverlayStyle,
-        backgroundColor: surface,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
         foregroundColor: textPrimary,
         elevation: 0,
         scrolledUnderElevation: 0,
@@ -295,7 +305,12 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
                   disableAnimations:
                       media.disableAnimations || SettingsService.instance.reduceMotion,
                 ),
-                child: child ?? const SizedBox.shrink(),
+                // Android API 36 ignora systemNavigationBarColor em edge-to-edge.
+                // Pintamos somente o espaço da navegação inferior na cor opaca
+                // do tema ativo, mantendo a barra de status transparente.
+                child: GamaNavigationBarSurface(
+                  child: child ?? const SizedBox.shrink(),
+                ),
               ),
             );
           },

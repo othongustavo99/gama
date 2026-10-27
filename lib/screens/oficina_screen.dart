@@ -162,7 +162,9 @@ class _OficinaScreenState extends State<OficinaScreen> {
                 child: CustomScrollView(
                   slivers: [
                     SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(24, 30, 24, 20),
+                      padding: EdgeInsets.fromLTRB(
+                        24, MediaQuery.paddingOf(context).top + 100, 24, 20,
+                      ),
                       sliver: SliverToBoxAdapter(
                         child: Column(
                           children: [
@@ -362,6 +364,7 @@ class _OficinaScaffold extends StatelessWidget {
 
               body: GamaFloatingPage(
                 showBack: false,
+                contentBehindHeader: true,
                 leading: Builder(
                   builder: (buttonContext) => IconButton(
                     tooltip: desktop ? 'Voltar à conversa' : 'Abrir conversas',

@@ -1,17 +1,20 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
 
-/// Padrão de navegação sem AppBar: apenas os controles essenciais flutuam
-/// sobre o fundo da tela.
+/// Camada de controles sem AppBar: nenhuma superfície é desenhada atrás
+/// da linha inteira. Apenas cada botão possui seu próprio fundo opaco.
+///
+/// Em páginas com rolagem, [contentBehindHeader] permite que os itens
+/// continuem passando por trás do cabeçalho. A página deve reservar um
+/// espaço inicial dentro da própria rolagem para os primeiros itens.
 class GamaFloatingPage extends StatelessWidget {
   final Widget child;
   final List<Widget> actions;
   final Widget? leading;
   final bool showBack;
   final Widget? tabs;
+  final bool contentBehindHeader;
 
   const GamaFloatingPage({
     super.key,
@@ -20,26 +23,38 @@ class GamaFloatingPage extends StatelessWidget {
     this.leading,
     this.showBack = true,
     this.tabs,
+    this.contentBehindHeader = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final safeTop = MediaQuery.paddingOf(context).top;
+    final top = MediaQuery.paddingOf(context).top;
+    final headerInset = top + 70.0;
+
+    // O corpo ocupa o espaço real da página. O inset de segurança é aplicado
+    // somente onde necessário, não por uma faixa colorida de AppBar.
+    final content = tabs != null
+        ? Padding(
+            padding: EdgeInsets.only(top: headerInset),
+            child: Column(
+              children: [
+                tabs!,
+                Expanded(child: child),
+              ],
+            ),
+          )
+        : contentBehindHeader
+            ? child
+            : Padding(
+                padding: EdgeInsets.only(top: headerInset),
+                child: child,
+              );
+
     return Stack(
+      fit: StackFit.expand,
       children: [
-        Positioned.fill(
-          child: Padding(
-            padding: EdgeInsets.only(top: safeTop + 62),
-            child: tabs == null
-                ? child
-                : Column(
-                    children: [
-                      tabs!,
-                      Expanded(child: child),
-                    ],
-                  ),
-          ),
-        ),
+        content,
+        // Somente sombra transparente, nunca fundo sólido ou barreira de toque.
         const Positioned(
           left: 0,
           right: 0,
@@ -49,7 +64,7 @@ class GamaFloatingPage extends StatelessWidget {
         Positioned(
           left: 12,
           right: 12,
-          top: safeTop + 6,
+          top: top + 6,
           child: Row(
             children: [
               if (leading != null)
@@ -75,39 +90,31 @@ class GamaFloatingPage extends StatelessWidget {
   }
 }
 
-/// Véu superior compartilhado com todas as telas de navegação flutuante.
-/// A transição termina em transparência total: não cria uma faixa ou corte
-/// horizontal quando o conteúdo é rolado sob os controles.
+/// Sombra sutil, com alfa decrescente até zero: o conteúdo que passa
+/// por trás permanece visível. Adapta-se ao tema atual.
 class GamaTopShade extends StatelessWidget {
   const GamaTopShade({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.gama;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final height = MediaQuery.paddingOf(context).top + 148.0;
-    final shade = Color.lerp(
-      palette.background,
-      isDark ? Colors.black : const Color(0xFFB8C0CC),
-      isDark ? 0.42 : 0.20,
-    )!;
+    final shadow = isDark ? Colors.black : const Color(0xFF18202D);
+    final height = MediaQuery.paddingOf(context).top + 150.0;
 
-    return ClipRect(
-      child: SizedBox(
-        height: height,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              stops: const [0.0, 0.30, 0.67, 1.0],
-              colors: [
-                shade.withValues(alpha: 0.97),
-                shade.withValues(alpha: 0.84),
-                shade.withValues(alpha: 0.34),
-                shade.withValues(alpha: 0),
-              ],
-            ),
+    return SizedBox(
+      height: height,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: const [0.0, 0.30, 0.68, 1.0],
+            colors: [
+              shadow.withValues(alpha: isDark ? 0.32 : 0.13),
+              shadow.withValues(alpha: isDark ? 0.20 : 0.075),
+              shadow.withValues(alpha: isDark ? 0.055 : 0.02),
+              shadow.withValues(alpha: 0),
+            ],
           ),
         ),
       ),
@@ -115,7 +122,8 @@ class GamaTopShade extends StatelessWidget {
   }
 }
 
-/// Contorno discreto aplicado ao botão flutuante.
+/// Botão circular com fundo 100% sólido em qualquer tela ou tema.
+/// A opacidade pertence ao botão; a barra inteira permanece transparente.
 class GamaFloatingControl extends StatelessWidget {
   final Widget child;
 
@@ -128,18 +136,18 @@ class GamaFloatingControl extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: palette.surfaceCard,
-        border: Border.all(color: palette.border.withValues(alpha: 0.58)),
+        border: Border.all(color: palette.border),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.18),
+            color: Colors.black.withValues(alpha: 0.23),
             blurRadius: 18,
-            offset: const Offset(0, 8),
+            offset: const Offset(0, 7),
           ),
         ],
       ),
       child: ClipOval(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Material(
+          color: palette.surfaceCard,
           child: IconTheme(
             data: IconThemeData(color: palette.textPrimary, size: 22),
             child: ConstrainedBox(

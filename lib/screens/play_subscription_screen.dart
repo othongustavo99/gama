@@ -42,6 +42,7 @@ class _PlaySubscriptionScreenState extends State<PlaySubscriptionScreen> {
       backgroundColor: context.gama.background,
       
       body: GamaFloatingPage(
+        contentBehindHeader: true,
         actions: [
         IconButton(
           tooltip: 'Atualizar produtos',
@@ -51,7 +52,9 @@ class _PlaySubscriptionScreenState extends State<PlaySubscriptionScreen> {
       ],
         child: Center(child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 700),
-        child: ListView(padding: const EdgeInsets.all(20), children: [
+        child: ListView(padding: EdgeInsets.fromLTRB(
+          20, MediaQuery.paddingOf(context).top + 90, 20, 20,
+        ), children: [
           Text('Escolha seu plano', style: TextStyle(
               color: context.gama.textPrimary, fontSize: 24, fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),

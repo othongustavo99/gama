@@ -3900,9 +3900,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(21),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: PopupMenuButton<GamaMode>(
+        child: PopupMenuButton<GamaMode>(
             enabled: !_isLoading,
             tooltip: 'Selecionar modo de IA',
             onSelected: (value) async {
@@ -3964,7 +3962,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
           ),
-        ),
       ),
     );
   }

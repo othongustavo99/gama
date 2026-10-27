@@ -263,6 +263,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
       child: const Icon(Icons.add),
     ),
     body: GamaFloatingPage(
+        contentBehindHeader: true,
         actions: [
       IconButton(tooltip: 'Histórico de memória', icon: const Icon(Icons.history), onPressed: _showHistory),
     ],
@@ -282,7 +283,9 @@ class _MemoryScreenState extends State<MemoryScreen> {
         if (facts.isEmpty)
           return const Center(child: Text('Ainda não há informações salvas.'));
         return ListView.separated(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.fromLTRB(
+            16, MediaQuery.paddingOf(context).top + 86, 16, 16,
+          ),
           itemCount: facts.length,
           separatorBuilder: (_, __) => const SizedBox(height: 8),
           itemBuilder: (context, index) {

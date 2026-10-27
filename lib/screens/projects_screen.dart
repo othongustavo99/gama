@@ -19,6 +19,7 @@ class ProjectsScreen extends StatelessWidget {
       
       body: GamaFloatingPage(
         actions: const [],
+        contentBehindHeader: true,
         child: ListenableBuilder(
         listenable: service,
         builder: (context, _) {
@@ -31,7 +32,9 @@ class ProjectsScreen extends StatelessWidget {
             );
           }
           return ListView.separated(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.fromLTRB(
+              16, MediaQuery.paddingOf(context).top + 86, 16, 16,
+            ),
             itemCount: pinned.length + 1,
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (_, i) {

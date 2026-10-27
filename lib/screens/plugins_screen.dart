@@ -152,10 +152,13 @@ class _PluginsScreenState extends State<PluginsScreen> {
       
       body: GamaFloatingPage(
         actions: const [],
+        contentBehindHeader: true,
         child: _loading
           ? const GamaSkeletonList(itemCount: 6)
           : ListView.separated(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(
+                16, MediaQuery.paddingOf(context).top + 86, 16, 16,
+              ),
               itemCount: _catalog.length + 1,
               separatorBuilder: (_, __) => const SizedBox(height: 8),
               itemBuilder: (_, i) {

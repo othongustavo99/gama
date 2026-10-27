@@ -159,8 +159,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       
       body: GamaFloatingPage(
         actions: const [],
+        contentBehindHeader: true,
         child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
+        padding: EdgeInsets.fromLTRB(
+          20, MediaQuery.paddingOf(context).top + 86, 20, 40,
+        ),
         children: [
           if (_developerMode) ...[
             const _SectionTitle('API'),

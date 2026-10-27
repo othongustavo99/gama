@@ -69,8 +69,11 @@ class _AccountDeletionScreenState extends State<AccountDeletionScreen> {
       
       body: GamaFloatingPage(
         actions: const [],
+        contentBehindHeader: true,
         child: ListView(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.fromLTRB(
+          24, MediaQuery.paddingOf(context).top + 94, 24, 24,
+        ),
         children: [
           Icon(Icons.shield_outlined, color: context.gama.accent, size: 36),
           const SizedBox(height: 14),
