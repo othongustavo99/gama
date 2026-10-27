@@ -176,3 +176,21 @@ async def admin_play_reconcile(limit: int = Query(default=20, ge=1, le=50),
         return await play_reconciliation.reconcile_due(limit=limit, min_age_minutes=5)
     except play_reconciliation.billing.BillingUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
+
+
+@router.get('/ops')
+async def admin_ops(minutes: int = Query(default=15, ge=1, le=60),
+                    _admin: str = Depends(require_admin)):
+    """Operational measurements; no client data, passwords or token payloads."""
+    from ..core.ops_observability import snapshot
+    from ..storage_status import current_storage_status
+    storage = current_storage_status()
+    return {
+        'runtime': snapshot(minutes),
+        'storage': {
+            'status': storage['status'],
+            'writable': storage['writable'],
+            'persistent': storage['persistent'],
+        },
+        'warning': 'In-process metrics reset after a restart; use Railway monitoring for long-term trends.',
+    }

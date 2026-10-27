@@ -53,3 +53,8 @@ def inspect_data_storage() -> dict[str, object]:
         "data_dir_matches_volume": matches_volume,
         "writable": writable,
     }
+
+
+def current_storage_status() -> dict[str, object]:
+    """Real-time storage probe used by readiness; startup cache is not reliable here."""
+    return inspect_data_storage.__wrapped__()

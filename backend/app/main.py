@@ -2,11 +2,15 @@ import logging
 from contextlib import suppress
 import asyncio
 import sqlite3
+import secrets
+import time
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from .core.ops_observability import record_response
 
 from .config import settings
 from .llm import llm
@@ -27,7 +31,7 @@ from .routes.play_notifications import router as play_notifications_router
 from .core.play_reconciliation import periodic_reconcile_loop, enabled as play_rtdn_enabled
 from .security import body_too_large, rate_limit_chat, rate_limit_default, require_api_key
 from .core.identity import require_auth, google_oauth_client_ids, current_user_id
-from .storage_status import inspect_data_storage
+from .storage_status import inspect_data_storage, current_storage_status
 from .core.production_guard import assert_safe_production_configuration
 from .core.commercial_metrics import record_request
 
@@ -91,6 +95,28 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def operational_request_tracking(request: Request, call_next):
+    """Limited in-process telemetry. Never log request body, query or auth headers."""
+    started = time.perf_counter()
+    request_id = secrets.token_hex(8)
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers['X-Request-ID'] = request_id
+        return response
+    finally:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        record_response(request.url.path, status, elapsed_ms)
+        threshold_ms = max(100, int(os.getenv('GAMA_OPS_SLOW_REQUEST_MS', '3000')))
+        if status >= 500 or elapsed_ms >= threshold_ms:
+            # Only the top-level, static route category is safe for logs.
+            from .core.ops_observability import route_group
+            logger.warning('http_request request_id=%s route_group=%s status=%d headers_ms=%.0f',
+                           request_id, route_group(request.url.path), status, elapsed_ms)
+
+
+@app.middleware("http")
 async def limit_body(request: Request, call_next):
     limit = body_too_large(request)
     if limit:
@@ -143,3 +169,17 @@ app.include_router(media_public_router)
 async def health():
     """Public liveness probe; avoid exposing provider, version, and feature flags."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def readiness():
+    """Public readiness probe. Never reveals storage paths, credentials or models."""
+    storage = current_storage_status()
+    # Railway uses persistent data. Locally, allow development unless explicitly
+    # required by GAMA_REQUIRE_PERSISTENT_STORAGE=1.
+    in_railway = bool(os.getenv('RAILWAY_PROJECT_ID'))
+    strict = in_railway or os.getenv('GAMA_REQUIRE_PERSISTENT_STORAGE', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    ready = bool(storage['writable']) and (not strict or storage['persistent'])
+    if ready:
+        return {'status': 'ready'}
+    return JSONResponse({'status': 'unavailable'}, status_code=503)
