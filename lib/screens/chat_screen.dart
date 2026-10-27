@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -9,7 +10,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
 import '../widgets/gama_floating_page.dart';
+
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -56,6 +59,7 @@ import '../utils/chat_scroll_policy.dart';
 import '../utils/chat_generation_clock.dart';
 import '../utils/stream_display_filter.dart';
 import '../utils/speech_reveal_buffer.dart';
+
 import 'package:flutter/rendering.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -134,7 +138,8 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime? _streamRevealFinishStarted;
   bool _messageKeyPruneScheduled = false;
   StringBuffer _streamRawText = StringBuffer();
-  final GamaStreamDisplayFilter _streamDisplayFilter = GamaStreamDisplayFilter();
+  final GamaStreamDisplayFilter _streamDisplayFilter =
+      GamaStreamDisplayFilter();
   String _streamSearchQuery = '';
   bool _followStream = true;
   Timer? _voiceAutoSendTimer;
@@ -397,7 +402,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_scrollController.hasClients) return;
     final position = _scrollController.position;
     final nearBottom = ChatScrollPolicy.nearEnd(
-      position.pixels, position.maxScrollExtent,
+      position.pixels,
+      position.maxScrollExtent,
     );
     _nearBottomCache = nearBottom;
     if (nearBottom && (_isLoading || _isSpeaking)) _followStream = true;
@@ -412,9 +418,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _handleListScrollNotification(ScrollNotification notification) {
     // Touch drag, mouse wheel e trackpad devem interromper o auto-follow.
     // Scroll programático para o fim não é uma interação do usuário.
-    final userDragging = notification is ScrollStartNotification &&
+    final userDragging =
+        notification is ScrollStartNotification &&
         notification.dragDetails != null;
-    final userMovingUp = notification is UserScrollNotification &&
+    final userMovingUp =
+        notification is UserScrollNotification &&
         notification.direction == ScrollDirection.forward;
     if ((_isLoading || _isSpeaking) && (userDragging || userMovingUp)) {
       _followStream = false;
@@ -435,12 +443,14 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
       final updated = _scrollController.position;
-      _scrollController.jumpTo(ChatScrollPolicy.restoredOffset(
-        oldOffset: previousOffset,
-        oldMaxExtent: previousMax,
-        newMaxExtent: updated.maxScrollExtent,
-        minExtent: updated.minScrollExtent,
-      ));
+      _scrollController.jumpTo(
+        ChatScrollPolicy.restoredOffset(
+          oldOffset: previousOffset,
+          oldMaxExtent: previousMax,
+          newMaxExtent: updated.maxScrollExtent,
+          minExtent: updated.minScrollExtent,
+        ),
+      );
     });
   }
 
@@ -534,8 +544,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _streamRevealBudget += seconds * charsPerSecond;
     // Ao concluir a requisição, drena a fila em até ~450 ms, mantendo
     // a animação visível em vez de substituir todo o texto de uma vez.
-    final elapsedFinish = _streamRevealFinishStarted == null ? 0 :
-        now.difference(_streamRevealFinishStarted!).inMilliseconds;
+    final elapsedFinish = _streamRevealFinishStarted == null
+        ? 0
+        : now.difference(_streamRevealFinishStarted!).inMilliseconds;
     final finishFrames = ((450 - elapsedFinish).clamp(48, 450) / 48).ceil();
     final minimumFinishCount = _finishingStreamReveal
         ? (pending / finishFrames).ceil()
@@ -555,7 +566,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _finishStreamReveal(String finalText, {bool animate = false}) {
-    if (animate && mounted && _streamRevealQueue.isNotEmpty &&
+    if (animate &&
+        mounted &&
+        _streamRevealQueue.isNotEmpty &&
         !(MediaQuery.maybeOf(context)?.disableAnimations ?? false)) {
       _streamRevealFinalText = finalText;
       _streamRevealFinishStarted = DateTime.now();
@@ -1418,7 +1431,8 @@ class _ChatScreenState extends State<ChatScreen> {
         forced: effectiveForce,
         userFollowing: _followStream && (followStream || _nearBottomCache),
       )) {
-        if (effectiveForce && !(MediaQuery.maybeOf(context)?.disableAnimations ?? false)) {
+        if (effectiveForce &&
+            !(MediaQuery.maybeOf(context)?.disableAnimations ?? false)) {
           _scrollController.animateTo(
             position.maxScrollExtent,
             duration: const Duration(milliseconds: 180),
@@ -1776,7 +1790,9 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (!mounted) return;
     if (restored.isNotEmpty) {
-      _snack('Ramo criado. Reanexe os arquivos do pedido editado antes de enviar.');
+      _snack(
+        'Ramo criado. Reanexe os arquivos do pedido editado antes de enviar.',
+      );
     }
     // Anexos não são transportados automaticamente para outro chat:
     // o texto editado fica como rascunho, sem simular envio de anexos.
@@ -2673,7 +2689,6 @@ class _ChatScreenState extends State<ChatScreen> {
     return false;
   }
 
-
   /// O primeiro vocábulo troca o indicador de síntese pela mensagem real.
   /// Depois disso apenas o ValueNotifier da mensagem é reconstruído.
   void _showSpeechProgress(String chunk, double fraction) {
@@ -2814,8 +2829,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _retryLastFailedRequest() async {
-    if (_isLoading || !_failedRequestRetryable ||
-        _failedAssistantMessageId == null) return;
+    if (_isLoading ||
+        !_failedRequestRetryable ||
+        _failedAssistantMessageId == null)
+      return;
     final failedId = _failedAssistantMessageId!;
     final failedIndex = _messages.indexWhere((m) => m.id == failedId);
     if (failedIndex < 0) return;
@@ -2974,10 +2991,15 @@ class _ChatScreenState extends State<ChatScreen> {
     // degrade com segurança, sem habilitar rede/memória/arquivos extras.
     late final Map<String, bool> pluginFlags;
     try {
-      pluginFlags = await PluginSettingsService.instance.load()
-          .timeout(const Duration(seconds: 5));
+      pluginFlags = await PluginSettingsService.instance.load().timeout(
+        const Duration(seconds: 5),
+      );
     } catch (error, stack) {
-      logSwallowed(error, stack, context: 'carregar preferências antes do envio');
+      logSwallowed(
+        error,
+        stack,
+        context: 'carregar preferências antes do envio',
+      );
       pluginFlags = <String, bool>{
         'web_search': false,
         'memory': false,
@@ -2987,7 +3009,9 @@ class _ChatScreenState extends State<ChatScreen> {
         'tts': false,
         'scheduled': false,
       };
-      debugPrint('Gamma: preferências de plugins indisponíveis; envio de texto com recursos opcionais desativados.');
+      debugPrint(
+        'Gamma: preferências de plugins indisponíveis; envio de texto com recursos opcionais desativados.',
+      );
     }
     if (_attachments.isNotEmpty && pluginFlags['attachments'] == false) {
       _snack(
@@ -3045,7 +3069,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final voiceRequested =
         (_speakNextReply || SettingsService.instance.ttsAuto) &&
-        (pluginFlags['tts'] ?? true) && widget.oficinaKind == null;
+        (pluginFlags['tts'] ?? true) &&
+        widget.oficinaKind == null;
 
     unawaited(HapticFeedback.lightImpact());
     _followStream = true;
@@ -3114,7 +3139,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _streamPhase = 'thinking';
       });
       try {
-        await _service.addMessage(userMessage)
+        await _service
+            .addMessage(userMessage)
             .timeout(const Duration(seconds: 7));
       } catch (error, stack) {
         // O chat utiliza _messages em memória para montar a requisição.
@@ -3162,10 +3188,12 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     try {
       try {
-        await ConversationSyncService.instance.trackPendingGeneration(
-          conversationId: widget.conversationId,
-          assistantMessageId: assistantMessage.id,
-        ).timeout(const Duration(seconds: 5));
+        await ConversationSyncService.instance
+            .trackPendingGeneration(
+              conversationId: widget.conversationId,
+              assistantMessageId: assistantMessage.id,
+            )
+            .timeout(const Duration(seconds: 5));
       } catch (error, stack) {
         // Checkpoint de recuperação é auxiliar, não pré-requisito do chat.
         logSwallowed(error, stack, context: 'checkpoint da geração');
@@ -3202,12 +3230,18 @@ class _ChatScreenState extends State<ChatScreen> {
         images: imagePayload.isEmpty ? null : imagePayload,
         voiceMode: willSpeak && oficina == null,
         chatMode: resolvedChatMode,
-        imageAspectRatio: oficina == OficinaKind.imagem ? _imageAspectRatio : null,
+        imageAspectRatio: oficina == OficinaKind.imagem
+            ? _imageAspectRatio
+            : null,
         imageStyle: oficina == OficinaKind.imagem ? _imageStyle : null,
         videoDuration: oficina == OficinaKind.video ? _videoDuration : null,
         videoResolution: oficina == OficinaKind.video ? _videoResolution : null,
-        videoAspectRatio: oficina == OficinaKind.video ? _videoAspectRatio : null,
-        videoGenerateAudio: oficina == OficinaKind.video ? _videoGenerateAudio : null,
+        videoAspectRatio: oficina == OficinaKind.video
+            ? _videoAspectRatio
+            : null,
+        videoGenerateAudio: oficina == OficinaKind.video
+            ? _videoGenerateAudio
+            : null,
         conversationId: widget.conversationId,
         assistantMessageId: assistantMessage.id,
       );
@@ -3312,16 +3346,20 @@ class _ChatScreenState extends State<ChatScreen> {
             );
             final incoming = Map<String, dynamic>.from(event.artifact!);
             final artifactId = incoming['artifact_id']?.toString();
-            if (artifactId == null || artifactId.isEmpty ||
+            if (artifactId == null ||
+                artifactId.isEmpty ||
                 !artifacts.any((a) => a['artifact_id'] == artifactId)) {
               artifacts.add(incoming);
               _messages.last.artifacts = artifacts;
               // Salva imediatamente se esta mensagem já estiver no Hive.
               // Respostas novas são salvas completas em onDone/onError.
               if (_messages.last.isInBox) {
-                unawaited(_service.updateMessageContent(
-                  _messages.last, _messages.last.content,
-                ));
+                unawaited(
+                  _service.updateMessageContent(
+                    _messages.last,
+                    _messages.last.content,
+                  ),
+                );
               }
               setState(() {});
             }
@@ -3401,22 +3439,25 @@ class _ChatScreenState extends State<ChatScreen> {
               if (!isVoiceReply && completedText.isNotEmpty) completedText,
               ...generatedImageBlocks,
             ].join('\n\n');
-            _finishStreamReveal(isVoiceReply ? '' : completedText,
-                animate: !isVoiceReply);
+            _finishStreamReveal(
+              isVoiceReply ? '' : completedText,
+              animate: !isVoiceReply,
+            );
           }
           final latestAssistant =
               _messages.isNotEmpty && _messages.last.isAssistant
               ? _messages.last
               : null;
-          final hasArtifact = latestAssistant != null &&
+          final hasArtifact =
+              latestAssistant != null &&
               (_artifactsByMessageId[latestAssistant.id]?.isNotEmpty ?? false);
           final hasResponse = isVoiceReply
               ? (_voiceResponseBuffer.trim().isNotEmpty ||
-                  (latestAssistant?.content.trim().isNotEmpty ?? false) ||
-                  hasArtifact)
+                    (latestAssistant?.content.trim().isNotEmpty ?? false) ||
+                    hasArtifact)
               : (_streamingText.value.trim().isNotEmpty ||
-                  (latestAssistant?.content.trim().isNotEmpty ?? false) ||
-                  hasArtifact);
+                    (latestAssistant?.content.trim().isNotEmpty ?? false) ||
+                    hasArtifact);
           if (!hasResponse) {
             final speech = _liveSpeech;
             _liveSpeech = null;
@@ -3463,12 +3504,14 @@ class _ChatScreenState extends State<ChatScreen> {
               // Preserve imagens criadas pela ferramenta mesmo quando a
               // resposta textual é revelada pelo TTS. O áudio fala apenas
               // responseText; o histórico mantém os blocos de mídia.
-              final imageBlocks = RegExp(
-                r'\[gama_image_file\][\s\S]*?\[/gama_image_file\]|'
-                r'\[gama_image\][\s\S]*?\[/gama_image\]',
-              ).allMatches(assistantToSave.content)
-                  .map((match) => match.group(0)!)
-                  .toList();
+              final imageBlocks =
+                  RegExp(
+                        r'\[gama_image_file\][\s\S]*?\[/gama_image_file\]|'
+                        r'\[gama_image\][\s\S]*?\[/gama_image\]',
+                      )
+                      .allMatches(assistantToSave.content)
+                      .map((match) => match.group(0)!)
+                      .toList();
               assistantToSave.content = [
                 responseText,
                 ...imageBlocks,
@@ -3833,6 +3876,311 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  Widget _buildModeFloatingControl(BuildContext context) {
+    final palette = context.gama;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: palette.border.withValues(alpha: 0.55)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            palette.surfaceCard,
+            palette.surfaceHover,
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.16),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(21),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: PopupMenuButton<GamaMode>(
+            enabled: !_isLoading,
+            tooltip: 'Selecionar modo de IA',
+            onSelected: (value) async {
+              if (_mode == value) return;
+              setState(() => _mode = value);
+              await SettingsService.instance.setMode(value);
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: GamaMode.conversar,
+                child: ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.chat_bubble_outline_rounded),
+                  title: Text('Conversar'),
+                  subtitle: Text('GPT-5.4 Mini'),
+                ),
+              ),
+              const PopupMenuItem(
+                value: GamaMode.programar,
+                child: ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.code_rounded),
+                  title: Text('Trabalhar'),
+                  subtitle: Text('GLM 5.3 Flash'),
+                ),
+              ),
+            ],
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _mode == GamaMode.conversar
+                      ? Icons.chat_bubble_outline_rounded
+                      : Icons.auto_awesome_rounded,
+                  size: 17,
+                  color: palette.textPrimary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _mode == GamaMode.conversar ? 'Conversar' : 'Trabalhar',
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.expand_more_rounded,
+                  size: 18,
+                  color: palette.textSecondary,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAttachmentTray(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            context.gama.surfaceCard.withValues(alpha: 0.84),
+            context.gama.surfaceHover.withValues(alpha: 0.76),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: context.gama.border.withValues(alpha: 0.8)),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: _attachments.map((a) {
+          if (a.kind.name == 'image' && a.sourcePath != null) {
+            return Container(
+              width: 220,
+              padding: const EdgeInsets.all(7),
+              decoration: BoxDecoration(
+                color: context.gama.surfaceCard,
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(color: context.gama.border),
+              ),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => _showPendingImagePreview(a),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(
+                        File(a.sourcePath!),
+                        width: 56,
+                        height: 56,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 56,
+                          height: 56,
+                          color: context.gama.surfaceHover,
+                          child: const Icon(Icons.broken_image_outlined),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => _showPendingImagePreview(a),
+                      child: Text(
+                        a.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: context.gama.textPrimary,
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Remover anexo',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => setState(() => _attachments.remove(a)),
+                    icon: const Icon(Icons.close_rounded, size: 17),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 28,
+                      height: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+            );
+          }
+          return Container(
+            padding: const EdgeInsets.only(left: 4, right: 4),
+            decoration: BoxDecoration(
+              color: context.gama.surfaceCard,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: context.gama.border),
+            ),
+            child: Chip(
+              avatar: CircleAvatar(
+                backgroundColor: context.gama.accentSoft,
+                child: Icon(
+                  a.kind.name == 'image'
+                      ? Icons.image_rounded
+                      : a.kind.name == 'video'
+                      ? Icons.movie_creation_outlined
+                      : a.kind.name == 'zip'
+                      ? Icons.folder_zip_rounded
+                      : a.kind.name == 'pdf'
+                      ? Icons.picture_as_pdf_rounded
+                      : Icons.insert_drive_file_rounded,
+                  size: 16,
+                  color: context.gama.accent,
+                ),
+              ),
+              label: Text(
+                a.label,
+                style: TextStyle(fontSize: 12, color: context.gama.textPrimary),
+              ),
+              backgroundColor: Colors.transparent,
+              side: BorderSide.none,
+              deleteIcon: Icon(
+                Icons.close_rounded,
+                size: 16,
+                color: context.gama.textMuted,
+              ),
+              onDeleted: () {
+                setState(() => _attachments.remove(a));
+              },
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildComposerOverlay(BuildContext context) {
+    return ChatComposer(
+      controller: _controller,
+      focusNode: _composerFocusNode,
+      isLoading: _isLoading,
+      isListening: _isListening,
+      hasAttachments: _attachments.isNotEmpty,
+      attachmentsReady:
+          !_processingAttachment &&
+          !_waitingForAttachment &&
+          !_attachmentProcessingFailed,
+      mode: _mode,
+      onAttach: _showAttachMenu,
+      onToggleListen: _toggleListen,
+      onOpenVoice: widget.oficinaKind == null ? _openVoiceMode : null,
+      onSend: _sendMessage,
+      onSpeakSend: _sendMessageWithVoiceReply,
+      onPasteImage: _pasteClipboardContent,
+      showSlashMenu: _showSlashSuggestions,
+      oficinaKind: widget.oficinaKind,
+      placeholder: switch (widget.oficinaKind) {
+        OficinaKind.imagem => 'Descreva a imagem que quer criar…',
+        OficinaKind.video => 'Descreva o vídeo…',
+        OficinaKind.programar =>
+          'Peça um app, anexe um ZIP ou cole um link do GitHub…',
+        null => null,
+      },
+      onExitOficina: widget.oficinaKind == null
+          ? null
+          : () async {
+              await _service.updateConversationMode(
+                widget.conversationId,
+                null,
+              );
+              if (mounted) {
+                Navigator.of(context).popUntil((route) => route.isFirst);
+              }
+            },
+      imageAspectRatio: _imageAspectRatio,
+      imageStyle: _imageStyle,
+      videoDuration: _videoDuration,
+      videoResolution: _videoResolution,
+      videoAspectRatio: _videoAspectRatio,
+      videoGenerateAudio: _videoGenerateAudio,
+      onVideoDurationChanged: (v) => setState(() => _videoDuration = v),
+      onVideoResolutionChanged: (v) => setState(() => _videoResolution = v),
+      onVideoAspectRatioChanged: (v) => setState(() => _videoAspectRatio = v),
+      onVideoGenerateAudioChanged: (v) =>
+          setState(() => _videoGenerateAudio = v),
+      onImageAspectRatioChanged: (value) =>
+          setState(() => _imageAspectRatio = value),
+      onImageStyleChanged: (value) => setState(() => _imageStyle = value),
+      oficinaShortcuts: widget.oficinaKind == OficinaKind.programar
+          ? [
+              ActionChip(
+                avatar: const Icon(Icons.folder_zip_outlined, size: 16),
+                label: const Text('Anexar ZIP'),
+                onPressed: () => _pickFiles(zipOnly: true),
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.link_rounded, size: 16),
+                label: const Text('Colar link do GitHub'),
+                onPressed: () {
+                  _controller.text =
+                      'Analise este repositório: https://github.com/';
+                  _composerFocusNode.requestFocus();
+                },
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.bug_report_outlined, size: 16),
+                label: const Text('Colar erro'),
+                onPressed: () {
+                  _controller.text = 'Explique este erro:\n';
+                  _composerFocusNode.requestFocus();
+                },
+              ),
+            ]
+          : const [],
+      onSlashCommandSelected: _selectSlashCommand,
+      onStop: _stopGeneration,
+      onModeChanged: (m) async {
+        setState(() => _mode = m);
+        await SettingsService.instance.setMode(m);
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isWideDesktop = widget.persistentSidebar;
@@ -3846,49 +4194,967 @@ class _ChatScreenState extends State<ChatScreen> {
         onDragExited: (_) {
           if (mounted) setState(() => _draggingFiles = false);
         },
-        child: Column(
+        child: Stack(
           children: [
-            if (_draggingFiles)
-              Container(
-                width: double.infinity,
-                color: context.gama.accentSoft,
-                padding: const EdgeInsets.symmetric(vertical: 7),
-                child: Text(
-                  'Solte os arquivos para anexá-los',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: context.gama.accentBright,
-                    fontSize: 12,
+            Column(
+              children: [
+                if (_draggingFiles)
+                  Container(
+                    width: double.infinity,
+                    color: context.gama.accentSoft,
+                    padding: const EdgeInsets.symmetric(vertical: 7),
+                    child: Text(
+                      'Solte os arquivos para anexá-los',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: context.gama.accentBright,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                // Messages
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: AnimatedSwitcher(
+                          duration: MediaQuery.of(context).disableAnimations
+                              ? Duration.zero
+                              : GamaMotion.standard,
+                          switchInCurve: GamaMotion.curve,
+                          switchOutCurve: Curves.easeInCubic,
+                          child: _messages.isEmpty
+                              ? EmptyState(
+                                  key: const ValueKey('chat-empty'),
+                                  oficinaKind: widget.oficinaKind,
+                                  attachmentKinds: _attachments
+                                      .map((attachment) => attachment.kind)
+                                      .toList(growable: false),
+                                  draft: _controller,
+                                  onSuggestion: (action, text) {
+                                    if (widget.oficinaKind != null) {
+                                      _controller.text = text;
+                                      if (widget.oficinaKind ==
+                                              OficinaKind.imagem &&
+                                          _attachments.isEmpty &&
+                                          (text.contains('imagem anexada') ||
+                                              text.startsWith(
+                                                'Analise esta imagem',
+                                              ))) {
+                                        _showAttachMenu();
+                                        return;
+                                      }
+                                      _composerFocusNode.requestFocus();
+                                      return;
+                                    }
+                                    if (action ==
+                                        EmptySuggestionAction.reviewProject) {
+                                      _controller.text = 'Revise meu projeto e destaque problemas e melhorias.';
+                                      _showAttachMenu();
+                                      return;
+                                    }
+                                    if (action ==
+                                        EmptySuggestionAction.explainError) {
+                                      _controller.text =
+                                          'Explique este erro:\n';
+                                      _composerFocusNode.requestFocus();
+                                      return;
+                                    }
+                                    _controller.text = switch (action) {
+                                      EmptySuggestionAction.write =>
+                                        'Ajude-me a escrever: ',
+                                      EmptySuggestionAction.explain => 'Explique este assunto de forma simples: ',
+                                      EmptySuggestionAction.brainstorm =>
+                                        'Ajude-me a pensar em ideias para: ',
+                                      EmptySuggestionAction
+                                          .summarizeAttachment =>
+                                        _attachmentPrompt('Resuma'),
+                                      EmptySuggestionAction
+                                          .describeAttachment =>
+                                        'Descreva a imagem anexada com detalhes visuais claros, incluindo textos legíveis, se houver.',
+                                      EmptySuggestionAction.analyzeAttachment =>
+                                        _attachmentPrompt('Analise'),
+                                      EmptySuggestionAction.extractTasks =>
+                                        _attachmentPrompt(
+                                          'Extraia os pontos principais e as tarefas de',
+                                        ),
+                                      EmptySuggestionAction.editAttachment => 'Sugira alterações para a imagem anexada.',
+                                      _ => 'Ajude-me com: ',
+                                    };
+                                    _composerFocusNode.requestFocus();
+                                  },
+                                )
+                              : NotificationListener<ScrollNotification>(
+                                  key: const ValueKey('chat-messages'),
+                                  onNotification: _handleListScrollNotification,
+                                  child: ListView.builder(
+                                    controller: _scrollController,
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      92,
+                                      16,
+                                      220,
+                                    ),
+                                    cacheExtent: 320,
+                                    itemCount: _historyWindow.listLength(
+                                      _messages.length,
+                                    ),
+                                    itemBuilder: (context, listIndex) {
+                                      if (listIndex == 0 &&
+                                          _historyWindow.hasOlder(
+                                            _messages.length,
+                                          )) {
+                                        return Center(
+                                          child: Padding(
+                                            padding: const EdgeInsets.only(
+                                              bottom: 14,
+                                            ),
+                                            child: TextButton.icon(
+                                              onPressed: _loadEarlierMessages,
+                                              icon: const Icon(
+                                                Icons.history_rounded,
+                                                size: 18,
+                                              ),
+                                              label: Text(
+                                                'Carregar mensagens anteriores (${_historyWindow.remaining(_messages.length)})',
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      // Mantém o índice REAL usado por editar,
+                                      // regenerar, anexos e histórico de fontes.
+                                      final index = _historyWindow.messageIndex(
+                                        listIndex,
+                                        _messages.length,
+                                      );
+                                      final msg = _messages[index];
+                                      final isUser = msg.isUser;
+                                      final isLastAssistant =
+                                          !isUser &&
+                                          index == _messages.length - 1;
+
+                                      return TweenAnimationBuilder<double>(
+                                        key: ValueKey(
+                                          'message-enter-${msg.id}',
+                                        ),
+                                        tween: Tween(
+                                          begin:
+                                              msg.id == _newMessageAnimationId
+                                              ? 0.0
+                                              : 1.0,
+                                          end: 1.0,
+                                        ),
+                                        duration:
+                                            MediaQuery.of(context)
+                                                .disableAnimations
+                                            ? Duration.zero
+                                            : msg.id == _newMessageAnimationId
+                                            ? const Duration(milliseconds: 180)
+                                            : Duration.zero,
+                                        curve: Curves.easeOutCubic,
+                                        onEnd: () {
+                                          if (mounted &&
+                                              _newMessageAnimationId ==
+                                                  msg.id) {
+                                            setState(
+                                              () =>
+                                                  _newMessageAnimationId = null,
+                                            );
+                                          }
+                                        },
+                                        child: Semantics(
+                                          container: true,
+                                          explicitChildNodes: true,
+                                          label: isUser
+                                              ? 'Você disse'
+                                              : 'Gamma respondeu',
+                                          child: GestureDetector(
+                                            behavior:
+                                                HitTestBehavior.translucent,
+                                            onLongPress: () =>
+                                                _showMessageContextMenu(
+                                                  msg,
+                                                  index,
+                                                ),
+                                            child: RepaintBoundary(
+                                              key: _messageKeyFor(msg.id),
+                                              child: Center(
+                                                child: ConstrainedBox(
+                                                  constraints:
+                                                      const BoxConstraints(
+                                                        maxWidth: 760,
+                                                      ),
+                                                  child: Align(
+                                                    alignment: isUser
+                                                        ? Alignment.centerRight
+                                                        : Alignment.centerLeft,
+                                                    child: Column(
+                                                      crossAxisAlignment: isUser
+                                                          ? CrossAxisAlignment
+                                                                .end
+                                                          : CrossAxisAlignment
+                                                                .start,
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      children: [
+                                                        Container(
+                                                          constraints:
+                                                              BoxConstraints(
+                                                                maxWidth: isUser
+                                                                    ? 680
+                                                                    : 760,
+                                                              ),
+                                                          margin:
+                                                              EdgeInsets.only(
+                                                                bottom: isUser
+                                                                    ? 8
+                                                                    : 4,
+                                                              ),
+                                                          padding: isUser
+                                                              ? const EdgeInsets.symmetric(
+                                                                  horizontal:
+                                                                      16,
+                                                                  vertical: 12,
+                                                                )
+                                                              : const EdgeInsets.symmetric(
+                                                                  horizontal: 2,
+                                                                  vertical: 8,
+                                                                ),
+                                                          decoration: isUser
+                                                              ? BoxDecoration(
+                                                                  gradient: LinearGradient(
+                                                                    begin: Alignment
+                                                                        .topLeft,
+                                                                    end: Alignment
+                                                                        .bottomRight,
+                                                                    colors: [
+                                                                      context
+                                                                          .gama
+                                                                          .bubbleUserSoft,
+                                                                      context
+                                                                          .gama
+                                                                          .bubbleUser,
+                                                                    ],
+                                                                  ),
+                                                                  borderRadius: const BorderRadius.only(
+                                                                    topLeft:
+                                                                        Radius.circular(
+                                                                          22,
+                                                                        ),
+                                                                    topRight:
+                                                                        Radius.circular(
+                                                                          22,
+                                                                        ),
+                                                                    bottomLeft:
+                                                                        Radius.circular(
+                                                                          22,
+                                                                        ),
+                                                                    bottomRight:
+                                                                        Radius.circular(
+                                                                          7,
+                                                                        ),
+                                                                  ),
+                                                                  border: Border.all(
+                                                                    color: context
+                                                                        .gama
+                                                                        .accent
+                                                                        .withValues(
+                                                                          alpha:
+                                                                              0.20,
+                                                                        ),
+                                                                  ),
+                                                                )
+                                                              : null,
+                                                          child: Column(
+                                                            crossAxisAlignment:
+                                                                CrossAxisAlignment
+                                                                    .start,
+                                                            mainAxisSize:
+                                                                MainAxisSize
+                                                                    .min,
+                                                            children: [
+                                                              if (!isUser &&
+                                                                  msg.id ==
+                                                                      _failedAssistantMessageId &&
+                                                                  _chatErrorMessage !=
+                                                                      null) ...[
+                                                                if (msg.content
+                                                                    .trim()
+                                                                    .isNotEmpty)
+                                                                  MessageContentView(
+                                                                    content: msg
+                                                                        .content,
+                                                                    isUser:
+                                                                        false,
+                                                                    onTapLink:
+                                                                        _openLink,
+                                                                  ),
+                                                                const SizedBox(
+                                                                  height: 8,
+                                                                ),
+                                                                ChatStatusIndicator(
+                                                                  label:
+                                                                      _chatErrorMessage!,
+                                                                  isError: true,
+                                                                  onViewPlan:
+                                                                      CommercialLimitMessage.isPlanLimit(
+                                                                        _chatErrorMessage,
+                                                                      )
+                                                                      ? () => Navigator.of(context).push(
+                                                                          GamaPageRoute(
+                                                                            builder: (
+                                                                              _,
+                                                                            ) => const CommercialScreen(),
+                                                                          ),
+                                                                        )
+                                                                      : null,
+                                                                  onRetry:
+                                                                      _isLoading ||
+                                                                          !_failedRequestRetryable
+                                                                      ? null
+                                                                      : _retryLastFailedRequest,
+                                                                  onContinue:
+                                                                      !_isLoading &&
+                                                                          msg.content
+                                                                              .trim()
+                                                                              .isNotEmpty &&
+                                                                          _truncatedMessageIds.contains(
+                                                                            msg.id,
+                                                                          )
+                                                                      ? _continueResponse
+                                                                      : null,
+                                                                ),
+                                                              ] else if (msg
+                                                                      .content
+                                                                      .isEmpty &&
+                                                                  !isUser &&
+                                                                  _isLoading &&
+                                                                  !_firstTokenReceived)
+                                                                widget.oficinaKind ==
+                                                                            OficinaKind.imagem &&
+                                                                        _streamPhase ==
+                                                                            'generating_image'
+                                                                    ? _ImageGenerationPlaceholder(
+                                                                        aspectRatio:
+                                                                            _imageAspectRatio,
+                                                                      )
+                                                                    : widget.oficinaKind ==
+                                                                          OficinaKind
+                                                                              .video
+                                                                    ? Column(
+                                                                        crossAxisAlignment:
+                                                                            CrossAxisAlignment.start,
+                                                                        children: [
+                                                                          _timedStreamStatus(),
+                                                                          _VideoGenerationProgress(
+                                                                            phase:
+                                                                                _streamPhase,
+                                                                          ),
+                                                                          TextButton.icon(
+                                                                            onPressed:
+                                                                                _stopGeneration,
+                                                                            icon: const Icon(
+                                                                              Icons.close_rounded,
+                                                                              size: 16,
+                                                                            ),
+                                                                            label: const Text(
+                                                                              'Cancelar',
+                                                                            ),
+                                                                          ),
+                                                                        ],
+                                                                      )
+                                                                    : _timedStreamStatus()
+                                                              else if (!isUser &&
+                                                                  isLastAssistant &&
+                                                                  _voiceResponsePending &&
+                                                                  _voiceReplyDisplayedText
+                                                                      .value
+                                                                      .isEmpty)
+                                                                Column(
+                                                                  crossAxisAlignment:
+                                                                      CrossAxisAlignment.start,
+                                                                  mainAxisSize: MainAxisSize.min,
+                                                                  children: [
+                                                                    _timedStreamStatus(),
+                                                                    const SizedBox(height: 7),
+                                                                    const _TypingDots(),
+                                                                  ],
+                                                                )
+                                                              else if (!isUser &&
+                                                                  isLastAssistant &&
+                                                                  (_isLoading ||
+                                                                      _finishingStreamReveal) &&
+                                                                  !_voiceResponsePending &&
+                                                                  _firstTokenReceived)
+                                                                ValueListenableBuilder<
+                                                                  String
+                                                                >(
+                                                                  valueListenable:
+                                                                      _streamingText,
+                                                                  builder:
+                                                                      (
+                                                                        context,
+                                                                        content,
+                                                                        _,
+                                                                      ) => widget.oficinaKind == OficinaKind.imagem && _streamPhase == 'generating_image'
+                                                                      ? _ImageGenerationPlaceholder(
+                                                                          aspectRatio:
+                                                                              _imageAspectRatio,
+                                                                        )
+                                                                      : Column(
+                                                                          crossAxisAlignment:
+                                                                              CrossAxisAlignment.start,
+                                                                          mainAxisSize:
+                                                                              MainAxisSize.min,
+                                                                          children: [
+                                                                            MessageContentView(
+                                                                              streaming: true,
+                                                                              content: _citationMarkdown(
+                                                                                msg.id,
+                                                                                content,
+                                                                              ),
+                                                                              isUser: false,
+                                                                              onTapLink: _openLink,
+                                                                            ),
+                                                                            if (!_finishingStreamReveal)
+                                                                              const _StreamingCursor(),
+                                                                          ],
+                                                                        ),
+                                                                )
+                                                              else if (!isUser &&
+                                                                  msg.id ==
+                                                                      _voiceReplyDisplayMessageId &&
+                                                                  _voiceReplyDisplayedText
+                                                                      .value
+                                                                      .isEmpty)
+                                                                const Column(
+                                                                  crossAxisAlignment:
+                                                                      CrossAxisAlignment.start,
+                                                                  mainAxisSize: MainAxisSize.min,
+                                                                  children: [
+                                                                    ChatStatusIndicator(
+                                                                      label: 'Preparando áudio…',
+                                                                    ),
+                                                                    SizedBox(height: 7),
+                                                                    _TypingDots(),
+                                                                  ],
+                                                                )
+                                                              else if (!isUser &&
+                                                                  msg.id ==
+                                                                      _voiceReplyDisplayMessageId)
+                                                                ValueListenableBuilder<
+                                                                  String
+                                                                >(
+                                                                  valueListenable:
+                                                                      _voiceReplyDisplayedText,
+                                                                  builder:
+                                                                      (
+                                                                        context,
+                                                                        content,
+                                                                        _,
+                                                                      ) => Column(
+                                                                        crossAxisAlignment:
+                                                                            CrossAxisAlignment.start,
+                                                                        mainAxisSize: MainAxisSize.min,
+                                                                        children: [
+                                                                          if (content.trim().isNotEmpty)
+                                                                            RepaintBoundary(
+                                                                              child: MessageContentView(
+                                                                                streaming: true,
+                                                                                content: _citationMarkdown(
+                                                                                  msg.id,
+                                                                                  content,
+                                                                                ),
+                                                                                isUser: false,
+                                                                                onTapLink: _openLink,
+                                                                              ),
+                                                                            ),
+                                                                          const SizedBox(height: 7),
+                                                                          // A animação permanece até o último
+                                                                          // trecho do áudio terminar de tocar.
+                                                                          const RepaintBoundary(
+                                                                            child: _TypingDots(),
+                                                                          ),
+                                                                        ],
+                                                                      ),
+                                                                )
+                                                              else
+                                                                MemoizedMessageContentView(
+                                                                  referenceCode:
+                                                                      !isUser &&
+                                                                          widget.oficinaKind ==
+                                                                              OficinaKind.programar
+                                                                      ? widget
+                                                                            .codeComparisonBase
+                                                                      : null,
+                                                                  referenceLanguage:
+                                                                      widget
+                                                                          .codeComparisonLanguage,
+                                                                  content:
+                                                                      _citationMarkdown(
+                                                                        msg.id,
+                                                                        msg.content,
+                                                                      ),
+                                                                  isUser:
+                                                                      isUser,
+                                                                  onTapLink:
+                                                                      _openLink,
+                                                                  additionalImages:
+                                                                      _messageImageAttachments(
+                                                                        msg,
+                                                                      ),
+                                                                ),
+                                                              if (!isUser &&
+                                                                  widget.oficinaKind ==
+                                                                      OficinaKind
+                                                                          .imagem &&
+                                                                  (msg.content
+                                                                          .contains(
+                                                                            '[gama_image_file]',
+                                                                          ) ||
+                                                                      msg.content
+                                                                          .contains(
+                                                                            '[gama_image]',
+                                                                          ))) ...[
+                                                                if (_beforeImagePath !=
+                                                                        null &&
+                                                                    _imagePathFromContent(
+                                                                          msg.content,
+                                                                        ) !=
+                                                                        null &&
+                                                                    _imagePathFromContent(
+                                                                          msg.content,
+                                                                        ) !=
+                                                                        _beforeImagePath)
+                                                                  _BeforeAfterImageSlider(
+                                                                    beforePath:
+                                                                        _beforeImagePath!,
+                                                                    afterPath:
+                                                                        _imagePathFromContent(
+                                                                          msg.content,
+                                                                        )!,
+                                                                  ),
+                                                                _ImageCreationActions(
+                                                                  onVary: () => _varyGeneratedImage(
+                                                                    _imagePathFromContent(
+                                                                      msg.content,
+                                                                    ),
+                                                                    'Crie uma variação da imagem anterior com esta direção: ${_precedingUserPrompt(index)}',
+                                                                  ),
+                                                                  onEdit: () {
+                                                                    final path =
+                                                                        _imagePathFromContent(
+                                                                          msg.content,
+                                                                        );
+                                                                    _beforeImagePath =
+                                                                        path;
+                                                                    unawaited(
+                                                                      _editGeneratedImage(
+                                                                        path,
+                                                                        'Edite a imagem anterior: ${_precedingUserPrompt(index)}',
+                                                                      ),
+                                                                    );
+                                                                  },
+                                                                  onRegenerate: () =>
+                                                                      _sendImageFollowup(
+                                                                        _precedingUserPrompt(
+                                                                          index,
+                                                                        ),
+                                                                      ),
+                                                                  onViewPrompt: () => showDialog<void>(
+                                                                    context:
+                                                                        context,
+                                                                    builder: (ctx) => AlertDialog(
+                                                                      title:
+                                                                          const Text(
+                                                                            'Prompt da imagem',
+                                                                          ),
+                                                                      content: SelectableText(
+                                                                        _precedingUserPrompt(
+                                                                          index,
+                                                                        ),
+                                                                      ),
+                                                                      actions: [
+                                                                        TextButton(
+                                                                          onPressed: () => Navigator.pop(
+                                                                            ctx,
+                                                                          ),
+                                                                          child:
+                                                                              const Text(
+                                                                                'Fechar',
+                                                                              ),
+                                                                        ),
+                                                                      ],
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                              ],
+                                                              if (!isUser &&
+                                                                  (msg.content
+                                                                          .contains(
+                                                                            'diff --git',
+                                                                          ) ||
+                                                                      RegExp(
+                                                                        r'^@@ .* @@',
+                                                                        multiLine:
+                                                                            true,
+                                                                      ).hasMatch(
+                                                                        msg.content,
+                                                                      )))
+                                                                _UnifiedDiffCard(
+                                                                  content: msg
+                                                                      .content,
+                                                                ),
+                                                              if (!isUser &&
+                                                                  (_artifactsByMessageId[msg
+                                                                              .id]
+                                                                          ?.isNotEmpty ??
+                                                                      false)) ...[
+                                                                const SizedBox(
+                                                                  height: 12,
+                                                                ),
+                                                                ArtifactStatusList(
+                                                                  artifacts:
+                                                                      _artifactsByMessageId[msg
+                                                                          .id]!,
+                                                                  videoPaths:
+                                                                      _videoPathsByArtifactId,
+                                                                  onPlayVideo:
+                                                                      _cacheVideoArtifact,
+                                                                  onPreview:
+                                                                      _showGeneratedFilePreview,
+                                                                  onDownload: (artifact) {
+                                                                    final id =
+                                                                        artifact['artifact_id']
+                                                                            ?.toString() ??
+                                                                        '';
+                                                                    final filename =
+                                                                        artifact['filename']
+                                                                            ?.toString() ??
+                                                                        'gamma_arquivo.zip';
+                                                                    if (id
+                                                                        .isNotEmpty) {
+                                                                      _downloadGeneratedArtifact(
+                                                                        id,
+                                                                        filename,
+                                                                        expectedSha256:
+                                                                            artifact['sha256']?.toString(),
+                                                                        expectedSize:
+                                                                            int.tryParse(
+                                                                              artifact['size']?.toString() ?? '',
+                                                                            ),
+                                                                        openAfterDownload:
+                                                                            artifact['kind'] != 'video',
+                                                                      );
+                                                                    }
+                                                                  },
+                                                                ),
+                                                              ],
+                                                              if (!isUser &&
+                                                                  ((_activityByMessageId[msg.id]
+                                                                              ?.isNotEmpty ??
+                                                                          false) ||
+                                                                      (_sourcesByMessageId[msg.id]
+                                                                              ?.isNotEmpty ??
+                                                                          false) ||
+                                                                      (_isLoading &&
+                                                                          isLastAssistant &&
+                                                                          const <String>[
+                                                                            'searching',
+                                                                            'project_analyzing',
+                                                                            'image_analyzing',
+                                                                            'generating_image',
+                                                                            'video_analyzing',
+                                                                            'video_generating',
+                                                                            'video_downloading',
+                                                                          ].contains(
+                                                                            _streamPhase,
+                                                                          ))))
+                                                                ValueListenableBuilder<
+                                                                  Duration
+                                                                >(
+                                                                  valueListenable:
+                                                                      _generationClock,
+                                                                  builder: (context, _, __) => _ActivityTimeline(
+                                                                    key: ValueKey(
+                                                                      'activity-${msg.id}',
+                                                                    ),
+                                                                    steps:
+                                                                        _activityByMessageId[msg
+                                                                            .id] ??
+                                                                        const [],
+                                                                    sources:
+                                                                        _sourcesByMessageId[msg
+                                                                            .id] ??
+                                                                        const [],
+                                                                    isRunning:
+                                                                        _isLoading &&
+                                                                        isLastAssistant,
+                                                                    activeStep:
+                                                                        _isLoading &&
+                                                                            isLastAssistant
+                                                                        ? _chatStatusLabel
+                                                                        : null,
+                                                                  ),
+                                                                ),
+                                                              if (!isUser &&
+                                                                  !_isLoading &&
+                                                                  _truncatedMessageIds
+                                                                      .contains(
+                                                                        msg.id,
+                                                                      ))
+                                                                Align(
+                                                                  alignment:
+                                                                      Alignment
+                                                                          .centerLeft,
+                                                                  child: TextButton.icon(
+                                                                    onPressed:
+                                                                        _continueResponse,
+                                                                    icon: const Icon(
+                                                                      Icons
+                                                                          .more_horiz_rounded,
+                                                                      size: 18,
+                                                                    ),
+                                                                    label:
+                                                                        const Text(
+                                                                          'Continuar',
+                                                                        ),
+                                                                  ),
+                                                                ),
+                                                              if (!isUser &&
+                                                                  !_isLoading &&
+                                                                  msg
+                                                                          .variants
+                                                                          .length >
+                                                                      1)
+                                                                Padding(
+                                                                  padding:
+                                                                      const EdgeInsets.only(
+                                                                        top: 8,
+                                                                      ),
+                                                                  child: Row(
+                                                                    mainAxisSize:
+                                                                        MainAxisSize
+                                                                            .min,
+                                                                    children: [
+                                                                      IconButton(
+                                                                        tooltip: 'Versão anterior',
+                                                                        constraints: const BoxConstraints.tightFor(
+                                                                          width:
+                                                                              48,
+                                                                          height:
+                                                                              48,
+                                                                        ),
+                                                                        padding:
+                                                                            EdgeInsets.zero,
+                                                                        onPressed:
+                                                                            msg.selectedVariantIndex >
+                                                                                0
+                                                                            ? () => _selectResponseVariant(
+                                                                                msg,
+                                                                                msg.selectedVariantIndex - 1,
+                                                                              )
+                                                                            : null,
+                                                                        icon: const Icon(
+                                                                          Icons
+                                                                              .chevron_left_rounded,
+                                                                          size:
+                                                                              20,
+                                                                        ),
+                                                                      ),
+                                                                      Text(
+                                                                        '${msg.selectedVariantIndex + 1}/${msg.variants.length}',
+                                                                        style: TextStyle(
+                                                                          color: context
+                                                                              .gama
+                                                                              .textMuted,
+                                                                          fontSize:
+                                                                              12,
+                                                                        ),
+                                                                      ),
+                                                                      IconButton(
+                                                                        tooltip: 'Próxima versão',
+                                                                        constraints: const BoxConstraints.tightFor(
+                                                                          width:
+                                                                              48,
+                                                                          height:
+                                                                              48,
+                                                                        ),
+                                                                        padding:
+                                                                            EdgeInsets.zero,
+                                                                        onPressed:
+                                                                            msg.selectedVariantIndex <
+                                                                                msg.variants.length - 1
+                                                                            ? () => _selectResponseVariant(
+                                                                                msg,
+                                                                                msg.selectedVariantIndex + 1,
+                                                                              )
+                                                                            : null,
+                                                                        icon: const Icon(
+                                                                          Icons
+                                                                              .chevron_right_rounded,
+                                                                          size:
+                                                                              20,
+                                                                        ),
+                                                                      ),
+                                                                    ],
+                                                                  ),
+                                                                ),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                        if (msg.content
+                                                            .trim()
+                                                            .isNotEmpty)
+                                                          _messageActions(
+                                                            msg,
+                                                            index,
+                                                            isLastAssistant,
+                                                          ),
+                                                        if (!isUser)
+                                                          const SizedBox(
+                                                            height: 12,
+                                                          ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        builder: (context, value, child) =>
+                                            Opacity(
+                                              opacity: value,
+                                              child: Transform.translate(
+                                                offset: Offset(
+                                                  0,
+                                                  (1 - value) * 8,
+                                                ),
+                                                child: child,
+                                              ),
+                                            ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                        ),
+                      ),
+                      if (_showScrollToBottom || (_isLoading && !_followStream))
+                        Positioned(
+                          right: 16,
+                          bottom: 155,
+                          child: AnimatedOpacity(
+                            opacity: 1,
+                            duration: MediaQuery.of(context).disableAnimations
+                                ? Duration.zero
+                                : const Duration(milliseconds: 150),
+                            child: FloatingActionButton.small(
+                              heroTag: 'gama_scroll_to_bottom',
+                              tooltip: 'Ir para o fim da conversa',
+                              backgroundColor: context.gama.surfaceElevated,
+                              foregroundColor: context.gama.accentBright,
+                              onPressed: () {
+                                _followStream = true;
+                                _scrollToBottom(force: true);
+                              },
+                              child: const Icon(
+                                Icons.keyboard_arrow_down_rounded,
+                                size: 26,
+                              ),
+                            ),
+                          ),
+                        ),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_attachments.isNotEmpty)
+                              _buildAttachmentTray(context),
+                            _buildComposerOverlay(context),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            // Navegação limpa, sem AppBar ou faixa de fundo.
-            SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-                child: SizedBox(
-                  height: 46,
-                  child: Row(
+
+                // Anexos pendentes
+                if (_processingAttachment)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: context.gama.accentSoft,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: context.gama.accent.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const GamaSkeleton(width: 18, height: 18, radius: 9),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            _processingLabel ?? 'Processando anexo…',
+                            style: TextStyle(
+                              color: context.gama.textPrimary,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            const Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: IgnorePointer(child: GamaTopShade()),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                  child: SizedBox(
+                    height: 46,
+                    child: Row(
                       children: [
                         // O acesso ao histórico permanece visível, como no layout original.
                         // O Builder garante que o botão encontre o Scaffold que contém o drawer.
                         if (widget.oficinaKind != null)
-                          GamaFloatingControl(child: IconButton(
-                            tooltip: 'Voltar à Oficina',
-                            icon: const Icon(Icons.arrow_back_rounded),
-                            onPressed: () {
-                              if (Navigator.of(context).canPop()) {
-                                Navigator.of(context).pop();
-                              } else {
-                                Navigator.of(context).push(
-                                  GamaPageRoute<void>(
-                                    builder: (_) => const OficinaScreen(),
-                                  ),
-                                );
-                              }
-                            },
-                          ))
+                          GamaFloatingControl(
+                            child: IconButton(
+                              tooltip: 'Voltar à Oficina',
+                              icon: const Icon(Icons.arrow_back_rounded),
+                              onPressed: () {
+                                if (Navigator.of(context).canPop()) {
+                                  Navigator.of(context).pop();
+                                } else {
+                                  Navigator.of(context).push(
+                                    GamaPageRoute<void>(
+                                      builder: (_) => const OficinaScreen(),
+                                    ),
+                                  );
+                                }
+                              },
+                            ),
+                          )
                         else if (!isWideDesktop)
                           GamaFloatingControl(
                             child: Builder(
@@ -3905,67 +5171,15 @@ class _ChatScreenState extends State<ChatScreen> {
                         // Cada ação tem seu próprio fundo flutuante.
                         const Spacer(),
                         if (widget.oficinaKind == null)
-                          GamaFloatingControl(child: PopupMenuButton<GamaMode>(
-                            enabled: !_isLoading,
-                            tooltip: 'Selecionar modo de IA',
-                            onSelected: (value) async {
-                              if (_mode == value) return;
-                              setState(() => _mode = value);
-                              await SettingsService.instance.setMode(value);
-                            },
-                            itemBuilder: (context) => [
-                              const PopupMenuItem(
-                                value: GamaMode.conversar,
-                                child: ListTile(
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: Icon(Icons.chat_bubble_outline_rounded),
-                                  title: Text('Conversar'),
-                                  subtitle: Text('GPT-5.4 Mini'),
-                                ),
-                              ),
-                              const PopupMenuItem(
-                                value: GamaMode.programar,
-                                child: ListTile(
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: Icon(Icons.code_rounded),
-                                  title: Text('Trabalhar'),
-                                  subtitle: Text('GLM 5.3 Flash'),
-                                ),
-                              ),
-                            ],
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 12,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _mode == GamaMode.conversar
-                                        ? 'Conversar'
-                                        : 'Trabalhar',
-                                    style: TextStyle(
-                                      color: context.gama.textSecondary,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 2),
-                                  Icon(Icons.expand_more_rounded,
-                                      size: 16,
-                                      color: context.gama.textSecondary),
-                                ],
-                              ),
-                            ),
-                          ))
+                          _buildModeFloatingControl(context)
                         else if (widget.oficinaKind == OficinaKind.programar)
                           Padding(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 7,
+                              horizontal: 8,
+                              vertical: 7,
                             ),
-                            child: Text('GLM 5.3 Flash',
+                            child: Text(
+                              'GLM 5.3 Flash',
                               style: TextStyle(
                                 color: context.gama.textSecondary,
                                 fontSize: 12,
@@ -3973,1129 +5187,124 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                           ),
                         const SizedBox(width: 7),
-                        GamaFloatingControl(child: PopupMenuButton<String>(
-                          tooltip: 'Mais opções',
-                          icon: const Icon(Icons.more_vert_rounded, size: 24),
-                          onSelected: (action) async {
-                            switch (action) {
-                              case 'history':
-                                Scaffold.of(context).openDrawer();
-                                break;
-                              case 'voice':
-                                await _openVoiceMode();
-                                break;
-                              case 'stop':
-                                _stopGeneration();
-                                break;
-                              case 'settings':
-                                Navigator.push(
-                                  context,
-                                  GamaPageRoute(
-                                    builder: (_) => const SettingsScreen(),
+                        GamaFloatingControl(
+                          child: PopupMenuButton<String>(
+                            tooltip: 'Mais opções',
+                            icon: const Icon(Icons.more_vert_rounded, size: 24),
+                            onSelected: (action) async {
+                              switch (action) {
+                                case 'history':
+                                  Scaffold.of(context).openDrawer();
+                                  break;
+                                case 'voice':
+                                  await _openVoiceMode();
+                                  break;
+                                case 'stop':
+                                  _stopGeneration();
+                                  break;
+                                case 'settings':
+                                  Navigator.push(
+                                    context,
+                                    GamaPageRoute(
+                                      builder: (_) => const SettingsScreen(),
+                                    ),
+                                  );
+                                  break;
+                                case 'clear':
+                                  _clearCurrentConversation();
+                                  break;
+                                case 'export':
+                                  await _exportConversation();
+                                  break;
+                                case 'share_chat':
+                                  await _shareConversation(context);
+                                  break;
+                              }
+                            },
+                            itemBuilder: (context) => [
+                              if (!isWideDesktop)
+                                const PopupMenuItem(
+                                  value: 'history',
+                                  child: ListTile(
+                                    dense: true,
+                                    leading: Icon(Icons.menu_rounded),
+                                    title: Text('Conversas e histórico'),
+                                    contentPadding: EdgeInsets.zero,
                                   ),
-                                );
-                                break;
-                              case 'clear':
-                                _clearCurrentConversation();
-                                break;
-                              case 'export':
-                                await _exportConversation();
-                                break;
-                              case 'share_chat':
-                                await _shareConversation(context);
-                                break;
-                            }
-                          },
-                          itemBuilder: (context) => [
-                            if (!isWideDesktop)
+                                ),
+                              if (widget.oficinaKind == null)
+                                PopupMenuItem(
+                                  value: 'voice',
+                                  child: ListTile(
+                                    dense: true,
+                                    leading: Icon(
+                                      _voiceConversationMode
+                                          ? Icons.headset_mic_rounded
+                                          : Icons.headset_rounded,
+                                    ),
+                                    title: Text(
+                                      _voiceConversationMode
+                                          ? 'Interromper conversa por voz'
+                                          : 'Iniciar conversa por voz',
+                                    ),
+                                    contentPadding: EdgeInsets.zero,
+                                  ),
+                                ),
+                              if (_isLoading || _isSpeaking)
+                                const PopupMenuItem(
+                                  value: 'stop',
+                                  child: ListTile(
+                                    dense: true,
+                                    leading: Icon(Icons.stop_rounded),
+                                    title: Text('Parar geração/áudio'),
+                                    contentPadding: EdgeInsets.zero,
+                                  ),
+                                ),
                               const PopupMenuItem(
-                                value: 'history',
+                                value: 'export',
                                 child: ListTile(
                                   dense: true,
-                                  leading: Icon(Icons.menu_rounded),
-                                  title: Text('Conversas e histórico'),
+                                  leading: Icon(Icons.download_outlined),
+                                  title: Text('Exportar conversa'),
                                   contentPadding: EdgeInsets.zero,
                                 ),
                               ),
-                            if (widget.oficinaKind == null)
-                              PopupMenuItem(
-                                value: 'voice',
-                                child: ListTile(
-                                  dense: true,
-                                  leading: Icon(
-                                    _voiceConversationMode
-                                        ? Icons.headset_mic_rounded
-                                        : Icons.headset_rounded,
-                                  ),
-                                  title: Text(
-                                    _voiceConversationMode
-                                        ? 'Interromper conversa por voz'
-                                        : 'Iniciar conversa por voz',
-                                  ),
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                            if (_isLoading || _isSpeaking)
                               const PopupMenuItem(
-                                value: 'stop',
+                                value: 'share_chat',
                                 child: ListTile(
                                   dense: true,
-                                  leading: Icon(Icons.stop_rounded),
-                                  title: Text('Parar geração/áudio'),
+                                  leading: Icon(Icons.share_outlined),
+                                  title: Text('Compartilhar conversa'),
                                   contentPadding: EdgeInsets.zero,
                                 ),
                               ),
-                            const PopupMenuItem(
-                              value: 'export',
-                              child: ListTile(
-                                dense: true,
-                                leading: Icon(Icons.download_outlined),
-                                title: Text('Exportar conversa'),
-                                contentPadding: EdgeInsets.zero,
+                              const PopupMenuItem(
+                                value: 'settings',
+                                child: ListTile(
+                                  dense: true,
+                                  leading: Icon(Icons.settings_outlined),
+                                  title: Text('Configurações'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
                               ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'share_chat',
-                              child: ListTile(
-                                dense: true,
-                                leading: Icon(Icons.share_outlined),
-                                title: Text('Compartilhar conversa'),
-                                contentPadding: EdgeInsets.zero,
+                              const PopupMenuDivider(),
+                              const PopupMenuItem(
+                                value: 'clear',
+                                child: ListTile(
+                                  dense: true,
+                                  leading: Icon(Icons.delete_outline_rounded),
+                                  title: Text('Limpar conversa'),
+                                  contentPadding: EdgeInsets.zero,
+                                ),
                               ),
-                            ),
-                            const PopupMenuItem(
-                              value: 'settings',
-                              child: ListTile(
-                                dense: true,
-                                leading: Icon(Icons.settings_outlined),
-                                title: Text('Configurações'),
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                            ),
-                            const PopupMenuDivider(),
-                            const PopupMenuItem(
-                              value: 'clear',
-                              child: ListTile(
-                                dense: true,
-                                leading: Icon(Icons.delete_outline_rounded),
-                                title: Text('Limpar conversa'),
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                            ),
-                          ],
-                        )),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-                ),
-              ),
-            ),
-
-            // Messages
-            Expanded(
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: AnimatedSwitcher(
-                      duration: MediaQuery.of(context).disableAnimations
-                          ? Duration.zero
-                          : GamaMotion.standard,
-                      switchInCurve: GamaMotion.curve,
-                      switchOutCurve: Curves.easeInCubic,
-                      child: _messages.isEmpty
-                          ? EmptyState(
-                              key: const ValueKey('chat-empty'),
-                              oficinaKind: widget.oficinaKind,
-                              attachmentKinds: _attachments
-                                  .map((attachment) => attachment.kind)
-                                  .toList(growable: false),
-                              draft: _controller,
-                              onSuggestion: (action, text) {
-                                if (widget.oficinaKind != null) {
-                                  _controller.text = text;
-                                  if (widget.oficinaKind ==
-                                          OficinaKind.imagem &&
-                                      _attachments.isEmpty &&
-                                      (text.contains('imagem anexada') ||
-                                          text.startsWith(
-                                            'Analise esta imagem',
-                                          ))) {
-                                    _showAttachMenu();
-                                    return;
-                                  }
-                                  _composerFocusNode.requestFocus();
-                                  return;
-                                }
-                                if (action ==
-                                    EmptySuggestionAction.reviewProject) {
-                                  _controller.text = 'Revise meu projeto e destaque problemas e melhorias.';
-                                  _showAttachMenu();
-                                  return;
-                                }
-                                if (action ==
-                                    EmptySuggestionAction.explainError) {
-                                  _controller.text = 'Explique este erro:\n';
-                                  _composerFocusNode.requestFocus();
-                                  return;
-                                }
-                                _controller.text = switch (action) {
-                                  EmptySuggestionAction.write =>
-                                    'Ajude-me a escrever: ',
-                                  EmptySuggestionAction.explain =>
-                                    'Explique este assunto de forma simples: ',
-                                  EmptySuggestionAction.brainstorm =>
-                                    'Ajude-me a pensar em ideias para: ',
-                                  EmptySuggestionAction.summarizeAttachment =>
-                                    _attachmentPrompt('Resuma'),
-                                  EmptySuggestionAction.describeAttachment => 'Descreva a imagem anexada com detalhes visuais claros, incluindo textos legíveis, se houver.',
-                                  EmptySuggestionAction.analyzeAttachment =>
-                                    _attachmentPrompt('Analise'),
-                                  EmptySuggestionAction.extractTasks =>
-                                    _attachmentPrompt(
-                                      'Extraia os pontos principais e as tarefas de',
-                                    ),
-                                  EmptySuggestionAction.editAttachment =>
-                                    'Sugira alterações para a imagem anexada.',
-                                  _ => 'Ajude-me com: ',
-                                };
-                                _composerFocusNode.requestFocus();
-                              },
-                            )
-                          : NotificationListener<ScrollNotification>(
-                              key: const ValueKey('chat-messages'),
-                              onNotification: _handleListScrollNotification,
-                              child: ListView.builder(
-                                controller: _scrollController,
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  22,
-                                  16,
-                                  26,
-                                ),
-                                cacheExtent: 320,
-                                itemCount: _historyWindow.listLength(_messages.length),
-                                itemBuilder: (context, listIndex) {
-                                  if (listIndex == 0 &&
-                                      _historyWindow.hasOlder(_messages.length)) {
-                                    return Center(
-                                      child: Padding(
-                                        padding: const EdgeInsets.only(bottom: 14),
-                                        child: TextButton.icon(
-                                          onPressed: _loadEarlierMessages,
-                                          icon: const Icon(Icons.history_rounded, size: 18),
-                                          label: Text(
-                                            'Carregar mensagens anteriores (${_historyWindow.remaining(_messages.length)})',
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  }
-                                  // Mantém o índice REAL usado por editar,
-                                  // regenerar, anexos e histórico de fontes.
-                                  final index = _historyWindow.messageIndex(
-                                    listIndex, _messages.length,
-                                  );
-                                  final msg = _messages[index];
-                                  final isUser = msg.isUser;
-                                  final isLastAssistant =
-                                      !isUser && index == _messages.length - 1;
-
-                                  return TweenAnimationBuilder<double>(
-                                    key: ValueKey('message-enter-${msg.id}'),
-                                    tween: Tween(
-                                      begin: msg.id == _newMessageAnimationId
-                                          ? 0.0
-                                          : 1.0,
-                                      end: 1.0,
-                                    ),
-                                    duration:
-                                        MediaQuery.of(context).disableAnimations
-                                        ? Duration.zero
-                                        : msg.id == _newMessageAnimationId
-                                        ? const Duration(milliseconds: 180)
-                                        : Duration.zero,
-                                    curve: Curves.easeOutCubic,
-                                    onEnd: () {
-                                      if (mounted &&
-                                          _newMessageAnimationId == msg.id) {
-                                        setState(
-                                          () => _newMessageAnimationId = null,
-                                        );
-                                      }
-                                    },
-                                    child: Semantics(
-                                      container: true,
-                                      explicitChildNodes: true,
-                                      label: isUser
-                                          ? 'Você disse'
-                                          : 'Gamma respondeu',
-                                      child: GestureDetector(
-                                        behavior: HitTestBehavior.translucent,
-                                        onLongPress: () =>
-                                            _showMessageContextMenu(msg, index),
-                                        child: RepaintBoundary(
-                                          key: _messageKeyFor(msg.id),
-                                          child: Center(
-                                            child: ConstrainedBox(
-                                              constraints: const BoxConstraints(
-                                                maxWidth: 760,
-                                              ),
-                                              child: Align(
-                                                alignment: isUser
-                                                    ? Alignment.centerRight
-                                                    : Alignment.centerLeft,
-                                                child: Column(
-                                                  crossAxisAlignment: isUser
-                                                      ? CrossAxisAlignment.end
-                                                      : CrossAxisAlignment
-                                                            .start,
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    Container(
-                                                      constraints:
-                                                          BoxConstraints(
-                                                            maxWidth: isUser
-                                                                ? 680
-                                                                : 760,
-                                                          ),
-                                                      margin: EdgeInsets.only(
-                                                        bottom: isUser ? 8 : 4,
-                                                      ),
-                                                      padding: isUser
-                                                          ? const EdgeInsets.symmetric(horizontal: 16, vertical: 12)
-                                                          : const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
-                                                      decoration: isUser
-                                                          ? BoxDecoration(
-                                                              gradient: LinearGradient(
-                                                                begin: Alignment
-                                                                    .topLeft,
-                                                                end: Alignment
-                                                                    .bottomRight,
-                                                                colors: [
-                                                                  context
-                                                                      .gama
-                                                                      .bubbleUserSoft,
-                                                                  context
-                                                                      .gama
-                                                                      .bubbleUser,
-                                                                ],
-                                                              ),
-                                                              borderRadius: const BorderRadius.only(
-                                                                topLeft:
-                                                                    Radius.circular(
-                                                                      22,
-                                                                    ),
-                                                                topRight:
-                                                                    Radius.circular(
-                                                                      22,
-                                                                    ),
-                                                                bottomLeft:
-                                                                    Radius.circular(
-                                                                      22,
-                                                                    ),
-                                                                bottomRight:
-                                                                    Radius.circular(
-                                                                      7,
-                                                                    ),
-                                                              ),
-                                                              border: Border.all(
-                                                                color: context
-                                                                    .gama
-                                                                    .accent
-                                                                    .withValues(
-                                                                      alpha:
-                                                                          0.20,
-                                                                    ),
-                                                              ),
-                                                            )
-                                                          : null,
-                                                      child: Column(
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .start,
-                                                        mainAxisSize:
-                                                            MainAxisSize.min,
-                                                        children: [
-                                                          if (!isUser &&
-                                                              msg.id ==
-                                                                  _failedAssistantMessageId &&
-                                                              _chatErrorMessage !=
-                                                                  null) ...[
-                                                            if (msg.content
-                                                                .trim()
-                                                                .isNotEmpty)
-                                                              MessageContentView(
-                                                                content:
-                                                                    msg.content,
-                                                                isUser: false,
-                                                                onTapLink:
-                                                                    _openLink,
-                                                              ),
-                                                            const SizedBox(
-                                                              height: 8,
-                                                            ),
-                                                            ChatStatusIndicator(
-                                                              label:
-                                                                  _chatErrorMessage!,
-                                                              isError: true,
-                                                              onViewPlan:
-                                                                  CommercialLimitMessage.isPlanLimit(_chatErrorMessage)
-                                                                      ? () => Navigator.of(context).push(
-                                                                          GamaPageRoute(builder: (_) =>
-                                                                              const CommercialScreen()),
-                                                                        )
-                                                                      : null,
-                                                              onRetry:
-                                                                  _isLoading || !_failedRequestRetryable
-                                                                  ? null
-                                                                  : _retryLastFailedRequest,
-                                                              onContinue:
-                                                                  !_isLoading &&
-                                                                      msg.content
-                                                                          .trim()
-                                                                          .isNotEmpty &&
-                                                                      _truncatedMessageIds
-                                                                          .contains(
-                                                                            msg.id,
-                                                                          )
-                                                                  ? _continueResponse
-                                                                  : null,
-                                                            ),
-                                                          ] else if (msg
-                                                                  .content
-                                                                  .isEmpty &&
-                                                              !isUser &&
-                                                              _isLoading &&
-                                                              !_firstTokenReceived)
-                                                            widget.oficinaKind ==
-                                                                        OficinaKind
-                                                                            .imagem &&
-                                                                    _streamPhase ==
-                                                                        'generating_image'
-                                                                ? _ImageGenerationPlaceholder(
-                                                                    aspectRatio:
-                                                                        _imageAspectRatio,
-                                                                  )
-                                                                : widget.oficinaKind ==
-                                                                      OficinaKind
-                                                                          .video
-                                                                ? Column(
-                                                                    crossAxisAlignment:
-                                                                        CrossAxisAlignment
-                                                                            .start,
-                                                                    children: [
-                                                                      _timedStreamStatus(),
-                                                                      _VideoGenerationProgress(
-                                                                        phase:
-                                                                            _streamPhase,
-                                                                      ),
-                                                                      TextButton.icon(
-                                                                        onPressed:
-                                                                            _stopGeneration,
-                                                                        icon: const Icon(
-                                                                          Icons
-                                                                              .close_rounded,
-                                                                          size:
-                                                                              16,
-                                                                        ),
-                                                                        label:
-                                                                            const Text(
-                                                                              'Cancelar',
-                                                                            ),
-                                                                      ),
-                                                                    ],
-                                                                  )
-                                                                : _timedStreamStatus()
-                                                          else if (!isUser &&
-                                                              isLastAssistant &&
-                                                              _voiceResponsePending &&
-                                                              _voiceReplyDisplayedText.value.isEmpty)
-                                                            _timedStreamStatus()
-                                                          else if (!isUser &&
-                                                              isLastAssistant &&
-                                                              (_isLoading || _finishingStreamReveal) &&
-                                                              !_voiceResponsePending &&
-                                                              _firstTokenReceived)
-                                                            ValueListenableBuilder<
-                                                              String
-                                                            >(
-                                                              valueListenable:
-                                                                  _streamingText,
-                                                              builder: (context, content, _) =>
-                                                                  widget.oficinaKind ==
-                                                                          OficinaKind
-                                                                              .imagem &&
-                                                                      _streamPhase == 'generating_image'
-                                                                  ? _ImageGenerationPlaceholder(
-                                                                      aspectRatio:
-                                                                          _imageAspectRatio,
-                                                                    )
-                                                                  : Column(
-                                                                      crossAxisAlignment:
-                                                                          CrossAxisAlignment
-                                                                              .start,
-                                                                      mainAxisSize:
-                                                                          MainAxisSize
-                                                                              .min,
-                                                                      children: [
-                                                                        MessageContentView(
-                                                                          streaming:
-                                                                              true,
-                                                                          content: _citationMarkdown(
-                                                                            msg.id,
-                                                                            content,
-                                                                          ),
-                                                                          isUser:
-                                                                              false,
-                                                                          onTapLink:
-                                                                              _openLink,
-                                                                        ),
-                                                                        if (!_finishingStreamReveal)
-                                                                          const _StreamingCursor(),
-                                                                      ],
-                                                                    ),
-                                                            )
-                                                          else if (!isUser &&
-                                                              msg.id == _voiceReplyDisplayMessageId &&
-                                                              _voiceReplyDisplayedText.value.isEmpty)
-                                                            const ChatStatusIndicator(label: 'Preparando áudio…')
-                                                          else if (!isUser &&
-                                                              msg.id ==
-                                                                  _voiceReplyDisplayMessageId)
-                                                            ValueListenableBuilder<
-                                                              String
-                                                            >(
-                                                              valueListenable:
-                                                                  _voiceReplyDisplayedText,
-                                                              builder:
-                                                                  (
-                                                                    context,
-                                                                    content,
-                                                                    _,
-                                                                  ) => MessageContentView(
-                                                                    streaming: true,
-                                                                    content:
-                                                                        _citationMarkdown(
-                                                                          msg.id,
-                                                                          content,
-                                                                        ),
-                                                                    isUser:
-                                                                        false,
-                                                                    onTapLink:
-                                                                        _openLink,
-                                                                  ),
-                                                            )
-                                                          else
-                                                            MemoizedMessageContentView(
-                                                              referenceCode:
-                                                                  !isUser &&
-                                                                      widget.oficinaKind ==
-                                                                          OficinaKind
-                                                                              .programar
-                                                                  ? widget
-                                                                        .codeComparisonBase
-                                                                  : null,
-                                                              referenceLanguage:
-                                                                  widget
-                                                                      .codeComparisonLanguage,
-                                                              content:
-                                                                  _citationMarkdown(
-                                                                    msg.id,
-                                                                    msg.content,
-                                                                  ),
-                                                              isUser: isUser,
-                                                              onTapLink:
-                                                                  _openLink,
-                                                              additionalImages:
-                                                                  _messageImageAttachments(
-                                                                    msg,
-                                                                  ),
-                                                            ),
-                                                          if (!isUser &&
-                                                              widget.oficinaKind ==
-                                                                  OficinaKind
-                                                                      .imagem &&
-                                                              (msg.content
-                                                                      .contains(
-                                                                        '[gama_image_file]',
-                                                                      ) ||
-                                                                  msg.content
-                                                                      .contains(
-                                                                        '[gama_image]',
-                                                                      ))) ...[
-                                                            if (_beforeImagePath !=
-                                                                    null &&
-                                                                _imagePathFromContent(
-                                                                      msg.content,
-                                                                    ) !=
-                                                                    null &&
-                                                                _imagePathFromContent(
-                                                                      msg.content,
-                                                                    ) !=
-                                                                    _beforeImagePath)
-                                                              _BeforeAfterImageSlider(
-                                                                beforePath:
-                                                                    _beforeImagePath!,
-                                                                afterPath:
-                                                                    _imagePathFromContent(
-                                                                      msg.content,
-                                                                    )!,
-                                                              ),
-                                                            _ImageCreationActions(
-                                                              onVary: () => _varyGeneratedImage(
-                                                                _imagePathFromContent(
-                                                                  msg.content,
-                                                                ),
-                                                                'Crie uma variação da imagem anterior com esta direção: ${_precedingUserPrompt(index)}',
-                                                              ),
-                                                              onEdit: () {
-                                                                final path =
-                                                                    _imagePathFromContent(
-                                                                      msg.content,
-                                                                    );
-                                                                _beforeImagePath =
-                                                                    path;
-                                                                unawaited(
-                                                                  _editGeneratedImage(
-                                                                    path,
-                                                                    'Edite a imagem anterior: ${_precedingUserPrompt(index)}',
-                                                                  ),
-                                                                );
-                                                              },
-                                                              onRegenerate: () =>
-                                                                  _sendImageFollowup(
-                                                                    _precedingUserPrompt(
-                                                                      index,
-                                                                    ),
-                                                                  ),
-                                                              onViewPrompt: () => showDialog<void>(
-                                                                context:
-                                                                    context,
-                                                                builder: (ctx) => AlertDialog(
-                                                                  title:
-                                                                      const Text(
-                                                                        'Prompt da imagem',
-                                                                      ),
-                                                                  content:
-                                                                      SelectableText(
-                                                                        _precedingUserPrompt(
-                                                                          index,
-                                                                        ),
-                                                                      ),
-                                                                  actions: [
-                                                                    TextButton(
-                                                                      onPressed: () =>
-                                                                          Navigator.pop(
-                                                                            ctx,
-                                                                          ),
-                                                                      child:
-                                                                          const Text(
-                                                                            'Fechar',
-                                                                          ),
-                                                                    ),
-                                                                  ],
-                                                                ),
-                                                              ),
-                                                            ),
-                                                          ],
-                                                          if (!isUser &&
-                                                              (msg.content
-                                                                      .contains(
-                                                                        'diff --git',
-                                                                      ) ||
-                                                                  RegExp(
-                                                                    r'^@@ .* @@',
-                                                                    multiLine:
-                                                                        true,
-                                                                  ).hasMatch(
-                                                                    msg.content,
-                                                                  )))
-                                                            _UnifiedDiffCard(
-                                                              content:
-                                                                  msg.content,
-                                                            ),
-                                                          if (!isUser &&
-                                                              (_artifactsByMessageId[msg
-                                                                          .id]
-                                                                      ?.isNotEmpty ??
-                                                                  false)) ...[
-                                                            const SizedBox(
-                                                              height: 12,
-                                                            ),
-                                                            ArtifactStatusList(
-                                                              artifacts:
-                                                                  _artifactsByMessageId[msg
-                                                                      .id]!,
-                                                              videoPaths:
-                                                                  _videoPathsByArtifactId,
-                                                              onPlayVideo:
-                                                                  _cacheVideoArtifact,
-                                                              onPreview:
-                                                                  _showGeneratedFilePreview,
-                                                              onDownload: (artifact) {
-                                                                final id =
-                                                                    artifact['artifact_id']
-                                                                        ?.toString() ??
-                                                                    '';
-                                                                final filename =
-                                                                    artifact['filename']
-                                                                        ?.toString() ??
-                                                                    'gamma_arquivo.zip';
-                                                                if (id
-                                                                    .isNotEmpty) {
-                                                                  _downloadGeneratedArtifact(
-                                                                    id,
-                                                                    filename,
-                                                                    expectedSha256:
-                                                                        artifact['sha256']
-                                                                            ?.toString(),
-                                                                    expectedSize: int.tryParse(
-                                                                        artifact['size']
-                                                                            ?.toString() ?? ''),
-                                                                    openAfterDownload: artifact['kind'] != 'video',
-                                                                  );
-                                                                }
-                                                              },
-                                                            ),
-                                                          ],
-                                                          if (!isUser &&
-                                                              ((_activityByMessageId[msg
-                                                                              .id]
-                                                                          ?.isNotEmpty ??
-                                                                      false) ||
-                                                                  (_sourcesByMessageId[msg
-                                                                              .id]
-                                                                          ?.isNotEmpty ??
-                                                                      false) ||
-                                                                  (_isLoading &&
-                                                                      isLastAssistant &&
-                                                                      const <String>[
-                                                                        'searching',
-                                                                        'project_analyzing',
-                                                                        'image_analyzing',
-                                                                        'generating_image',
-                                                                        'video_analyzing',
-                                                                        'video_generating',
-                                                                        'video_downloading',
-                                                                      ].contains(
-                                                                        _streamPhase,
-                                                                      ))))
-                                                            ValueListenableBuilder<Duration>(
-                                                              valueListenable: _generationClock,
-                                                              builder: (context, _, __) => _ActivityTimeline(
-                                                                key: ValueKey('activity-${msg.id}'),
-                                                                steps: _activityByMessageId[msg.id] ?? const [],
-                                                                sources: _sourcesByMessageId[msg.id] ?? const [],
-                                                                isRunning: _isLoading && isLastAssistant,
-                                                                activeStep: _isLoading && isLastAssistant
-                                                                    ? _chatStatusLabel
-                                                                    : null,
-                                                              ),
-                                                            ),
-                                                          if (!isUser &&
-                                                              !_isLoading &&
-                                                              _truncatedMessageIds
-                                                                  .contains(
-                                                                    msg.id,
-                                                                  ))
-                                                            Align(
-                                                              alignment: Alignment
-                                                                  .centerLeft,
-                                                              child: TextButton.icon(
-                                                                onPressed:
-                                                                    _continueResponse,
-                                                                icon: const Icon(
-                                                                  Icons
-                                                                      .more_horiz_rounded,
-                                                                  size: 18,
-                                                                ),
-                                                                label:
-                                                                    const Text(
-                                                                      'Continuar',
-                                                                    ),
-                                                              ),
-                                                            ),
-                                                          if (!isUser &&
-                                                              !_isLoading &&
-                                                              msg
-                                                                      .variants
-                                                                      .length >
-                                                                  1)
-                                                            Padding(
-                                                              padding:
-                                                                  const EdgeInsets.only(
-                                                                    top: 8,
-                                                                  ),
-                                                              child: Row(
-                                                                mainAxisSize:
-                                                                    MainAxisSize
-                                                                        .min,
-                                                                children: [
-                                                                  IconButton(
-                                                                    tooltip: 'Versão anterior',
-                                                                    constraints:
-                                                                        const BoxConstraints.tightFor(
-                                                                          width:
-                                                                              48,
-                                                                          height:
-                                                                              48,
-                                                                        ),
-                                                                    padding:
-                                                                        EdgeInsets
-                                                                            .zero,
-                                                                    onPressed:
-                                                                        msg.selectedVariantIndex >
-                                                                            0
-                                                                        ? () => _selectResponseVariant(
-                                                                            msg,
-                                                                            msg.selectedVariantIndex -
-                                                                                1,
-                                                                          )
-                                                                        : null,
-                                                                    icon: const Icon(
-                                                                      Icons
-                                                                          .chevron_left_rounded,
-                                                                      size: 20,
-                                                                    ),
-                                                                  ),
-                                                                  Text(
-                                                                    '${msg.selectedVariantIndex + 1}/${msg.variants.length}',
-                                                                    style: TextStyle(
-                                                                      color: context
-                                                                          .gama
-                                                                          .textMuted,
-                                                                      fontSize:
-                                                                          12,
-                                                                    ),
-                                                                  ),
-                                                                  IconButton(
-                                                                    tooltip: 'Próxima versão',
-                                                                    constraints:
-                                                                        const BoxConstraints.tightFor(
-                                                                          width:
-                                                                              48,
-                                                                          height:
-                                                                              48,
-                                                                        ),
-                                                                    padding:
-                                                                        EdgeInsets
-                                                                            .zero,
-                                                                    onPressed:
-                                                                        msg.selectedVariantIndex <
-                                                                            msg.variants.length -
-                                                                                1
-                                                                        ? () => _selectResponseVariant(
-                                                                            msg,
-                                                                            msg.selectedVariantIndex +
-                                                                                1,
-                                                                          )
-                                                                        : null,
-                                                                    icon: const Icon(
-                                                                      Icons
-                                                                          .chevron_right_rounded,
-                                                                      size: 20,
-                                                                    ),
-                                                                  ),
-                                                                ],
-                                                              ),
-                                                            ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                    if (msg.content
-                                                        .trim()
-                                                        .isNotEmpty)
-                                                      _messageActions(
-                                                        msg,
-                                                        index,
-                                                        isLastAssistant,
-                                                      ),
-                                                    if (!isUser)
-                                                      const SizedBox(
-                                                        height: 12,
-                                                      ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    builder: (context, value, child) => Opacity(
-                                      opacity: value,
-                                      child: Transform.translate(
-                                        offset: Offset(0, (1 - value) * 8),
-                                        child: child,
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                    ),
-                  ),
-                  if (_showScrollToBottom || (_isLoading && !_followStream))
-                    Positioned(
-                      right: 16,
-                      bottom: 14,
-                      child: AnimatedOpacity(
-                        opacity: 1,
-                        duration: MediaQuery.of(context).disableAnimations
-                            ? Duration.zero
-                            : const Duration(milliseconds: 150),
-                        child: FloatingActionButton.small(
-                          heroTag: 'gama_scroll_to_bottom',
-                          tooltip: 'Ir para o fim da conversa',
-                          backgroundColor: context.gama.surfaceElevated,
-                          foregroundColor: context.gama.accentBright,
-                          onPressed: () {
-                            _followStream = true;
-                            _scrollToBottom(force: true);
-                          },
-                          child: const Icon(
-                            Icons.keyboard_arrow_down_rounded,
-                            size: 26,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-
-            // Anexos pendentes
-            if (_processingAttachment)
-              Container(
-                width: double.infinity,
-                margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: context.gama.accentSoft,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: context.gama.accent.withValues(alpha: 0.35),
                   ),
                 ),
-                child: Row(
-                  children: [
-                    const GamaSkeleton(width: 18, height: 18, radius: 9),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        _processingLabel ?? 'Processando anexo…',
-                        style: TextStyle(
-                          color: context.gama.textPrimary,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
               ),
-            if (_attachments.isNotEmpty)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
-                color: context.gama.surface,
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _attachments.map((a) {
-                    if (a.kind.name == 'image' && a.sourcePath != null) {
-                      return Container(
-                        width: 220,
-                        padding: const EdgeInsets.all(7),
-                        decoration: BoxDecoration(
-                          color: context.gama.surfaceCard,
-                          borderRadius: BorderRadius.circular(13),
-                          border: Border.all(color: context.gama.border),
-                        ),
-                        child: Row(
-                          children: [
-                            GestureDetector(
-                              onTap: () => _showPendingImagePreview(a),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Image.file(
-                                  File(a.sourcePath!),
-                                  width: 56,
-                                  height: 56,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    width: 56,
-                                    height: 56,
-                                    color: context.gama.surfaceHover,
-                                    child: const Icon(
-                                      Icons.broken_image_outlined,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: () => _showPendingImagePreview(a),
-                                child: Text(
-                                  a.name,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: context.gama.textPrimary,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Remover anexo',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () =>
-                                  setState(() => _attachments.remove(a)),
-                              icon: const Icon(Icons.close_rounded, size: 17),
-                              constraints: const BoxConstraints.tightFor(
-                                width: 28,
-                                height: 32,
-                              ),
-                              padding: EdgeInsets.zero,
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-                    return Container(
-                      padding: const EdgeInsets.only(left: 4, right: 4),
-                      decoration: BoxDecoration(
-                        color: context.gama.surfaceCard,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: context.gama.border),
-                      ),
-                      child: Chip(
-                        avatar: CircleAvatar(
-                          backgroundColor: context.gama.accentSoft,
-                          child: Icon(
-                            a.kind.name == 'image'
-                                ? Icons.image_rounded
-                                : a.kind.name == 'video'
-                                ? Icons.movie_creation_outlined
-                                : a.kind.name == 'zip'
-                                ? Icons.folder_zip_rounded
-                                : a.kind.name == 'pdf'
-                                ? Icons.picture_as_pdf_rounded
-                                : Icons.insert_drive_file_rounded,
-                            size: 16,
-                            color: context.gama.accent,
-                          ),
-                        ),
-                        label: Text(
-                          a.label,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: context.gama.textPrimary,
-                          ),
-                        ),
-                        backgroundColor: Colors.transparent,
-                        side: BorderSide.none,
-                        deleteIcon: Icon(
-                          Icons.close_rounded,
-                          size: 16,
-                          color: context.gama.textMuted,
-                        ),
-                        onDeleted: () {
-                          setState(() => _attachments.remove(a));
-                        },
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-
-            // Input
-            ChatComposer(
-              controller: _controller,
-              focusNode: _composerFocusNode,
-              isLoading: _isLoading,
-              isListening: _isListening,
-              hasAttachments: _attachments.isNotEmpty,
-              attachmentsReady: !_processingAttachment &&
-                  !_waitingForAttachment && !_attachmentProcessingFailed,
-              mode: _mode,
-              onAttach: _showAttachMenu,
-              onToggleListen: _toggleListen,
-              onOpenVoice: widget.oficinaKind == null ? _openVoiceMode : null,
-              onSend: _sendMessage,
-              onSpeakSend: _sendMessageWithVoiceReply,
-              onPasteImage: _pasteClipboardContent,
-              showSlashMenu: _showSlashSuggestions,
-              oficinaKind: widget.oficinaKind,
-              placeholder: switch (widget.oficinaKind) {
-                OficinaKind.imagem => 'Descreva a imagem que quer criar…',
-                OficinaKind.video => 'Descreva o vídeo…',
-                OficinaKind.programar =>
-                  'Peça um app, anexe um ZIP ou cole um link do GitHub…',
-                null => null,
-              },
-              onExitOficina: widget.oficinaKind == null
-                  ? null
-                  : () async {
-                      await _service.updateConversationMode(
-                        widget.conversationId,
-                        null,
-                      );
-                      if (mounted)
-                        Navigator.of(context)
-                            .popUntil((route) => route.isFirst);
-                    },
-              imageAspectRatio: _imageAspectRatio,
-              imageStyle: _imageStyle,
-              videoDuration: _videoDuration,
-              videoResolution: _videoResolution,
-              videoAspectRatio: _videoAspectRatio,
-              videoGenerateAudio: _videoGenerateAudio,
-              onVideoDurationChanged: (v) => setState(() => _videoDuration = v),
-              onVideoResolutionChanged: (v) => setState(() => _videoResolution = v),
-              onVideoAspectRatioChanged: (v) => setState(() => _videoAspectRatio = v),
-              onVideoGenerateAudioChanged: (v) => setState(() => _videoGenerateAudio = v),
-              onImageAspectRatioChanged: (value) =>
-                  setState(() => _imageAspectRatio = value),
-              onImageStyleChanged: (value) =>
-                  setState(() => _imageStyle = value),
-              oficinaShortcuts: widget.oficinaKind == OficinaKind.programar
-                  ? [
-                      ActionChip(
-                        avatar: const Icon(Icons.folder_zip_outlined, size: 16),
-                        label: const Text('Anexar ZIP'),
-                        onPressed: () => _pickFiles(zipOnly: true),
-                      ),
-                      ActionChip(
-                        avatar: const Icon(Icons.link_rounded, size: 16),
-                        label: const Text('Colar link do GitHub'),
-                        onPressed: () {
-                          _controller.text =
-                              'Analise este repositório: https://github.com/';
-                          _composerFocusNode.requestFocus();
-                        },
-                      ),
-                      ActionChip(
-                        avatar: const Icon(Icons.bug_report_outlined, size: 16),
-                        label: const Text('Colar erro'),
-                        onPressed: () {
-                          _controller.text = 'Explique este erro:\n';
-                          _composerFocusNode.requestFocus();
-                        },
-                      ),
-                    ]
-                  : const [],
-              onSlashCommandSelected: _selectSlashCommand,
-              onStop: _stopGeneration,
-              onModeChanged: (m) async {
-                setState(() => _mode = m);
-                await SettingsService.instance.setMode(m);
-              },
             ),
           ],
         ),
@@ -5570,8 +5779,11 @@ class _ImageGenerationPlaceholder extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.auto_awesome_rounded,
-                    color: context.gama.accent, size: 22),
+                Icon(
+                  Icons.auto_awesome_rounded,
+                  color: context.gama.accent,
+                  size: 22,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -5585,10 +5797,7 @@ class _ImageGenerationPlaceholder extends StatelessWidget {
                 ),
                 Text(
                   aspectRatio,
-                  style: TextStyle(
-                    color: context.gama.textMuted,
-                    fontSize: 11,
-                  ),
+                  style: TextStyle(color: context.gama.textMuted, fontSize: 11),
                 ),
               ],
             ),
@@ -5688,32 +5897,36 @@ class _TypingDotsState extends State<_TypingDots>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _c,
-      builder: (_, __) {
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: List.generate(3, (i) {
-            final t = (_c.value + i * 0.2) % 1.0;
-            final opacity =
-                0.3 + 0.7 * (1 - (t - 0.5).abs() * 2).clamp(0.0, 1.0);
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: Opacity(
-                opacity: opacity,
-                child: Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: context.gama.accent.withValues(alpha: 0.85),
-                    shape: BoxShape.circle,
+    return Semantics(
+      label: 'Gamma está falando e exibindo a resposta',
+      liveRegion: false,
+      child: RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: _c,
+          builder: (_, __) => Row(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(3, (i) {
+              final t = (_c.value + i * 0.2) % 1.0;
+              final opacity =
+                  0.3 + 0.7 * (1 - (t - 0.5).abs() * 2).clamp(0.0, 1.0);
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Opacity(
+                  opacity: opacity,
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: context.gama.accent.withValues(alpha: 0.85),
+                      shape: BoxShape.circle,
+                    ),
                   ),
                 ),
-              ),
-            );
-          }),
-        );
-      },
+              );
+            }),
+          ),
+        ),
+      ),
     );
   }
 }

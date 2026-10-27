@@ -136,13 +136,11 @@ class ChatComposer extends StatelessWidget {
       animation: focusNode ?? controller,
       builder: (context, child) {
         final focused = focusNode?.hasFocus ?? false;
-        return ColoredBox(
-          color: palette.background,
-          child: SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              child: Container(
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            child: Container(
                 padding: const EdgeInsets.all(1),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(24),
@@ -162,8 +160,8 @@ class ChatComposer extends StatelessWidget {
                       color: palette.accentGlow.withValues(
                         alpha: focused ? 0.50 : 0.22,
                       ),
-                      blurRadius: focused ? 24 : 12,
-                      offset: const Offset(0, 4),
+                      blurRadius: focused ? 28 : 16,
+                      offset: const Offset(0, 8),
                     ),
                   ],
                 ),
@@ -177,7 +175,7 @@ class ChatComposer extends StatelessWidget {
                           : const Duration(milliseconds: 220),
                       curve: Curves.easeOutCubic,
                       decoration: BoxDecoration(
-                        color: palette.surfaceCard.withValues(alpha: 0.91),
+                        color: palette.surfaceCard.withValues(alpha: 0.72),
                         borderRadius: BorderRadius.circular(22),
                         border: Border.all(
                           color: isListening || focused
@@ -645,7 +643,6 @@ class ChatComposer extends StatelessWidget {
                 ),
               ),
             ),
-          ),
         );
       },
     );

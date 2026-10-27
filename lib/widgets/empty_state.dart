@@ -265,9 +265,13 @@ class EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
+    // Sobe o conjunto da recepção sem alterar a caixa de mensagem.
+    // O alinhamento adapta o deslocamento ao espaço livre: em telas
+    // baixas o conteúdo continua rolável, sem corte dos atalhos.
+    return Align(
+      alignment: const Alignment(0, -0.50),
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
           child: Column(

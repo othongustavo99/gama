@@ -1,10 +1,11 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
 
 /// Padrão de navegação sem AppBar: apenas os controles essenciais flutuam
-/// sobre o fundo da tela. O conteúdo permanece abaixo dos controles, de
-/// modo que listas, formulários e acessibilidade não sofram sobreposição.
+/// sobre o fundo da tela.
 class GamaFloatingPage extends StatelessWidget {
   final Widget child;
   final List<Widget> actions;
@@ -39,6 +40,12 @@ class GamaFloatingPage extends StatelessWidget {
                   ),
           ),
         ),
+        const Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          child: IgnorePointer(child: GamaTopShade()),
+        ),
         Positioned(
           left: 12,
           right: 12,
@@ -56,9 +63,9 @@ class GamaFloatingPage extends StatelessWidget {
                   ),
                 ),
               const Spacer(),
-              for (final action in actions) ...[
-                if (actions.length > 1) const SizedBox(width: 7),
-                GamaFloatingControl(child: action),
+              for (var i = 0; i < actions.length; i++) ...[
+                if (i > 0) const SizedBox(width: 8),
+                GamaFloatingControl(child: actions[i]),
               ],
             ],
           ),
@@ -68,7 +75,47 @@ class GamaFloatingPage extends StatelessWidget {
   }
 }
 
-/// Contorno discreto aplicado apenas ao botão, nunca à barra inteira.
+/// Véu superior compartilhado com todas as telas de navegação flutuante.
+/// A transição termina em transparência total: não cria uma faixa ou corte
+/// horizontal quando o conteúdo é rolado sob os controles.
+class GamaTopShade extends StatelessWidget {
+  const GamaTopShade({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.gama;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final height = MediaQuery.paddingOf(context).top + 148.0;
+    final shade = Color.lerp(
+      palette.background,
+      isDark ? Colors.black : const Color(0xFFB8C0CC),
+      isDark ? 0.42 : 0.20,
+    )!;
+
+    return ClipRect(
+      child: SizedBox(
+        height: height,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: const [0.0, 0.30, 0.67, 1.0],
+              colors: [
+                shade.withValues(alpha: 0.97),
+                shade.withValues(alpha: 0.84),
+                shade.withValues(alpha: 0.34),
+                shade.withValues(alpha: 0),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Contorno discreto aplicado ao botão flutuante.
 class GamaFloatingControl extends StatelessWidget {
   final Widget child;
 
@@ -79,15 +126,27 @@ class GamaFloatingControl extends StatelessWidget {
     final palette = context.gama;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: palette.surfaceCard.withValues(alpha: 0.94),
-        border: Border.all(color: palette.border.withValues(alpha: 0.65)),
-        borderRadius: BorderRadius.circular(15),
+        shape: BoxShape.circle,
+        color: palette.surfaceCard,
+        border: Border.all(color: palette.border.withValues(alpha: 0.58)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
-      child: IconTheme(
-        data: IconThemeData(color: palette.textPrimary, size: 22),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 46, minHeight: 46),
-          child: Center(child: child),
+      child: ClipOval(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: IconTheme(
+            data: IconThemeData(color: palette.textPrimary, size: 22),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              child: Center(child: child),
+            ),
+          ),
         ),
       ),
     );

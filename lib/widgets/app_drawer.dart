@@ -433,96 +433,59 @@ class _AppDrawerState extends State<AppDrawer> {
               ),
             ),
 
-            // ===== RODAPÉ =====
-            Divider(color: context.gama.divider, height: 1),
+            // ===== RODAPÉ COMPACTO =====
+            // Ações continuam acessíveis, liberando espaço para o histórico.
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-              child: ListTile(
-                leading: Icon(Icons.workspace_premium_outlined,
-                  color: context.gama.accent),
-                title: Text('Meu plano e consumo', style: TextStyle(
-                  color: context.gama.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                )),
-                dense: true,
-                onTap: () {
-                  _close(context);
-                  Navigator.of(context).push(GamaPageRoute(
-                    builder: (_) => const CommercialScreen(),
-                  ));
-                },
-              ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-              child: ListTile(
-                leading: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: context.gama.surfaceCard,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: context.gama.border),
-                  ),
-                  child: Icon(
-                    Icons.settings_outlined,
-                    color: context.gama.textSecondary,
-                    size: 18,
-                  ),
-                ),
-                title: Text(
-                  'Configurações',
-                  style: TextStyle(
-                    color: context.gama.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                dense: true,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                onTap: () {
-                  _close(context);
-                  Navigator.push(
-                    context,
-                    GamaPageRoute(builder: (_) => const SettingsScreen()),
-                  );
-                },
-              ),
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+              child: Divider(color: context.gama.divider, height: 1),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              child: ListTile(
-                leading: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: context.gama.surfaceCard,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: context.gama.border),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Center(
+                      child: _DrawerFooterButton(
+                        icon: Icons.workspace_premium_outlined,
+                        tooltip: 'Meu plano e consumo',
+                        foreground: context.gama.accent,
+                        onPressed: () {
+                          final navigator = Navigator.of(context);
+                          _close(context);
+                          navigator.push(GamaPageRoute(
+                            builder: (_) => const CommercialScreen(),
+                          ));
+                        },
+                      ),
+                    ),
                   ),
-                  child: Icon(
-                    Icons.logout_rounded,
-                    color: context.gama.error,
-                    size: 18,
+                  Expanded(
+                    child: Center(
+                      child: _DrawerFooterButton(
+                        icon: Icons.settings_outlined,
+                        tooltip: 'Configurações',
+                        foreground: context.gama.textSecondary,
+                        onPressed: () {
+                          final navigator = Navigator.of(context);
+                          _close(context);
+                          navigator.push(GamaPageRoute(
+                            builder: (_) => const SettingsScreen(),
+                          ));
+                        },
+                      ),
+                    ),
                   ),
-                ),
-                title: Text(
-                  'Sair da conta',
-                  style: TextStyle(
-                    color: context.gama.error,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                  Expanded(
+                    child: Center(
+                      child: _DrawerFooterButton(
+                        icon: Icons.logout_rounded,
+                        tooltip: 'Sair da conta',
+                        foreground: context.gama.error,
+                        onPressed: () => _logout(context),
+                      ),
+                    ),
                   ),
-                ),
-                dense: true,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                onTap: () => _logout(context),
+                ],
               ),
             ),
           ],
@@ -532,6 +495,9 @@ class _AppDrawerState extends State<AppDrawer> {
   }
 
   Future<void> _logout(BuildContext context) async {
+    // Captura o Navigator antes de fechar o drawer móvel: o contexto do
+    // drawer pode ser descartado durante o await do logout.
+    final navigator = Navigator.of(context);
     _close(context);
     try {
       await AuthService.instance.signOut();
@@ -539,8 +505,8 @@ class _AppDrawerState extends State<AppDrawer> {
       logSwallowed(error, stack);
       await IdentityService.instance.signOutLocal();
     }
-    if (!context.mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
+    if (!navigator.mounted) return;
+    navigator.pushAndRemoveUntil(
       PageRouteBuilder(
         pageBuilder: (_, __, ___) => const LoginScreen(),
         transitionDuration: const Duration(milliseconds: 350),
@@ -609,6 +575,39 @@ class _AppDrawerState extends State<AppDrawer> {
       await ConversationService.instance.renameConversation(c.id, newTitle);
     }
   }
+}
+
+// Botões independentes, com rótulos acessíveis e alvo de toque de 48 px.
+// O estilo usa a mesma superfície dos controles flutuantes do aplicativo.
+class _DrawerFooterButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final Color foreground;
+  final VoidCallback onPressed;
+
+  const _DrawerFooterButton({
+    required this.icon,
+    required this.tooltip,
+    required this.foreground,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: tooltip,
+    onPressed: onPressed,
+    icon: Icon(icon, size: 21),
+    style: IconButton.styleFrom(
+      foregroundColor: foreground,
+      backgroundColor: context.gama.surfaceCard,
+      fixedSize: const Size(48, 48),
+      padding: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(15),
+        side: BorderSide(color: context.gama.borderSoft),
+      ),
+    ),
+  );
 }
 
 // ==================== WIDGETS AUXILIARES ====================

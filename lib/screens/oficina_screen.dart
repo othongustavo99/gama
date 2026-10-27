@@ -147,7 +147,7 @@ class _OficinaScreenState extends State<OficinaScreen> {
               constraints.maxWidth,
             );
             final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-            final cardHeight = textScale > 1.25 ? 365.0 : 320.0;
+            final cardHeight = textScale > 1.6 ? 450.0 : textScale > 1.25 ? 398.0 : 348.0;
             final conversations = [
               ...ConversationService.instance.pinnedConversations,
               ...ConversationService.instance.recentConversations,
@@ -222,8 +222,6 @@ class _OficinaScreenState extends State<OficinaScreen> {
                             kind: kind,
                             staggerIndex: index,
                             onTap: () => _openKind(context, kind),
-                            onPrompt: (prompt) =>
-                                _openKind(context, kind, prompt: prompt),
                           );
                         }, childCount: OficinaKind.values.length),
                       ),
@@ -410,17 +408,23 @@ class _OficinaScaffold extends StatelessWidget {
   }
 }
 
+class _OficinaCardAsset {
+  static String forKind(OficinaKind kind) => switch (kind) {
+    OficinaKind.imagem => 'assets/cards/cardMode1.jpeg',
+    OficinaKind.video => 'assets/cards/cardMode2.jpeg',
+    OficinaKind.programar => 'assets/cards/cardMode3.jpeg',
+  };
+}
+
 class _OficinaCard extends StatelessWidget {
   final OficinaKind kind;
   final int staggerIndex;
   final VoidCallback onTap;
-  final ValueChanged<String> onPrompt;
 
   const _OficinaCard({
     required this.kind,
     required this.staggerIndex,
     required this.onTap,
-    required this.onPrompt,
   });
 
   @override
@@ -428,7 +432,6 @@ class _OficinaCard extends StatelessWidget {
     kind: kind,
     staggerIndex: staggerIndex,
     onTap: onTap,
-    onPrompt: onPrompt,
   );
 }
 
@@ -436,13 +439,11 @@ class _AnimatedOficinaCard extends StatefulWidget {
   final OficinaKind kind;
   final int staggerIndex;
   final VoidCallback onTap;
-  final ValueChanged<String> onPrompt;
 
   const _AnimatedOficinaCard({
     required this.kind,
     required this.staggerIndex,
     required this.onTap,
-    required this.onPrompt,
   });
 
   @override
@@ -463,10 +464,11 @@ class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
 
   @override
   Widget build(BuildContext context) {
-    final g = context.gama;
+    final palette = context.gama;
     final kind = widget.kind;
-    final color = kind.color(g);
+    final accent = kind.color(palette);
     final reduceMotion = MediaQuery.of(context).disableAnimations;
+    final scale = MediaQuery.textScalerOf(context).scale(1.0);
 
     return AnimatedOpacity(
       opacity: (_visible || reduceMotion) ? 1 : 0,
@@ -477,130 +479,141 @@ class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
         duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 360),
         curve: Curves.easeOutCubic,
         child: AnimatedScale(
-          scale: _pressed ? 0.98 : 1,
+          scale: _pressed ? 0.985 : 1,
           duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 110),
           curve: Curves.easeOut,
-          child: Material(
-            color: g.surfaceCard,
-            borderRadius: BorderRadius.circular(20),
-            child: InkWell(
-              onTap: widget.onTap,
-              onTapDown: (_) => setState(() => _pressed = true),
-              onTapCancel: () => setState(() => _pressed = false),
-              onTapUp: (_) => setState(() => _pressed = false),
-              borderRadius: BorderRadius.circular(20),
-              splashColor: color.withValues(alpha: 0.09),
-              highlightColor: color.withValues(alpha: 0.05),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: g.border),
-                  boxShadow: GamaElevation.card(color),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Hero(
-                      tag: 'oficina-icon-${kind.chatMode}',
-                      child: Container(
-                        width: 54,
-                        height: 54,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              color.withValues(alpha: 0.24),
-                              color.withValues(alpha: 0.07),
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: color.withValues(alpha: 0.28),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: color.withValues(alpha: 0.18),
-                              blurRadius: 18,
-                              spreadRadius: 1,
-                            ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: GamaElevation.card(accent),
+            ),
+            child: Material(
+              color: palette.surfaceCard,
+              borderRadius: BorderRadius.circular(22),
+              clipBehavior: Clip.antiAlias,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // A arte quadrada ocupa todo o card, sem recortes ou
+                  // molduras internas. O assunto principal fica embaixo.
+                  Image.asset(
+                    _OficinaCardAsset.forKind(kind),
+                    fit: BoxFit.cover,
+                    alignment: Alignment.bottomCenter,
+                    errorBuilder: (context, error, stackTrace) =>
+                        ColoredBox(color: palette.surfaceCard),
+                  ),
+                  // Só escurece levemente a área de leitura. A arte colorida
+                  // da metade inferior continua visível.
+                  const IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: [0.0, 0.38, 0.60, 1.0],
+                          colors: [
+                            Color(0x5C000000),
+                            Color(0x30000000),
+                            Color(0x08000000),
+                            Color(0x00000000),
                           ],
                         ),
-                        child: Icon(kind.icon, size: 27, color: color),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    Text(
-                      kind.label,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: g.textPrimary,
-                        fontSize: 19,
-                        fontWeight: FontWeight.w700,
+                  ),
+                  Material(
+                    type: MaterialType.transparency,
+                    child: InkWell(
+                      onTap: widget.onTap,
+                      onTapDown: (_) => setState(() => _pressed = true),
+                      onTapCancel: () => setState(() => _pressed = false),
+                      onTapUp: (_) => setState(() => _pressed = false),
+                      splashColor: accent.withValues(alpha: 0.09),
+                      highlightColor: accent.withValues(alpha: 0.04),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          return Align(
+                            alignment: Alignment.topCenter,
+                            child: Padding(
+                              padding: EdgeInsets.fromLTRB(
+                                18,
+                                scale > 1.25 ? 16 : 20,
+                                18,
+                                0,
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    kind.label,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 21,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: -0.3,
+                                      shadows: [
+                                        Shadow(
+                                          color: Color(0x55000000),
+                                          blurRadius: 10,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    kind.shortDescription,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xE6FFFFFF),
+                                      fontSize: 13,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                  SizedBox(height: scale > 1.25 ? 10 : 12),
+                                  ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth: constraints.maxWidth * 0.80,
+                                      minHeight: 42,
+                                    ),
+                                    child: FilledButton(
+                                      onPressed: widget.onTap,
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor:
+                                            const Color(0xB522252D),
+                                        foregroundColor: Colors.white,
+                                        elevation: 0,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 20,
+                                          vertical: 11,
+                                        ),
+                                        side: BorderSide(
+                                          color: accent.withValues(alpha: 0.56),
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(15),
+                                        ),
+                                        textStyle: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      child: const Text('Abrir modo'),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
-                    const SizedBox(height: 5),
-                    Text(
-                      kind.shortDescription,
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      style: TextStyle(
-                        color: g.textSecondary,
-                        fontSize: 13.5,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        for (var i = 0; i < kind.examples.length; i++) ...[
-                          if (i > 0) const SizedBox(height: 7),
-                          ActionChip(
-                            label: Text(
-                              kind.examples[i],
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onPressed: () => widget.onPrompt(kind.examples[i]),
-                            backgroundColor: color.withValues(alpha: 0.08),
-                            side: BorderSide(
-                              color: color.withValues(alpha: 0.22),
-                            ),
-                            labelStyle: TextStyle(
-                              color: g.textSecondary,
-                              fontSize: 11,
-                            ),
-                            visualDensity: VisualDensity.compact,
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Abrir modo',
-                          style: TextStyle(
-                            color: color,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Icon(
-                          Icons.arrow_forward_rounded,
-                          size: 18,
-                          color: color,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
