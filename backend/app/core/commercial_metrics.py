@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+_DB_LOCK = threading.RLock()
 
 KINDS = {
     "chat": "chat", "memory": "memory", "conversations": "sync",
@@ -39,6 +43,25 @@ def _connect() -> sqlite3.Connection:
     return db
 
 
+@contextmanager
+def _db():
+    """Avoid concurrent SQLite DDL/writes and close every short-lived connection.
+
+    This process-local lock protects telemetry only; never hold it across
+    external provider calls or response streaming.
+    """
+    with _DB_LOCK:
+        db = _connect()
+        try:
+            yield db
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+
 def classify(path: str) -> str | None:
     first = path.strip("/").split("/", 1)[0]
     return KINDS.get(first)
@@ -66,7 +89,7 @@ def record_request(owner: str, path: str, status_code: int, *, at: datetime | No
         return
     moment = at or datetime.now(timezone.utc)
     day = moment.astimezone(timezone.utc).date().isoformat()
-    with _connect() as db:
+    with _db() as db:
         db.execute(
             "INSERT INTO activity(day,owner,category,outcome,requests) VALUES(?,?,?,?,1) "
             "ON CONFLICT(day,owner,category,outcome) DO UPDATE SET requests=requests+1",
@@ -87,7 +110,7 @@ def overview(days: int = 7) -> dict:
         raise ValueError("Escolha entre 1 e 30 dias")
     start = _date_limit(days)
     # Opening the DB may create an empty, valid database.
-    with _connect() as db:
+    with _db() as db:
         rows = db.execute(
             "SELECT category,outcome,SUM(requests) FROM activity WHERE day>=? "
             "GROUP BY category,outcome ORDER BY category,outcome", (start,),
@@ -134,6 +157,6 @@ def delete_user(owner: str) -> bool:
     path = _db_path()
     if not path.is_file():
         return False
-    with _connect() as db:
+    with _db() as db:
         row = db.execute("DELETE FROM activity WHERE owner=?", (owner,))
         return row.rowcount > 0

@@ -183,10 +183,12 @@ async def admin_ops(minutes: int = Query(default=15, ge=1, le=60),
                     _admin: str = Depends(require_admin)):
     """Operational measurements; no client data, passwords or token payloads."""
     from ..core.ops_observability import snapshot
+    from ..core.chat_admission import chat_admissions
     from ..storage_status import current_storage_status
     storage = current_storage_status()
     return {
         'runtime': snapshot(minutes),
+        'chat_admission': {**chat_admissions.snapshot(), 'scope': 'this_process_only'},
         'storage': {
             'status': storage['status'],
             'writable': storage['writable'],

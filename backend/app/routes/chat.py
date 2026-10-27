@@ -55,6 +55,7 @@ from ..core.video_gen import (
 from ..core.document_builder.store import load_artifact, save_artifact
 from ..core.video_jobs import create_job, get_job, update_job
 from ..core import long_jobs
+from ..core.chat_admission import chat_admissions, AdmissionRejected
 from ..core.media_links import create_media_reference_url
 from ..core.code_analyzer.index_store import load_meta
 
@@ -2388,7 +2389,9 @@ async def chat(
             if current is not None and current[0] is completed_task:
                 _background_generation_tasks.pop(task_key, None)
 
+        admission.transfer_to_producer()
         task.add_done_callback(remove_generation_task)
+        task.add_done_callback(lambda _task: admission.release())
         completed = False
         try:
             while True:
@@ -2407,20 +2410,44 @@ async def chat(
 
     # Chat comum usa a cota chat. Pedido direto de imagem/vídeo utiliza
     # a cota correspondente dentro da ferramenta (não cobra chat duas vezes).
+    # Fase 3K: reserve the ID synchronously, before the StreamingResponse body
+    # begins. Two simultaneous HTTP requests cannot pass the old task-only check.
+    try:
+        admission = chat_admissions.reserve(user_id, attempt_id)
+    except AdmissionRejected as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    except ValueError as exc:
+        logger.error("Invalid chat admission configuration: %s", type(exc).__name__)
+        raise HTTPException(503, "Limite de concorrência do servidor configurado incorretamente") from exc
     commercial_chat_hold = None
-    if not direct_media_request:
-        message_key = (request.assistant_message_id or uuid.uuid4().hex)
-        operation_id = "chat-" + hashlib.sha256((user_id + ":" + message_key).encode()).hexdigest()[:40]
+    try:
+        if not direct_media_request:
+            message_key = (request.assistant_message_id or uuid.uuid4().hex)
+            operation_id = "chat-" + hashlib.sha256((user_id + ":" + message_key).encode()).hexdigest()[:40]
+            try:
+                commercial_chat_hold = reserve_feature(user_id, "chat", operation_id)
+            except FeatureLimitReached as exc:
+                raise HTTPException(429, str(exc)) from exc
+            except FeatureRequestAlreadyProcessed as exc:
+                raise HTTPException(409, str(exc)) from exc
+            except CommercialError as exc:
+                raise HTTPException(403, str(exc)) from exc
+    except BaseException:
+        admission.release()
+        raise
+
+    async def admitted_stream():
         try:
-            commercial_chat_hold = reserve_feature(user_id, "chat", operation_id)
-        except FeatureLimitReached as exc:
-            raise HTTPException(429, str(exc)) from exc
-        except FeatureRequestAlreadyProcessed as exc:
-            raise HTTPException(409, str(exc)) from exc
-        except CommercialError as exc:
-            raise HTTPException(403, str(exc)) from exc
+            async for chunk in stream_for_client():
+                yield chunk
+        finally:
+            # After task creation, keep the slot until paid background work ends
+            # even if the client disconnects. Otherwise release early failures.
+            if not admission.producer_started:
+                admission.release()
+
     return StreamingResponse(
-        stream_for_client(),
+        admitted_stream(),
         media_type="application/x-ndjson",
         headers={
             "Cache-Control": "no-cache",
