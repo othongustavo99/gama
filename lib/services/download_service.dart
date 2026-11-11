@@ -50,11 +50,14 @@ class DownloadService {
 
   String _safeFilename(String value) {
     final name = p.basename(value.replaceAll('\\', '/'))
-        .replaceAll(RegExp(r'[\\/\x00-\x1F\x7F]'), '_').trim();
+        .replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1F\x7F]'), '_')
+        .trim()
+        .replaceFirst(RegExp(r'[. ]+$'), '');
     if (name.isEmpty || name == '.' || name == '..') {
       throw const FormatException('Nome de arquivo inválido.');
     }
-    return name;
+    final reserved = RegExp(r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)', caseSensitive: false);
+    return reserved.hasMatch(name) ? '_$name' : name;
   }
 
   /// Nunca sobrescreve silenciosamente um download anterior com o mesmo nome.
@@ -75,6 +78,40 @@ class DownloadService {
     final file = await _availableFile(dir, name);
     await file.writeAsString(text, encoding: utf8);
     return file.path;
+  }
+
+  Future<void> saveStream(
+    Stream<List<int>> stream, {
+    required String filename,
+    required int size,
+  }) async {
+    final dir = await _targetDir();
+    final destination = await _availableFile(dir, filename);
+    final partial = File('${destination.path}.part-${DateTime.now().microsecondsSinceEpoch}');
+    final sink = partial.openWrite();
+    var received = 0;
+    try {
+      try {
+        await sink.addStream(stream.map((chunk) {
+          received += chunk.length;
+          if (received > size) {
+            throw const FormatException('O arquivo excede o tamanho esperado.');
+          }
+          return chunk;
+        }));
+      } finally {
+        await sink.close();
+      }
+      if (received != size || await partial.length() != size) {
+        throw const FormatException('O arquivo chegou incompleto.');
+      }
+      if (await destination.exists()) {
+        throw const FileSystemException('O nome do download já está em uso.');
+      }
+      await partial.rename(destination.path);
+    } finally {
+      if (await partial.exists()) await partial.delete();
+    }
   }
 
   Future<String> copyFile(String sourcePath, {String? filename}) async {

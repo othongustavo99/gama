@@ -19,6 +19,7 @@ import '../screens/code_diff_screen.dart';
 import '../services/download_service.dart';
 import '../utils/error_logger.dart';
 import '../utils/friendly_error.dart';
+import '../utils/fenced_code.dart';
 import '../utils/streaming_text_preview.dart';
 
 class ParsedMessage {
@@ -921,6 +922,7 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
             referenceCode: widget.referenceCode,
             referenceLanguage: widget.referenceLanguage,
             isUser: widget.isUser,
+            streaming: widget.streaming,
           ),
         ),
       );
@@ -928,10 +930,15 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
     if (part.isOpenCode) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 10),
-        child: SelectableText(
-          part.content,
-          style: widget.textStyle.copyWith(fontFamily: 'monospace'),
-        ),
+        child: widget.streaming
+            ? _StreamingCodeText(
+                code: part.content,
+                style: widget.textStyle.copyWith(fontFamily: 'monospace'),
+              )
+            : SelectableText(
+                part.content,
+                style: widget.textStyle.copyWith(fontFamily: 'monospace'),
+              ),
       );
     }
     if (widget.streaming && part.endOffset == null) {
@@ -1109,89 +1116,85 @@ List<_CodePart> _splitStableParagraphs(List<_CodePart> parts, int length) {
 }
 
 List<_CodePart> _splitCodeBlocks(String text, {bool streaming = false}) {
-  // Split robusto: fechamento ``` só conta no início da linha.
-  // Código com ``` interno (ex.: buf.writeln('```dart')) não quebra o bloco.
   final parts = <_CodePart>[];
-  final openRe = RegExp(r'^[ 	]{0,3}```([^\r\n]*)\r?\n', multiLine: true);
   var cursor = 0;
-  var i = 0;
-  final src = text;
-
-  while (i < src.length) {
-    final open = openRe.allMatches(src, i).firstOrNull;
-    if (open == null) break;
-    final openStart = open.start;
-    final openEnd = open.end;
-    final language = (open.group(1) ?? '').trim();
-
-    // markdown antes do fence
-    if (openStart > cursor) {
-      parts.add(
-        _CodePart(
-          isCode: false, content: src.substring(cursor, openStart), endOffset: openStart,
-        ),
-      );
+  for (final block in fencedCodeBlocks(text, streaming: streaming)) {
+    if (block.start > cursor) {
+      parts.add(_CodePart(
+        isCode: false,
+        content: text.substring(cursor, block.start),
+        endOffset: block.start,
+      ));
     }
-
-    // procura fechamento: linha que é só ```
-    var closeStart = -1;
-    var closeEnd = -1;
-    var j = openEnd;
-    while (j < src.length) {
-      // início de linha
-      final lineStart = j;
-      var lineEnd = src.indexOf('\n', lineStart);
-      if (lineEnd < 0) lineEnd = src.length;
-      var line = src.substring(lineStart, lineEnd);
-      if (line.endsWith('\r')) {
-        line = line.substring(0, line.length - 1);
-      }
-      if (line.trim() == '```' && (!streaming || lineEnd < src.length)) {
-        closeStart = lineStart;
-        closeEnd = lineEnd < src.length ? lineEnd + 1 : lineEnd;
-        break;
-      }
-      j = lineEnd < src.length ? lineEnd + 1 : src.length;
-    }
-
-    if (closeStart < 0) {
-      // Durante o streaming, o último bloco não fechado é texto simples.
-      var code = src.substring(openEnd);
-      if (code.endsWith('\n')) {
-        code = code.substring(0, code.length - 1);
-      }
-      parts.add(
-        _CodePart(
-          isCode: false,
-          isOpenCode: true,
-          content: code,
-          language: language,
-        ),
-      );
-      cursor = src.length;
-      break;
-    }
-
-    var code = src.substring(openEnd, closeStart);
-    if (code.endsWith('\r\n')) {
-      code = code.substring(0, code.length - 2);
-    } else if (code.endsWith('\n')) {
-      code = code.substring(0, code.length - 1);
-    }
-    parts.add(_CodePart(isCode: true, content: code, language: language, endOffset: closeEnd));
-    cursor = closeEnd;
-    i = closeEnd;
+    parts.add(_CodePart(
+      isCode: block.end != null,
+      isOpenCode: block.end == null,
+      content: block.content(text),
+      language: block.language,
+      endOffset: block.end,
+    ));
+    cursor = block.end ?? text.length;
   }
-
-  if (cursor < src.length) {
-    parts.add(_CodePart(isCode: false, content: src.substring(cursor)));
+  if (cursor < text.length || parts.isEmpty) {
+    parts.add(_CodePart(isCode: false, content: text.substring(cursor)));
   }
-
-  if (parts.isEmpty) {
-    parts.add(_CodePart(isCode: false, content: src));
-  }
-
   return parts;
+}
+
+/// Freeze complete groups of lines so appending tokens only lays out the tail.
+class _StreamingCodeText extends StatefulWidget {
+  const _StreamingCodeText({required this.code, required this.style});
+
+  final String code;
+  final TextStyle style;
+
+  @override
+  State<_StreamingCodeText> createState() => _StreamingCodeTextState();
+}
+
+class _StreamingCodeTextState extends State<_StreamingCodeText> {
+  final _complete = <Widget>[];
+  int _tailStart = 0;
+  int _scanned = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _append();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StreamingCodeText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.style != widget.style || !widget.code.startsWith(oldWidget.code)) {
+      _complete.clear();
+      _tailStart = 0;
+      _scanned = 0;
+    }
+    _append();
+  }
+
+  void _append() {
+    var next = widget.code.indexOf('\n', _scanned);
+    while (next >= 0) {
+      if (next + 1 - _tailStart >= 1600) {
+        final end = widget.code.codeUnitAt(next - 1) == 13 ? next - 1 : next;
+        _complete.add(Text(widget.code.substring(_tailStart, end), style: widget.style));
+        _tailStart = next + 1;
+      }
+      next = widget.code.indexOf('\n', next + 1);
+    }
+    _scanned = widget.code.length;
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      ..._complete,
+      Text(widget.code.substring(_tailStart), style: widget.style),
+    ],
+  );
 }
 
 class _CopyableCodeBlock extends StatefulWidget {
@@ -1201,6 +1204,7 @@ class _CopyableCodeBlock extends StatefulWidget {
   final String? referenceLanguage;
   final bool isUser;
   final bool fullscreen;
+  final bool streaming;
 
   const _CopyableCodeBlock({
     super.key,
@@ -1210,6 +1214,7 @@ class _CopyableCodeBlock extends StatefulWidget {
     this.referenceLanguage,
     required this.isUser,
     this.fullscreen = false,
+    this.streaming = false,
   });
 
   @override
@@ -1460,15 +1465,25 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
   Widget build(BuildContext context) {
     final palette = context.gama;
     final title = widget.language.isEmpty ? 'Código' : widget.language;
-    final content = SelectionArea(
-      child: RichText(
-        text: _highlightedText(palette),
-        textScaler: MediaQuery.textScalerOf(context),
-        maxLines: widget.fullscreen ? null : 12,
-        overflow: widget.fullscreen ? TextOverflow.clip : TextOverflow.fade,
-        softWrap: !widget.fullscreen || _wrapLines,
-      ),
-    );
+    final content = widget.streaming
+        ? _StreamingCodeText(
+            code: widget.code,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              color: palette.textPrimary,
+              fontSize: 13,
+              height: 1.55,
+            ),
+          )
+        : SelectionArea(
+            child: RichText(
+              text: _highlightedText(palette),
+              textScaler: MediaQuery.textScalerOf(context),
+              maxLines: widget.fullscreen ? null : 12,
+              overflow: widget.fullscreen ? TextOverflow.clip : TextOverflow.fade,
+              softWrap: !widget.fullscreen || _wrapLines,
+            ),
+          );
 
     if (widget.fullscreen) {
       return Scaffold(

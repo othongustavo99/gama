@@ -17,6 +17,7 @@ import '../models/oficina_kind.dart';
 import '../services/conversation_service.dart';
 import 'chat_screen.dart';
 import '../widgets/app_drawer.dart';
+import '../widgets/windows_conversation_shortcuts.dart';
 import 'library_screen.dart';
 import 'plugins_screen.dart';
 import 'projects_screen.dart';
@@ -316,11 +317,36 @@ class _OficinaScreenState extends State<OficinaScreen> {
 
 /// Usa o mesmo AppDrawer do chat. No Windows ele fica fixo à esquerda em todas
 /// as telas da Oficina; nas demais plataformas abre como drawer móvel.
-class _OficinaScaffold extends StatelessWidget {
+class _OficinaScaffold extends StatefulWidget {
   final Widget child;
   final String? title;
 
   const _OficinaScaffold({required this.child, this.title});
+
+  @override
+  State<_OficinaScaffold> createState() => _OficinaScaffoldState();
+}
+
+class _OficinaScaffoldState extends State<_OficinaScaffold> {
+  final _search = ConversationSearchFocus();
+  bool _openingConversation = false;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _newConversation() async {
+    if (_openingConversation) return;
+    _openingConversation = true;
+    try {
+      await ConversationService.instance.openFreshConversation();
+      if (mounted) _returnToHome(context);
+    } finally {
+      _openingConversation = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -331,20 +357,18 @@ class _OficinaScaffold extends StatelessWidget {
     final service = ConversationService.instance;
     final drawer = AppDrawer(
       persistent: desktop,
-      onNewChat: () async {
-        await service.openFreshConversation();
-        if (context.mounted) _returnToHome(context, desktop);
-      },
+      searchFocusNode: _search.searchNode,
+      onNewChat: _newConversation,
       onSelectConversation: (id) async {
         await service.selectConversation(id);
-        if (context.mounted) _returnToHome(context, desktop);
+        if (context.mounted) _returnToHome(context);
       },
       onOpenLibrary: () => _open(context, const LibraryScreen(), desktop),
       onOpenProjects: () => _open(context, const ProjectsScreen(), desktop),
       onOpenScheduled: () => _open(context, const ScheduledScreen(), desktop),
       onOpenPlugins: () => _open(context, const PluginsScreen(), desktop),
       onOpenOficina: () {
-        if (title != null) {
+        if (widget.title != null) {
           if (!desktop) Navigator.pop(context);
           return;
         }
@@ -355,8 +379,8 @@ class _OficinaScaffold extends StatelessWidget {
     final content = Builder(
       // O drawer móvel pertence ao Scaffold externo; os controles flutuantes
       // do hub acessam esse Scaffold por meio deste contexto.
-      builder: (drawerContext) => title == null
-          ? child
+      builder: (drawerContext) => widget.title == null
+          ? widget.child
           : Scaffold(
               backgroundColor: context.gama.background,
 
@@ -372,12 +396,18 @@ class _OficinaScaffold extends StatelessWidget {
                         : Scaffold.of(drawerContext).openDrawer(),
                   ),
                 ),
-                child: child,
+                child: widget.child,
               ),
             ),
     );
 
-    return Scaffold(
+    return WindowsConversationShortcuts(
+      autofocus: widget.title != null,
+      onNewConversation: _newConversation,
+      onSearch: () => _search.requestSearch(persistent: desktop),
+      child: Scaffold(
+      key: _search.scaffoldKey,
+      onDrawerChanged: _search.drawerChanged,
       backgroundColor: context.gama.background,
       drawer: desktop ? null : drawer,
       body: desktop
@@ -393,6 +423,7 @@ class _OficinaScaffold extends StatelessWidget {
               ],
             )
           : content,
+      ),
     );
   }
 
@@ -403,8 +434,8 @@ class _OficinaScaffold extends StatelessWidget {
 
   /// Sai das rotas temporárias da Oficina para o chat principal. Com isso, a
   /// seleção da conversa atualizada pelo ConversationService aparece no Home.
-  void _returnToHome(BuildContext context, bool desktop) {
-    if (!desktop) Navigator.of(context).pop(); // fecha o drawer
+  void _returnToHome(BuildContext context) {
+    _search.closeDrawer();
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 }

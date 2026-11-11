@@ -435,6 +435,14 @@ class MemoryStore:
             self._write(data)
             return self._normalize(item)
 
+    def add_fact_with_change(self, text: str, **options) -> tuple[dict, dict | None]:
+        """Return a notice only when the fact actually changed."""
+        with _lock:
+            before = {fact["id"]: fact for fact in self.list_facts()}
+            fact = self.add_fact(text, **options)
+            notice = {"text": fact["text"]} if before.get(fact["id"]) != fact else None
+            return fact, notice
+
     def _evict(self, facts: List[dict], keep_id: str) -> None:
         """Remove os menos valiosos (nunca fixados, identidade ou o recém-criado)."""
         now = datetime.now(timezone.utc)

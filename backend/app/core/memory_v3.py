@@ -201,6 +201,22 @@ class SQLiteMemoryStore(MemoryStore):
                     json.dumps(before, ensure_ascii=False) if before else None,
                     json.dumps(after, ensure_ascii=False) if after else None))
 
+    def add_fact_with_change(self, text: str, **options) -> tuple[dict, dict | None]:
+        # The history ID must come from this write, including with concurrent
+        # workers or when add_fact returns a duplicate without writing.
+        with self._write_transaction():
+            db = self._active_conn
+            assert db is not None
+            before = db.execute("SELECT COALESCE(MAX(rowid), 0) FROM history").fetchone()[0]
+            fact = self.add_fact(text, **options)
+            row = db.execute(
+                """SELECT event_id FROM history WHERE rowid > ? AND fact_id = ?
+                   AND action IN ('ADD', 'UPDATE') ORDER BY rowid DESC LIMIT 1""",
+                (before, fact["id"]),
+            ).fetchone()
+            notice = {"text": fact["text"], "undo_event_id": row["event_id"]} if row else None
+            return fact, notice
+
     def list_history(self, limit: int = 30) -> list[dict]:
         with self._db() as db:
             rows = db.execute('SELECT * FROM history ORDER BY rowid DESC LIMIT ?', (max(1, min(limit, 100)),)).fetchall()

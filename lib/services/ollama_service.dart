@@ -19,6 +19,7 @@ import '../utils/friendly_error.dart';
 class ChatStreamEvent {
   final String? token;
   final String? memorySaved;
+  final String? memoryUndoEventId;
   final String? phase; // searching | thinking | typing | generating_image | image_ready | video_generating
   final String? webSearchQuery;
   final List<Map<String, dynamic>>? sources;
@@ -33,6 +34,7 @@ class ChatStreamEvent {
   const ChatStreamEvent._({
     this.token,
     this.memorySaved,
+    this.memoryUndoEventId,
     this.phase,
     this.webSearchQuery,
     this.sources,
@@ -54,6 +56,7 @@ class ChatStreamEvent {
     String? webSearchQuery,
     List<Map<String, dynamic>>? sources,
     String? memorySaved,
+    String? memoryUndoEventId,
     String? imageBase64,
     String? imageMime,
     Map<String, dynamic>? artifact,
@@ -63,6 +66,7 @@ class ChatStreamEvent {
     webSearchQuery: webSearchQuery,
     sources: sources,
     memorySaved: memorySaved,
+    memoryUndoEventId: memoryUndoEventId,
     imageBase64: imageBase64,
     imageMime: imageMime,
     artifact: artifact,
@@ -534,7 +538,8 @@ class OllamaService {
     final meta = json['gama_meta'];
     if (meta is Map) {
       final m = Map<String, dynamic>.from(meta);
-      final saved = m['memory_saved'] as String?;
+      final saved = m['memory_saved'];
+      final undoEventId = m['memory_undo_event_id'];
       final truncated = m['finish_reason'] == 'length';
       final phase = m['phase'] as String?;
       final query = m['web_search'] as String?;
@@ -560,7 +565,8 @@ class OllamaService {
         phase: phase,
         webSearchQuery: query,
         sources: sources,
-        memorySaved: saved,
+        memorySaved: saved is String ? saved : null,
+        memoryUndoEventId: undoEventId is String ? undoEventId : null,
         imageBase64: imgB64,
         imageMime: imgMime,
         artifact: artifact,

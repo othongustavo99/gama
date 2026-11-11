@@ -77,6 +77,7 @@ class GamaCore:
         force_deep_code_analysis: bool = False,
         enable_memory: bool = True,
         enable_code_analyzer: bool = True,
+        memory_changes: Optional[list[dict]] = None,
     ) -> Tuple[List[Dict[str, str]], Optional[str], Optional[str], List[Dict[str, str]]]:
         """
         Returns: prepared, fact_saved, search_query, sources
@@ -120,8 +121,11 @@ class GamaCore:
             try:
                 for extracted in try_extract_memories(last_user):
                     try:
-                        store.add_fact(extracted, source="auto")
-                        fact_saved = fact_saved or extracted
+                        _, change = store.add_fact_with_change(extracted, source="auto")
+                        if change:
+                            fact_saved = fact_saved or change["text"]
+                            if memory_changes is not None:
+                                memory_changes.append(change)
                     except Exception as e:
                         logger.warning("memory add: %s", e)
             except Exception as e:

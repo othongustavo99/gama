@@ -240,7 +240,7 @@ class ArtifactStatusList extends StatelessWidget {
                   if (generatedFiles.isNotEmpty) ...[
                     GeneratedFilesPreview(
                       files: generatedFiles,
-                      onPreview: onPreview,
+                      onPreview: (file) => onPreview({...file, 'archive_id': artifactId}),
                     ),
                     const SizedBox(height: 6),
                   ],

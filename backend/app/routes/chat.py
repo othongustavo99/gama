@@ -309,6 +309,13 @@ def _media_route_for_turn(
     return None
 
 
+def _memory_saved_event(change: dict) -> str:
+    meta = {"memory_saved": change["text"]}
+    if change.get("undo_event_id"):
+        meta["memory_undo_event_id"] = change["undo_event_id"]
+    return json.dumps({"gama_meta": meta}, ensure_ascii=False) + "\n"
+
+
 async def _extract_memory_after_turn(
     *, user_id: str, user_text: str, assistant_text: str, model: str,
     conversation_id: Optional[str] = None, recent_messages: Optional[list[dict]] = None,
@@ -1169,6 +1176,7 @@ async def chat(
         sources: list = []
         search_query = None
         fact_saved = None
+        memory_changes: list[dict] = []
         gama_messages = None
 
         try:
@@ -1269,6 +1277,7 @@ async def chat(
                     chat_mode=getattr(request, "chat_mode", None),
                     conversation_id=getattr(request, "conversation_id", None),
                     force_deep_code_analysis=deep_project_review,
+                    memory_changes=memory_changes,
                 )
             except Exception as e:
                 logger.exception("build_messages: %s", e)
@@ -1347,10 +1356,8 @@ async def chat(
                     "content": "MEMÓRIA ATUALIZADA: " + fact_saved +
                     ". Não peça para gravar novamente nem diga que não foi salvo.",
                 })
-                yield json.dumps(
-                    {"gama_meta": {"memory_saved": fact_saved}},
-                    ensure_ascii=False,
-                ) + "\n"
+            for change in memory_changes:
+                yield _memory_saved_event(change)
 
             if sources and not will_search:
                 yield json.dumps(
@@ -1884,7 +1891,7 @@ async def chat(
                             ) + "\n"
                         elif kind == "memory_saved":
                             agent_memory_tool_used = True
-                            yield json.dumps({"gama_meta": {"memory_saved": ev["text"]}}, ensure_ascii=False) + "\n"
+                            yield _memory_saved_event(ev)
                         elif kind == "memory_forgotten":
                             yield json.dumps({"gama_meta": {"memory_forgotten": ev["items"]}}, ensure_ascii=False) + "\n"
                         elif kind == "image":

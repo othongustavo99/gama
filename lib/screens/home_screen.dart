@@ -14,6 +14,7 @@ import '../services/conversation_service.dart';
 import '../services/conversation_sync_service.dart';
 import '../models/oficina_kind.dart';
 import '../widgets/app_drawer.dart';
+import '../widgets/windows_conversation_shortcuts.dart';
 import 'chat_screen.dart';
 import 'library_screen.dart';
 import 'plugins_screen.dart';
@@ -30,6 +31,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _service = ConversationService.instance;
+  final _search = ConversationSearchFocus();
+  bool _openingConversation = false;
   bool _booted = false;
   DateTime? _lastBackAt;
 
@@ -37,6 +40,23 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _bootConversations();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _newConversation() async {
+    if (_openingConversation) return;
+    _openingConversation = true;
+    try {
+      await _service.openFreshConversation();
+      if (mounted) _search.closeDrawer();
+    } finally {
+      _openingConversation = false;
+    }
   }
 
   /// Sempre inicia o app em uma NOVA conversa em branco.
@@ -68,7 +88,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final key = GamaWelcomePolicy.preferenceKey(scope);
     final shouldOffer = GamaWelcomePolicy.shouldOffer(
       alreadySeen: prefs.getBool(key) ?? false,
-      hasConversationHistory: _service.recentConversations.isNotEmpty ||
+      hasConversationHistory:
+          _service.recentConversations.isNotEmpty ||
           _service.pinnedConversations.isNotEmpty,
     );
     if (!shouldOffer || !mounted) return;
@@ -154,12 +175,8 @@ class _HomeScreenState extends State<HomeScreen> {
               MediaQuery.sizeOf(context).width >= 820;
           final appDrawer = AppDrawer(
             persistent: desktopSidebar,
-            onNewChat: () async {
-              // “Nova conversa” sempre começa no chat geral, inclusive quando
-              // a ação veio do drawer da Oficina.
-              await _service.openFreshConversation();
-              if (mounted && !desktopSidebar) Navigator.pop(context);
-            },
+            searchFocusNode: _search.searchNode,
+            onNewChat: _newConversation,
             onSelectConversation: (id) async {
               await _service.selectConversation(id);
               if (mounted && !desktopSidebar) Navigator.pop(context);
@@ -190,45 +207,41 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           );
 
-          return Scaffold(
-            backgroundColor: context.gama.background,
-            drawer: desktopSidebar ? null : appDrawer,
-            body: AnimatedSwitcher(
-              duration: MediaQuery.of(context).disableAnimations
-                  ? Duration.zero
-                  : GamaMotion.standard,
-              switchInCurve: GamaMotion.curve,
-              switchOutCurve: Curves.easeInCubic,
-              child: currentId == null
-                  ? const GamaSkeletonList(
-                      key: ValueKey('home-loading'),
-                      itemCount: 3,
-                    )
-                  : desktopSidebar
+          final chat = AnimatedSwitcher(
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : GamaMotion.standard,
+            switchInCurve: GamaMotion.curve,
+            switchOutCurve: Curves.easeInCubic,
+            child: currentId == null
+                ? const GamaSkeletonList(
+                    key: ValueKey('home-loading'),
+                    itemCount: 3,
+                  )
+                : ChatScreen(
+                    key: ValueKey(currentId),
+                    conversationId: currentId,
+                    oficinaKind: oficinaKind,
+                    persistentSidebar: desktopSidebar,
+                  ),
+          );
+          return WindowsConversationShortcuts(
+            onNewConversation: _newConversation,
+            onSearch: () => _search.requestSearch(persistent: desktopSidebar),
+            child: Scaffold(
+              key: _search.scaffoldKey,
+              onDrawerChanged: _search.drawerChanged,
+              backgroundColor: context.gama.background,
+              drawer: desktopSidebar ? null : appDrawer,
+              body: desktopSidebar
                   ? Row(
-                      key: ValueKey('home-desktop-$currentId'),
                       children: [
                         SizedBox(width: 280, child: appDrawer),
-                        VerticalDivider(
-                          width: 1,
-                          thickness: 1,
-                          color: context.gama.divider,
-                        ),
-                        Expanded(
-                          child: ChatScreen(
-                            key: ValueKey(currentId),
-                            conversationId: currentId,
-                            oficinaKind: oficinaKind,
-                            persistentSidebar: true,
-                          ),
-                        ),
+                        VerticalDivider(width: 1, color: context.gama.divider),
+                        Expanded(child: chat),
                       ],
                     )
-                  : ChatScreen(
-                      key: ValueKey(currentId),
-                      conversationId: currentId,
-                      oficinaKind: oficinaKind,
-                    ),
+                  : chat,
             ),
           );
         },

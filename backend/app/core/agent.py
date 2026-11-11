@@ -244,11 +244,17 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> tuple[str, di
                     return "Não gravei: o fato não veio da fala do usuário.", extras
             try:
                 imp = args.get("importance")
-                saved = get_store(ctx.user_id).add_fact(fact, source="auto", importance=int(imp) if imp else None)
+                saved, change = get_store(ctx.user_id).add_fact_with_change(
+                    fact, source="auto", importance=int(imp) if imp else None
+                )
             except ValueError as exc:
                 return f"Não gravei: {exc}", extras
-            extras = {"memory_saved": saved["text"]}
-            return f"Gravado: {saved['text']}", extras
+            if change:
+                return f"Gravado: {saved['text']}", {
+                    "memory_saved": change["text"],
+                    "memory_undo_event_id": change.get("undo_event_id"),
+                }
+            return f"Já estava na memória: {saved['text']}", extras
 
         if name == "forget_memory":
             removed = get_store(ctx.user_id).forget(str(args.get("about") or ""))
@@ -437,7 +443,11 @@ async def run_agent(
                 if c["name"] == "web_search":
                     yield {"type": "sources", "query": str(args.get("query") or "")[:200], "sources": extras.get("sources", [])}
             if extras.get("memory_saved"):
-                yield {"type": "memory_saved", "text": extras["memory_saved"]}
+                yield {
+                    "type": "memory_saved",
+                    "text": extras["memory_saved"],
+                    "undo_event_id": extras.get("memory_undo_event_id"),
+                }
             if extras.get("memory_forgotten"):
                 yield {"type": "memory_forgotten", "items": extras["memory_forgotten"]}
             msgs.append({"role": "tool", "tool_call_id": c["id"], "content": result[:MAX_TOOL_RESULT_CHARS]})

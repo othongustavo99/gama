@@ -14,6 +14,8 @@ class MemoryFact {
   final bool pinned;
   final String kind;
   final String subject;
+  final String? undoEventId;
+  final bool changed;
 
   MemoryFact({
     required this.id,
@@ -23,9 +25,15 @@ class MemoryFact {
     this.pinned = false,
     this.kind = 'profile',
     this.subject = '',
+    this.undoEventId,
+    this.changed = true,
   });
 
-  factory MemoryFact.fromJson(Map<String, dynamic> json) {
+  factory MemoryFact.fromJson(
+    Map<String, dynamic> json, {
+    String? undoEventId,
+    bool changed = true,
+  }) {
     return MemoryFact(
       id: json['id']?.toString() ?? '',
       text: json['text']?.toString() ?? '',
@@ -34,6 +42,8 @@ class MemoryFact {
       pinned: json['pinned'] == true,
       kind: json['kind']?.toString() ?? 'profile',
       subject: json['subject']?.toString() ?? '',
+      undoEventId: undoEventId,
+      changed: changed,
     );
   }
 }
@@ -113,7 +123,11 @@ class MemoryService {
   Future<MemoryFact> addFact(String text) async {
     final res = await _dio().post('/memory', data: {'text': text});
     final data = res.data as Map<String, dynamic>;
-    return MemoryFact.fromJson(Map<String, dynamic>.from(data['fact'] as Map));
+    return MemoryFact.fromJson(
+      Map<String, dynamic>.from(data['fact'] as Map),
+      undoEventId: data['undo_event_id'] as String?,
+      changed: data['changed'] != false,
+    );
   }
 
   Future<MemoryFact> updateFact(String id, String text) async {
@@ -141,7 +155,7 @@ class MemoryService {
   }
 
   Future<void> undo(String eventId) async {
-    await _dio().post('/memory/history/$eventId/undo');
+    await _dio().post('/memory/history/${Uri.encodeComponent(eventId)}/undo');
   }
 
 

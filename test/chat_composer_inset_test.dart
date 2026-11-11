@@ -1,10 +1,13 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gama/models/conversation.dart';
 import 'package:gama/models/message.dart';
 import 'package:gama/screens/chat_screen.dart';
+import 'package:gama/screens/code_diff_screen.dart';
+import 'package:gama/widgets/code_artifact_panel.dart';
 import 'package:gama/services/conversation_service.dart';
 import 'package:gama/services/settings_service.dart';
 import 'package:hive/hive.dart';
@@ -14,6 +17,7 @@ void main() {
   late Directory fixtureDirectory;
   late String conversationId;
   late String datedConversationId;
+  late String codeConversationId;
   late DateTime lastTimestamp;
 
   setUpAll(() async {
@@ -68,6 +72,26 @@ void main() {
           content: content,
           timestamp: timestamp,
           conversationId: datedConversationId,
+        ),
+        sync: false,
+      );
+    }
+    final code = await service.createDetachedConversation();
+    codeConversationId = code.id;
+    final pair = [
+      (
+        'user',
+        'Revise este código.\n\n```dart lib/main.dart\nfinal valor = 1;\n```',
+      ),
+      ('assistant', '```dart lib/main.dart\nfinal valor = 2;\n```'),
+    ];
+    for (final (index, entry) in pair.indexed) {
+      await service.addMessage(
+        Message(
+          id: 'code-$index',
+          role: entry.$1,
+          content: entry.$2,
+          conversationId: codeConversationId,
         ),
         sync: false,
       );
@@ -176,4 +200,64 @@ void main() {
     expect(find.text('Baixar'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'Artefatos abrem com abas e comparação e ações só editam o rascunho',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatScreen(
+              conversationId: codeConversationId,
+              persistentSidebar: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Explicar'), findsOneWidget);
+      await tester.ensureVisible(find.text('Abrir artefatos'));
+      await tester.tap(find.text('Abrir artefatos'));
+      await tester.pumpAndSettle();
+
+      final panel = find.byType(CodeArtifactPanel);
+      expect(panel, findsOneWidget);
+      expect(
+        find.descendant(of: panel, matching: find.byType(ChoiceChip)),
+        findsOneWidget,
+      );
+      if (defaultTargetPlatform == TargetPlatform.windows) {
+        expect(find.byType(ChatScreen), findsOneWidget);
+        expect(tester.getTopLeft(panel).dx, greaterThan(0));
+      } else {
+        expect(ModalRoute.of(tester.element(panel))?.isFirst, isFalse);
+      }
+      await tester.tap(find.byTooltip('Comparar alterações'));
+      await tester.pumpAndSettle();
+      expect(find.byType(CodeDiffView), findsOneWidget);
+      expect(find.text('final valor = 2;'), findsWidgets);
+      await tester.tap(find.byTooltip('Fechar artefatos'));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Converter para…'));
+      await tester.tap(find.text('Converter para…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Python'));
+      await tester.pumpAndSettle();
+      final draft = tester
+          .widget<TextField>(find.byType(TextField).first)
+          .controller!
+          .text;
+      expect(draft, contains('para Python'));
+      expect(
+        ConversationService.instance.getMessages(codeConversationId),
+        hasLength(2),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: const TargetPlatformVariant({
+      TargetPlatform.windows,
+      TargetPlatform.android,
+    }),
+  );
 }

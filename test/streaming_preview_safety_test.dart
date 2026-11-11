@@ -72,6 +72,8 @@ void main() {
 
     expect(find.text('Início da resposta', findRichText: true), findsOneWidget);
     expect(find.textContaining('fim da resposta'), findsOneWidget);
+    expect(find.textContaining('print(0);'), findsOneWidget);
+    expect(find.textContaining('print(999);'), findsOneWidget);
     expect(tester.widget<IconButton>(copyButton), same(closedBlock));
     expect(tester.takeException(), isNull);
   });

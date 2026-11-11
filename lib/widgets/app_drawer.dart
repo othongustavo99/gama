@@ -26,6 +26,7 @@ class AppDrawer extends StatefulWidget {
   final VoidCallback? onOpenOficina;
   final VoidCallback? onOpenWelcome;
   final bool persistent;
+  final FocusNode? searchFocusNode;
 
   const AppDrawer({
     super.key,
@@ -38,6 +39,7 @@ class AppDrawer extends StatefulWidget {
     this.onOpenOficina,
     this.onOpenWelcome,
     this.persistent = false,
+    this.searchFocusNode,
   });
 
   @override
@@ -311,6 +313,7 @@ class _AppDrawerState extends State<AppDrawer> {
                           padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
                           child: TextField(
                             controller: _conversationSearchController,
+                            focusNode: widget.searchFocusNode,
                             textInputAction: TextInputAction.search,
                             decoration: InputDecoration(
                               hintText: 'Buscar título ou mensagem',

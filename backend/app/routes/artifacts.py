@@ -13,10 +13,13 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import stat
+from contextlib import contextmanager
+from zipfile import BadZipFile, ZipFile
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Header
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..core.document_builder import (
@@ -299,4 +302,91 @@ async def artifact_download(
             "X-Gama-SHA256": str(info["sha256"]),
             "X-Gama-File-Size": str(info["size"]),
         },
+    )
+
+
+_MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
+_PRIVATE_RESPONSE = {"Cache-Control": "private, no-store"}
+
+
+@contextmanager
+def _open_artifact_zip(artifact_id: str, user_id: str):
+    info = get_artifact(artifact_id, user_id=user_id)
+    if not info or info.get("kind") != "zip" or not info.get("path"):
+        raise HTTPException(404, "Arquivo ZIP não encontrado ou expirado")
+    if not verify_artifact_file(info):
+        raise HTTPException(409, "O ZIP falhou na verificação de integridade")
+    try:
+        with ZipFile(info["path"]) as archive:
+            yield archive, info
+    except (BadZipFile, OSError, RuntimeError, NotImplementedError) as error:
+        raise HTTPException(409, "Não foi possível ler o ZIP") from error
+
+
+def _is_zip_file(entry):
+    return not entry.is_dir() and not stat.S_ISLNK(entry.external_attr >> 16)
+
+
+def _zip_entry(archive: ZipFile, index: int):
+    entries = archive.infolist()
+    if index < 0 or index >= len(entries) or not _is_zip_file(entries[index]):
+        raise HTTPException(404, "Arquivo não encontrado no ZIP")
+    return entries[index]
+
+
+@router.get("/{artifact_id}/files")
+def artifact_files(artifact_id: str, user_id: str = Depends(current_user_id)):
+    with _open_artifact_zip(artifact_id, user_id) as (archive, _):
+        return JSONResponse({
+            "files": [
+                {"index": index, "name": entry.filename, "size": entry.file_size}
+                for index, entry in enumerate(archive.infolist())
+                if _is_zip_file(entry)
+            ]
+        }, headers=_PRIVATE_RESPONSE)
+
+
+@router.get("/{artifact_id}/files/{index}")
+def artifact_file_preview(artifact_id: str, index: int, user_id: str = Depends(current_user_id)):
+    with _open_artifact_zip(artifact_id, user_id) as (archive, info):
+        entry = _zip_entry(archive, index)
+        if entry.file_size > _MAX_TEXT_PREVIEW_BYTES:
+            return JSONResponse({"content": None, "reason": "too_large"}, headers=_PRIVATE_RESPONSE)
+        with archive.open(entry) as file:
+            raw = file.read(_MAX_TEXT_PREVIEW_BYTES + 1)
+        if len(raw) > _MAX_TEXT_PREVIEW_BYTES:
+            return JSONResponse({"content": None, "reason": "too_large"}, headers=_PRIVATE_RESPONSE)
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+        if text is None or "\x00" in text:
+            return JSONResponse({"content": None, "reason": "binary"}, headers=_PRIVATE_RESPONSE)
+        response = {"content": text}
+        report = info.get("change_report")
+        previews = report.get("diff_previews") if isinstance(report, dict) else None
+        diff = previews.get(entry.filename) if isinstance(previews, dict) else None
+        if isinstance(diff, str) and diff:
+            response["diff"] = diff
+        return JSONResponse(response, headers=_PRIVATE_RESPONSE)
+
+
+@router.get("/{artifact_id}/files/{index}/download")
+def artifact_file_download(artifact_id: str, index: int, user_id: str = Depends(current_user_id)):
+    with _open_artifact_zip(artifact_id, user_id) as (archive, info):
+        entry = _zip_entry(archive, index)
+        size = entry.file_size
+        path = info["path"]
+
+    def chunks():
+        with ZipFile(path) as archive:
+            with archive.open(_zip_entry(archive, index)) as file:
+                while data := file.read(64 * 1024):
+                    yield data
+
+    return StreamingResponse(
+        chunks(),
+        media_type="application/octet-stream",
+        headers={**_PRIVATE_RESPONSE, "Content-Length": str(size),
+                 "Content-Disposition": "attachment"},
     )

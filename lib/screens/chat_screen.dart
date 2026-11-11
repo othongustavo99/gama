@@ -27,19 +27,24 @@ import '../core/design_tokens.dart';
 import '../core/constants.dart';
 import '../core/image_reference_intent.dart';
 import '../models/message.dart';
+import '../models/code_artifact.dart';
 import '../models/oficina_kind.dart';
 import '../services/attachment_service.dart';
 import '../services/conversation_service.dart';
 import '../services/conversation_sync_service.dart';
 import '../services/memory_service.dart';
+import '../services/local_account_scope.dart';
 import '../services/ollama_service.dart';
 import 'library_screen.dart';
 import 'settings_screen.dart';
 import 'commercial_screen.dart';
+import 'code_diff_screen.dart';
 import '../widgets/message_content.dart';
 import '../widgets/chat_status_indicator.dart';
 import '../widgets/chat_composer.dart';
 import '../widgets/artifact_status_list.dart';
+import '../widgets/code_artifact_panel.dart';
+import '../widgets/windows_conversation_shortcuts.dart';
 import '../widgets/empty_state.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/settings_service.dart';
@@ -98,6 +103,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   List<Message> _messages = [];
   String? _selectedMessageId;
+  Widget? _windowsCodePanel;
+  bool _artifactRouteOpen = false;
+  bool _stoppingGeneration = false;
+  ConversationStopController? _windowsStopController;
+  final _codeFilesCache = <String, (String, List<CodeArtifactFile>)>{};
+  bool get _isWindows => !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
   // Paginação de apresentação: mantém todas as mensagens no Hive e na API.
   final ChatHistoryWindow _historyWindow = ChatHistoryWindow();
   String? _newMessageAnimationId;
@@ -605,10 +616,40 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _submitFollowUp(String prompt) async {
-    if (_isLoading) return;
-    _controller.text = prompt;
-    await _sendMessage();
+  void _draftCodeFollowUp(String prompt) {
+    if (!mounted || _isLoading) return;
+    final current = _controller.text;
+    final text = current.trim().isEmpty ? prompt : '$current\n\n$prompt';
+    _controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+    _composerFocusNode.requestFocus();
+  }
+
+  Future<void> _chooseCodeLanguage() async {
+    final language = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final name in const [
+                'Dart', 'Python', 'JavaScript', 'TypeScript', 'Java', 'C#', 'Go', 'Rust',
+              ])
+                ActionChip(label: Text(name), onPressed: () => Navigator.pop(context, name)),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (language != null) {
+      _draftCodeFollowUp('Converta o código da resposta anterior para $language, preservando o comportamento.');
+    }
   }
 
   void _startGenerationClock() => _generationClock.start();
@@ -1198,6 +1239,20 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final controller = WindowsConversationShortcuts.stopControllerOf(context);
+    if (identical(controller, _windowsStopController)) return;
+    _windowsStopController?.detach(this);
+    _windowsStopController = controller;
+    controller?.attach(
+      this,
+      () => _isLoading || _isSpeaking,
+      () => unawaited(_stopGeneration()),
+    );
+  }
+
+  @override
   void didUpdateWidget(covariant ChatScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.conversationId != widget.conversationId) {
@@ -1240,6 +1295,8 @@ class _ChatScreenState extends State<ChatScreen> {
   void _loadMessages() {
     setState(() {
       _selectedMessageId = null;
+      _windowsCodePanel = null;
+      _codeFilesCache.clear();
       _messages = _service.getMessages(widget.conversationId);
       _artifactsByMessageId.clear();
       for (final message in _messages) {
@@ -2191,38 +2248,140 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _showGeneratedFilePreview(Map<String, dynamic> file) {
-    final title = file['name']?.toString() ?? 'Prévia do arquivo';
-    final content = file['preview']?.toString() ?? 'Prévia indisponível.';
-    if (defaultTargetPlatform == TargetPlatform.windows) {
-      showGeneralDialog<void>(
-        context: context,
-        barrierDismissible: true,
-        barrierLabel: 'Fechar prévia',
-        barrierColor: Colors.black54,
-        pageBuilder: (context, _, __) => Align(
-          alignment: Alignment.centerRight,
-          child: Material(
-            color: context.gama.surface,
-            child: SizedBox(
-              width: MediaQuery.of(context).size.width * 0.55,
-              height: double.infinity,
-              child: _CodePreviewContent(title: title, content: content),
-            ),
-          ),
-        ),
-      );
-    } else {
-      showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: context.gama.surface,
-        builder: (_) => SizedBox(
-          height: MediaQuery.of(context).size.height * 0.82,
-          child: _CodePreviewContent(title: title, content: content),
-        ),
-      );
+  List<CodeArtifactFile> _codeFilesFor(Message message) {
+    final cached = _codeFilesCache[message.id];
+    if (cached != null && cached.$1 == message.content) return cached.$2;
+    final files = CodeArtifactFile.fromMarkdown(extractGamaImages(message.content).$1);
+    if (_codeFilesCache.length >= 80 && cached == null) {
+      _codeFilesCache.remove(_codeFilesCache.keys.first);
     }
+    _codeFilesCache[message.id] = (message.content, files);
+    return files;
+  }
+
+  List<CodeArchive> _codeArchivesFor(Message message) => CodeArchive.fromArtifacts(
+    _artifactsByMessageId[message.id] ?? message.artifacts,
+  );
+
+  Map<String, String> _codeOriginals(Message message, int index, List<CodeArtifactFile> snippets) {
+    final previous = message.selectedVariantIndex > 0
+        ? CodeArtifactFile.fromMarkdown(message.variants[message.selectedVariantIndex - 1])
+        : index > 0 && _messages[index - 1].isUser
+        ? _codeFilesFor(_messages[index - 1])
+        : const <CodeArtifactFile>[];
+    final originals = {for (final file in previous) file.name: file.content!};
+    final reference = widget.codeComparisonBase;
+    if (reference != null && reference.trim().isNotEmpty && snippets.length == 1) {
+      final language = widget.codeComparisonLanguage?.toLowerCase() ?? '';
+      if (language.isEmpty || snippets.single.language.toLowerCase() == language) {
+        originals.putIfAbsent(snippets.single.name, () => reference);
+      }
+    }
+    return originals;
+  }
+
+  void _openCodePanel(Message message, int index, {String? archiveId, String? initialFile}) {
+    if (!mounted || _artifactRouteOpen) return;
+    final snippets = _codeFilesFor(message);
+    final archives = _codeArchivesFor(message);
+    if (snippets.isEmpty && archives.isEmpty) return;
+    final originals = _codeOriginals(message, index, snippets);
+
+    Widget panel(VoidCallback close) => CodeArtifactPanel(
+      key: UniqueKey(),
+      snippets: snippets,
+      archives: archives,
+      originals: originals,
+      initialArchiveId: archiveId,
+      initialFile: initialFile,
+      onClose: close,
+      onDownloadArchive: (archive) => _downloadGeneratedArtifact(
+        archive.id, archive.name,
+        expectedSha256: archive.sha256,
+        expectedSize: archive.size,
+        openAfterDownload: false,
+      ),
+    );
+
+    if (_isWindows) {
+      setState(() => _windowsCodePanel = panel(() {
+        if (mounted) setState(() => _windowsCodePanel = null);
+      }));
+      return;
+    }
+    _artifactRouteOpen = true;
+    Navigator.of(context).push(GamaPageRoute<void>(
+      builder: (context) => Scaffold(
+        body: panel(() => Navigator.of(context).pop()),
+      ),
+    )).whenComplete(() => _artifactRouteOpen = false);
+  }
+
+  void _maybeOpenCodePanel(Message message, int generationEpoch) {
+    final shouldOpen = _codeArchivesFor(message).isNotEmpty ||
+        _codeFilesFor(message).any((file) => file.isLong);
+    if (!shouldOpen) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_generation.isCurrent(generationEpoch) ||
+          _isLoading || !_followStream || _controller.text.trim().isNotEmpty ||
+          _windowsCodePanel != null || ModalRoute.of(context)?.isCurrent != true) {
+        return;
+      }
+      final index = _messages.indexOf(message);
+      if (index >= 0) _openCodePanel(message, index);
+    });
+  }
+
+  Widget _codeActions(Message message, int index, {required bool showQuickActions}) {
+    final files = _codeFilesFor(message);
+    final archives = _codeArchivesFor(message);
+    if (files.isEmpty && archives.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          ActionChip(
+            avatar: const Icon(Icons.folder_open_outlined, size: 17),
+            label: const Text('Abrir artefatos'),
+            onPressed: () => _openCodePanel(message, index),
+          ),
+          if (showQuickActions && files.any((file) => file.isCode)) ...[
+            for (final (label, prompt) in const [
+              ('Explicar', 'Explique o código da resposta anterior e como as partes se conectam.'),
+              ('Simplificar', 'Simplifique o código da resposta anterior sem mudar o comportamento.'),
+              ('Adicionar testes', 'Adicione testes para o código da resposta anterior, incluindo os casos de borda.'),
+              ('Otimizar', 'Otimize o código da resposta anterior e explique o efeito das mudanças.'),
+            ])
+              ActionChip(label: Text(label), onPressed: () => _draftCodeFollowUp(prompt)),
+            ActionChip(label: const Text('Converter para…'), onPressed: _chooseCodeLanguage),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _showMemoryUpdated(String? eventId) {
+    if (!mounted) return;
+    final scope = LocalAccountScope.current().key;
+    final id = eventId?.trim() ?? '';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('Memória atualizada'),
+      duration: const Duration(seconds: 8),
+      action: id.isEmpty ? null : SnackBarAction(
+        label: 'Desfazer',
+        onPressed: () async {
+          if (!mounted || LocalAccountScope.current().key != scope) return;
+          try {
+            await _memory.undo(id);
+            _snack('Alteração na memória desfeita');
+          } catch (error, stack) {
+            _showActionError(error, stack, acao: 'desfazer a alteração na memória');
+          }
+        },
+      ),
+    ));
   }
 
   Future<void> _showAttachMenu() async {
@@ -2549,8 +2708,12 @@ class _ChatScreenState extends State<ChatScreen> {
           .trim();
       if (fact.length >= 3) {
         try {
-          await _memory.addFact(fact);
-          _snack('Salvei na memória: $fact');
+          final saved = await _memory.addFact(fact);
+          if (saved.changed) {
+            _showMemoryUpdated(saved.undoEventId);
+          } else {
+            _snack('Essa informação já estava na memória.');
+          }
         } catch (e, stack) {
           _showActionError(e, stack, acao: 'salvar na memória');
         }
@@ -3159,7 +3322,7 @@ class _ChatScreenState extends State<ChatScreen> {
           }
           if (event.memorySaved != null &&
               event.memorySaved!.trim().isNotEmpty) {
-            _snack('Memória atualizada');
+            _showMemoryUpdated(event.memoryUndoEventId);
           }
           if (event.sources != null &&
               _messages.isNotEmpty &&
@@ -3342,6 +3505,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? _voiceResponseBuffer
                 : extractGamaImages(_messages.last.content).$1;
             final assistantToSave = _messages.last;
+            if (!isVoiceReply && mounted) {
+              _maybeOpenCodePanel(assistantToSave, generationEpoch);
+            }
             if (isVoiceReply) {
               // Preserve imagens criadas pela ferramenta mesmo quando a
               // resposta textual é revelada pelo TTS. O áudio fala apenas
@@ -3543,47 +3709,75 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _stopGeneration() async {
+    if (_stoppingGeneration || (!_isLoading && !_isSpeaking)) return;
+    _stoppingGeneration = true;
+    try {
+      await _stopGenerationNow();
+    } finally {
+      _stoppingGeneration = false;
+    }
+  }
+
+  Future<void> _cancelRemoteGeneration(String id) async {
+    try {
+      await _ollama.cancelChatGeneration(id);
+      await ConversationSyncService.instance.clearPendingGeneration(id);
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'cancelar a geração');
+    }
+  }
+
+  Future<void> _stopGenerationNow() async {
+    final wasGenerating = _isLoading;
+    final stopEpoch = _generation.start();
     final speech = _liveSpeech;
     _liveSpeech = null;
-    if (speech != null) await speech.cancel();
-    // Invalida os eventos de rede antes de aguardar o cancelamento remoto.
-    _generation.invalidate();
+    final subscription = _streamSubscription;
+    _streamSubscription = null;
     _stopGenerationClock();
-    unawaited(HapticFeedback.lightImpact());
+    _resetStreamReveal();
     final activeAssistant = _messages.isNotEmpty && _messages.last.isAssistant
         ? _messages.last
         : null;
-    if (activeAssistant != null) {
-      await _ollama.cancelChatGeneration(activeAssistant.id);
-      await ConversationSyncService.instance.clearPendingGeneration(
-        activeAssistant.id,
-      );
+    final remoteCancellation = wasGenerating && activeAssistant != null
+        ? _cancelRemoteGeneration(activeAssistant.id)
+        : null;
+    try {
+      await subscription?.cancel();
+      if (speech != null) await speech.cancel();
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'parar o stream');
     }
-    await _streamSubscription?.cancel();
-    _streamSubscription = null;
-    _resetStreamReveal();
     try {
       await TtsService.instance.stop();
     } catch (error, stack) {
       logSwallowed(error, stack, context: 'parar áudio');
     }
-    _isSpeaking = false;
-    if (!mounted) return;
-    final lastMessage = _messages.isNotEmpty ? _messages.last : null;
-    if (lastMessage != null && lastMessage.isAssistant) {
+    await remoteCancellation;
+    if (!mounted || !_generation.isCurrent(stopEpoch)) return;
+    final lastMessage = wasGenerating ? activeAssistant : null;
+    if (lastMessage != null) {
       if (_voiceResponsePending && _voiceResponseBuffer.isNotEmpty) {
         lastMessage.content = _voiceResponseBuffer;
       } else if (_streamRawText.length > 0) {
         lastMessage.content = _streamRawText.toString();
       }
       if (lastMessage.content.isNotEmpty) {
-        if (_regeneratingAssistantMessage != null) {
-          await _service.updateMessageContent(lastMessage, lastMessage.content);
-        } else {
-          await _service.addMessage(lastMessage);
+        try {
+          final pending = _assistantPersistence;
+          if (pending != null) await pending;
+          if (!_generation.isCurrent(stopEpoch)) return;
+          if (lastMessage.isInBox) {
+            await _service.updateMessageContent(lastMessage, lastMessage.content);
+          } else {
+            await _service.addMessage(lastMessage);
+          }
+        } catch (error, stack) {
+          logSwallowed(error, stack, context: 'salvar resposta interrompida');
         }
       }
     }
+    if (!mounted || !_generation.isCurrent(stopEpoch)) return;
     _voiceResponsePending = false;
     _voiceResponseBuffer = '';
     _voiceReplyDisplayMessageId = null;
@@ -3660,6 +3854,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _windowsStopController?.detach(this);
     _manualSpeechEpoch++;
     if (_isSpeaking || TtsService.instance.isBusy) {
       unawaited(TtsService.instance.stop());
@@ -4048,7 +4243,7 @@ class _ChatScreenState extends State<ChatScreen> {
         2 * _headerVerticalPadding;
     final bottomInset = _composerHeight + _messageInset;
     _measureComposer();
-    return Material(
+    final chat = Material(
       color: Colors.transparent,
       child: DropTarget(
         onDragDone: _handleDroppedFiles,
@@ -4686,8 +4881,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                       _videoPathsByArtifactId,
                                                                   onPlayVideo:
                                                                       _cacheVideoArtifact,
-                                                                  onPreview:
-                                                                      _showGeneratedFilePreview,
+                                                                  onPreview: (file) => _openCodePanel(
+                                                                    msg, index,
+                                                                    archiveId: file['archive_id']?.toString(),
+                                                                    initialFile: file['name']?.toString(),
+                                                                  ),
                                                                   onDownload: (artifact) {
                                                                     final id =
                                                                         artifact['artifact_id']
@@ -4871,6 +5069,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                                         if ((isSelected || index == lastAssistantIndex) &&
                                                             msg.content.trim().isNotEmpty)
                                                           _messageActions(msg, index, selected: isSelected),
+                                                        if (!isUser && !(_isLoading && isLastAssistant))
+                                                          _codeActions(
+                                                            msg, index,
+                                                            showQuickActions: index == lastAssistantIndex &&
+                                                                !_isLoading &&
+                                                                _failedAssistantMessageId != msg.id,
+                                                          ),
                                                         if (!isUser)
                                                           const SizedBox(
                                                             height: 12,
@@ -5186,6 +5391,47 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+    if (!_isWindows) return chat;
+    return Focus(
+      autofocus: true,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final panel = _windowsCodePanel;
+          final sideBySide = constraints.maxWidth >= 700;
+          return Stack(
+            children: [
+              Row(
+                children: [
+                  Expanded(child: chat),
+                  if (panel != null && sideBySide) ...[
+                    VerticalDivider(width: 1, color: context.gama.divider),
+                    SizedBox(
+                      width: (constraints.maxWidth * .46).clamp(340.0, 600.0),
+                      child: panel,
+                    ),
+                  ],
+                ],
+              ),
+              if (panel != null && !sideBySide) ...[
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _windowsCodePanel = null),
+                    child: const ColoredBox(color: Colors.black26),
+                  ),
+                ),
+                Positioned(
+                  top: 0,
+                  bottom: 0,
+                  right: 0,
+                  width: constraints.maxWidth * .92,
+                  child: panel,
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
   }
 }
 
@@ -5221,60 +5467,6 @@ class _SourceFavicon extends StatelessWidget {
       ),
     );
   }
-}
-
-class _CodePreviewContent extends StatelessWidget {
-  final String title;
-  final String content;
-  const _CodePreviewContent({required this.title, required this.content});
-
-  @override
-  Widget build(BuildContext context) => SafeArea(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 12, 10),
-          child: Row(
-            children: [
-              Icon(Icons.code_rounded, color: context.gama.accent),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: context.gama.textPrimary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              IconButton(
-                onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.close_rounded),
-              ),
-            ],
-          ),
-        ),
-        Divider(color: context.gama.divider, height: 1),
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(18),
-            child: SelectableText(
-              content,
-              style: TextStyle(
-                color: context.gama.textPrimary,
-                fontFamily: 'monospace',
-                fontSize: 12,
-                height: 1.5,
-              ),
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
 }
 
 class _VideoGenerationProgress extends StatelessWidget {
@@ -5364,32 +5556,7 @@ class _UnifiedDiffCard extends StatelessWidget {
             constraints: const BoxConstraints(maxHeight: 360),
             width: double.infinity,
             color: context.gama.surface,
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: lines.length,
-              itemBuilder: (context, index) {
-                final line = lines[index];
-                final color = line.startsWith('+')
-                    ? const Color(0x332E9B62)
-                    : line.startsWith('-')
-                    ? const Color(0x33D94A4A)
-                    : Colors.transparent;
-                return Container(
-                  color: color,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 2,
-                  ),
-                  child: SelectableText(
-                    line,
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                    ),
-                  ),
-                );
-              },
-            ),
+            child: UnifiedCodeDiffView(content: lines.join('\n'), shrinkWrap: true),
           ),
         ],
       ),

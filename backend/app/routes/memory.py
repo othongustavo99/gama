@@ -107,10 +107,13 @@ async def list_memory(user_id: str = Depends(current_user_id)):
 async def add_memory(body: FactIn, user_id: str = Depends(current_user_id)):
     store = get_store(user_id)
     try:
-        fact = store.add_fact(body.text.strip(), source="user", pinned=body.pinned, importance=body.importance)
+        fact, change = store.add_fact_with_change(
+            body.text.strip(), source="user", pinned=body.pinned, importance=body.importance
+        )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    return {"ok": True, "fact": fact}
+    return {"ok": True, "fact": fact, "changed": change is not None,
+            "undo_event_id": change.get("undo_event_id") if change else None}
 
 
 @router.patch("/{fact_id}")
