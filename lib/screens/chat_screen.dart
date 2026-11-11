@@ -2024,7 +2024,8 @@ class _ChatScreenState extends State<ChatScreen> {
         onTap: () => setState(() {
           _selectedMessageId = _selectedMessageId == message.id ? null : message.id;
         }),
-        onLongPress: () => _showMessageContextMenu(message, index),
+        // Pressionar e segurar pertence à seleção nativa de texto.
+        // O menu de ações fica disponível pelo botão "Mais ações".
         child: child,
       ),
     );
@@ -2045,9 +2046,9 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         _messageAction(Icons.copy_rounded, 'Copiar', () => _copyMessage(message)),
-        if (message.isUser && !_isLoading && _canReusePrompt(message))
+        if (selected && message.isUser && !_isLoading && _canReusePrompt(message))
           _messageAction(Icons.edit_outlined, 'Editar e reenviar', () => _editAndResend(message, index)),
-        if (!message.isUser) ...[
+        if (selected && !message.isUser) ...[
           _messageAction(Icons.volume_up_outlined, 'Ouvir resposta', () => _speakMessage(message)),
           if (_canRegenerateMessage(index))
             _messageAction(Icons.refresh_rounded, 'Regenerar resposta', () => _regenerateResponse(index)),
@@ -2349,16 +2350,39 @@ class _ChatScreenState extends State<ChatScreen> {
             label: const Text('Abrir artefatos'),
             onPressed: () => _openCodePanel(message, index),
           ),
-          if (showQuickActions && files.any((file) => file.isCode)) ...[
-            for (final (label, prompt) in const [
-              ('Explicar', 'Explique o código da resposta anterior e como as partes se conectam.'),
-              ('Simplificar', 'Simplifique o código da resposta anterior sem mudar o comportamento.'),
-              ('Adicionar testes', 'Adicione testes para o código da resposta anterior, incluindo os casos de borda.'),
-              ('Otimizar', 'Otimize o código da resposta anterior e explique o efeito das mudanças.'),
-            ])
-              ActionChip(label: Text(label), onPressed: () => _draftCodeFollowUp(prompt)),
-            ActionChip(label: const Text('Converter para…'), onPressed: _chooseCodeLanguage),
-          ],
+          if (showQuickActions && files.any((file) => file.isCode))
+            PopupMenuButton<String>(
+              tooltip: 'Trabalhar neste código',
+              enabled: !_isLoading,
+              color: context.gama.surfaceElevated,
+              onSelected: (action) {
+                if (!mounted || _isLoading) return;
+                if (action == 'convert') {
+                  _chooseCodeLanguage();
+                  return;
+                }
+                final prompts = <String, String>{
+                  'explain': 'Explique o código da resposta anterior e como as partes se conectam.',
+                  'simplify': 'Simplifique o código da resposta anterior sem mudar o comportamento.',
+                  'tests': 'Adicione testes para o código da resposta anterior, incluindo os casos de borda.',
+                  'optimize': 'Otimize o código da resposta anterior e explique o efeito das mudanças.',
+                };
+                final prompt = prompts[action];
+                if (prompt != null) _draftCodeFollowUp(prompt);
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(value: 'explain', child: Text('Explicar')),
+                PopupMenuItem(value: 'simplify', child: Text('Simplificar')),
+                PopupMenuItem(value: 'tests', child: Text('Adicionar testes')),
+                PopupMenuItem(value: 'optimize', child: Text('Otimizar')),
+                PopupMenuDivider(),
+                PopupMenuItem(value: 'convert', child: Text('Converter para…')),
+              ],
+              child: Chip(
+                avatar: const Icon(Icons.code_rounded, size: 17),
+                label: const Text('Trabalhar no código'),
+              ),
+            ),
         ],
       ),
     );
@@ -3907,27 +3931,13 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  Widget _buildModeFloatingControl(BuildContext context) {
+  Widget _buildModeFloatingControl(BuildContext context, {bool compact = false}) {
     final palette = context.gama;
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: palette.border.withValues(alpha: 0.55)),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            palette.surfaceCard,
-            palette.surfaceHover,
-          ],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.16),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        color: palette.surfaceCard,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(23),
@@ -3966,9 +3976,9 @@ class _ChatScreenState extends State<ChatScreen> {
               borderRadius: BorderRadius.circular(20),
             ),
             child: SizedBox(
-              height: 48,
+              height: _headerControlHeight,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 13),
+                padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 13),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -3979,15 +3989,17 @@ class _ChatScreenState extends State<ChatScreen> {
                       size: 17,
                       color: palette.textPrimary,
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _mode == GamaMode.conversar ? 'Conversar' : 'Programar',
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
+                    if (!compact) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        _mode == GamaMode.conversar ? 'Conversar' : 'Programar',
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(width: 4),
                     Icon(
                       Icons.expand_more_rounded,
@@ -4000,6 +4012,32 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
       ),
+    );
+  }
+
+  Widget _buildConversationHeading(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _service,
+      builder: (context, _) {
+        final savedTitle = _service.conversationById(widget.conversationId)?.title.trim();
+        final title = (savedTitle == null || savedTitle.isEmpty)
+            ? (widget.oficinaKind?.conversationTitle ?? 'Nova conversa')
+            : savedTitle;
+        return Semantics(
+          header: true,
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: context.gama.textSecondary,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              letterSpacing: .1,
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -4484,20 +4522,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                 ),
                                                           decoration: isUser
                                                               ? BoxDecoration(
-                                                                  gradient: LinearGradient(
-                                                                    begin: Alignment
-                                                                        .topLeft,
-                                                                    end: Alignment
-                                                                        .bottomRight,
-                                                                    colors: [
-                                                                      context
-                                                                          .gama
-                                                                          .bubbleUserSoft,
-                                                                      context
-                                                                          .gama
-                                                                          .bubbleUser,
-                                                                    ],
-                                                                  ),
+                                                                  // Balão sólido, sem gradiente decorativo.
+                                                                  color: context.gama.bubbleUser,
                                                                   borderRadius: const BorderRadius.only(
                                                                     topLeft:
                                                                         Radius.circular(
@@ -4514,15 +4540,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                     bottomRight:
                                                                         Radius.circular(
                                                                           7,
-                                                                        ),
-                                                                  ),
-                                                                  border: Border.all(
-                                                                    color: context
-                                                                        .gama
-                                                                        .accent
-                                                                        .withValues(
-                                                                          alpha:
-                                                                              0.20,
                                                                         ),
                                                                   ),
                                                                 )
@@ -5216,8 +5233,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                   child: SizedBox(
                     height: _headerControlHeight,
-                    child: Row(
-                      children: [
+                    child: LayoutBuilder(
+                      builder: (context, headerConstraints) {
+                        final compactHeader = headerConstraints.maxWidth < 410;
+                        return Row(
+                          children: [
                         // O acesso ao histórico permanece visível, como no layout original.
                         // O Builder garante que o botão encontre o Scaffold que contém o drawer.
                         if (widget.oficinaKind != null)
@@ -5250,25 +5270,16 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                           ),
                         if (!isWideDesktop) const SizedBox(width: 7),
-                        // Nada de logomarca/título ocupando a barra superior.
-                        // Cada ação tem seu próprio fundo flutuante.
-                        const Spacer(),
-                        if (widget.oficinaKind == null)
-                          _buildModeFloatingControl(context)
-                        else if (widget.oficinaKind == OficinaKind.programar)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 7,
-                            ),
-                            child: Text(
-                              'Programar',
-                              style: TextStyle(
-                                color: context.gama.textSecondary,
-                                fontSize: 12,
-                              ),
-                            ),
+                        // Título breve da conversa: atualiza quando a IA
+                        // renomeia o histórico, sem uma AppBar pesada.
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: _buildConversationHeading(context),
                           ),
+                        ),
+                        if (widget.oficinaKind == null)
+                          _buildModeFloatingControl(context, compact: compactHeader),
                         const SizedBox(width: 7),
                         GamaFloatingControl(
                           child: PopupMenuButton<String>(
@@ -5383,7 +5394,9 @@ class _ChatScreenState extends State<ChatScreen> {
                             ],
                           ),
                         ),
-                      ],
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ),

@@ -152,6 +152,31 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('cabeçalho acompanha título da conversa sem redesenhar a tela',
+      (tester) async {
+    final conversation = ConversationService.instance.conversationById(conversationId)!;
+    final previousTitle = conversation.title;
+    addTearDown(() {
+      conversation.title = previousTitle;
+      ConversationService.instance.notifyListeners();
+    });
+    conversation.title = 'Análise do projeto Flutter';
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: ChatScreen(
+        conversationId: conversationId,
+        persistentSidebar: true,
+      )),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Análise do projeto Flutter'), findsOneWidget);
+    conversation.title = 'Atualização da interface';
+    ConversationService.instance.notifyListeners();
+    await tester.pump();
+    expect(find.text('Atualização da interface'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('Exibe datas e ações no último turno ou na mensagem tocada', (
     tester,
   ) async {
@@ -169,17 +194,18 @@ void main() {
 
     expect(find.text('Ontem'), findsOneWidget);
     expect(find.text('Hoje'), findsOneWidget);
-    expect(find.byTooltip('Ouvir resposta'), findsOneWidget);
+    // Somente copiar e abrir o menu ficam visíveis por padrão.
+    expect(find.byTooltip('Ouvir resposta'), findsNothing);
     expect(find.byTooltip('Editar e reenviar'), findsNothing);
 
     await tester.tap(find.text('Resposta antiga', findRichText: true));
     await tester.pumpAndSettle();
-    expect(find.byTooltip('Ouvir resposta'), findsNWidgets(2));
+    expect(find.byTooltip('Ouvir resposta'), findsOneWidget);
 
     final user = find.text('Pedido novo', findRichText: true);
     await tester.tap(user);
     await tester.pumpAndSettle();
-    expect(find.byTooltip('Ouvir resposta'), findsOneWidget);
+    expect(find.byTooltip('Ouvir resposta'), findsNothing);
     expect(find.byTooltip('Editar e reenviar'), findsOneWidget);
     final time = TimeOfDay.fromDateTime(lastTimestamp)
         .format(tester.element(user));
@@ -193,11 +219,10 @@ void main() {
     Navigator.of(tester.element(find.text('Baixar'))).pop();
     await tester.pumpAndSettle();
 
+    // O long press passa a ser da seleção nativa, não abre a folha de ações.
     await tester.longPress(user);
     await tester.pumpAndSettle();
-    expect(find.text('Editar e reenviar'), findsOneWidget);
-    expect(find.text('Tentar novamente'), findsOneWidget);
-    expect(find.text('Baixar'), findsOneWidget);
+    expect(find.text('Baixar'), findsNothing);
     expect(tester.takeException(), isNull);
   });
   testWidgets(
@@ -214,7 +239,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Explicar'), findsOneWidget);
+      expect(find.text('Trabalhar no código'), findsOneWidget);
+      expect(find.text('Explicar'), findsNothing);
       await tester.ensureVisible(find.text('Abrir artefatos'));
       await tester.tap(find.text('Abrir artefatos'));
       await tester.pumpAndSettle();
@@ -238,7 +264,11 @@ void main() {
       await tester.tap(find.byTooltip('Fechar artefatos'));
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('Converter para…'));
+      await tester.ensureVisible(find.text('Trabalhar no código'));
+      await tester.tap(find.text('Trabalhar no código'));
+      await tester.pumpAndSettle();
+      expect(find.text('Explicar'), findsOneWidget);
+      expect(find.text('Adicionar testes'), findsOneWidget);
       await tester.tap(find.text('Converter para…'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Python'));

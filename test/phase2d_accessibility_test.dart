@@ -59,12 +59,14 @@ void main() {
       onVoice: () => voiceCount++,
       onDictation: () => dictationCount++,
     ), width: 285));
-    expect(find.byTooltip('Abrir conversa por voz'), findsOneWidget);
+    expect(find.byTooltip('Opções de voz'), findsOneWidget);
     expect(find.byTooltip('Ditar mensagem'), findsOneWidget);
     expect(find.byTooltip('Enviar mensagem'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    await tester.tap(find.byTooltip('Abrir conversa por voz'));
-    await tester.pump();
+    await tester.tap(find.byTooltip('Opções de voz'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Abrir conversa por voz'));
+    await tester.pumpAndSettle();
     expect(voiceCount, 1);
     await tester.tap(find.byTooltip('Ditar mensagem'));
     await tester.pump();
@@ -85,7 +87,7 @@ void main() {
       onVoice: () {},
       onDictation: () {},
     ), width: 350, textScale: 1.5));
-    expect(find.byTooltip('Abrir conversa por voz'), findsOneWidget);
+    expect(find.byTooltip('Opções de voz'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();

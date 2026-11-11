@@ -379,16 +379,14 @@ class ChatComposer extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    // Ferramentas responsivas: no celular estreito os
-                    // controles ficam em duas linhas, sem reduzir a area
-                    // de toque ou ocultar a conversa por voz.
+                    // Ferramentas principais numa linha. Ações de voz
+                    // complementares ficam no menu explícito, acessível por
+                    // toque, teclado e leitores de tela.
                     LayoutBuilder(
                       builder: (context, constraints) {
                         final scaledLabel = MediaQuery.textScalerOf(context)
                             .scale(14);
-                        final compact =
-                            constraints.maxWidth <
-                                (oficinaKind == null ? 356 : 402) ||
+                        final compact = constraints.maxWidth < 350 ||
                             scaledLabel > 17;
                         final actions = <Widget>[
                           IconButton(
@@ -410,88 +408,87 @@ class ChatComposer extends StatelessWidget {
                               size: 22,
                             ),
                           ),
-                          GestureDetector(
-                            onLongPress: onOpenVoice == null || isLoading
+                          IconButton(
+                            onPressed: isLoading
                                 ? null
                                 : () {
-                                    HapticFeedback.mediumImpact();
-                                    onOpenVoice!();
+                                    HapticFeedback.selectionClick();
+                                    onToggleListen();
                                   },
-                            child: IconButton(
-                              onPressed: isLoading
-                                  ? null
-                                  : () {
-                                      HapticFeedback.selectionClick();
-                                      onToggleListen();
-                                    },
-                              tooltip: isListening
-                                  ? 'Parar ditado'
-                                  : 'Ditar mensagem',
-                              constraints: const BoxConstraints(
-                                minWidth: 44,
-                                minHeight: 44,
-                              ),
-                              padding: EdgeInsets.zero,
-                              color: isListening
-                                  ? context.gama.accent
-                                  : context.gama.textSecondary,
-                              icon: Icon(
-                                isListening
-                                    ? Icons.mic
-                                    : Icons.mic_none_rounded,
-                                size: 22,
-                              ),
+                            tooltip: isListening
+                                ? 'Parar ditado'
+                                : 'Ditar mensagem',
+                            constraints: const BoxConstraints(
+                              minWidth: 44,
+                              minHeight: 44,
+                            ),
+                            padding: EdgeInsets.zero,
+                            color: isListening
+                                ? palette.accent
+                                : palette.textSecondary,
+                            icon: Icon(
+                              isListening
+                                  ? Icons.mic
+                                  : Icons.mic_none_rounded,
+                              size: 22,
                             ),
                           ),
-                          // A conversa por voz deve estar disponível
-                          // também por teclado, toque e leitor de tela;
-                          // nao apenas por long press no microfone.
-                          if (onOpenVoice != null)
-                            IconButton(
-                              onPressed: isLoading
-                                  ? null
-                                  : () {
-                                      HapticFeedback.selectionClick();
-                                      onOpenVoice!();
-                                    },
-                              tooltip: 'Abrir conversa por voz',
-                              constraints: const BoxConstraints(
-                                minWidth: 44,
-                                minHeight: 44,
-                              ),
-                              padding: EdgeInsets.zero,
-                              color: context.gama.textSecondary,
-                              icon: const Icon(
-                                Icons.record_voice_over_outlined,
-                                size: 22,
-                              ),
-                            ),
-                          if (oficinaKind == null)
+                          if (onOpenVoice != null || oficinaKind == null)
                             ValueListenableBuilder<TextEditingValue>(
                               valueListenable: controller,
                               builder: (context, value, _) {
                                 final canSpeakSend =
-                                    !isLoading &&
-                                    attachmentsReady &&
+                                    !isLoading && attachmentsReady &&
                                     (value.text.trim().isNotEmpty ||
                                         hasAttachments);
-                                return IconButton(
-                                  onPressed: !canSpeakSend
-                                      ? null
-                                      : () {
-                                          HapticFeedback.lightImpact();
-                                          onSpeakSend();
-                                        },
-                                  tooltip: 'Enviar e ouvir resposta',
-                                  constraints: const BoxConstraints(
-                                    minWidth: 44,
-                                    minHeight: 44,
-                                  ),
-                                  padding: EdgeInsets.zero,
-                                  color: context.gama.accent,
-                                  icon: const Icon(
-                                    Icons.graphic_eq_rounded,
-                                    size: 22,
+                                return PopupMenuButton<_ComposerVoiceAction>(
+                                  tooltip: 'Opções de voz',
+                                  enabled: !isLoading,
+                                  color: palette.surfaceElevated,
+                                  onSelected: (action) {
+                                    HapticFeedback.selectionClick();
+                                    switch (action) {
+                                      case _ComposerVoiceAction.conversation:
+                                        onOpenVoice?.call();
+                                        break;
+                                      case _ComposerVoiceAction.speakSend:
+                                        if (canSpeakSend) onSpeakSend();
+                                        break;
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    if (onOpenVoice != null)
+                                      const PopupMenuItem(
+                                        value: _ComposerVoiceAction.conversation,
+                                        child: ListTile(
+                                          dense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                          leading: Icon(Icons.headset_mic_outlined),
+                                          title: Text('Abrir conversa por voz'),
+                                        ),
+                                      ),
+                                    if (oficinaKind == null)
+                                      PopupMenuItem(
+                                        value: _ComposerVoiceAction.speakSend,
+                                        enabled: canSpeakSend,
+                                        child: const ListTile(
+                                          dense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                          leading: Icon(Icons.graphic_eq_rounded),
+                                          title: Text('Enviar e ouvir resposta'),
+                                        ),
+                                      ),
+                                  ],
+                                  child: SizedBox(
+                                    width: 44,
+                                    height: 44,
+                                    child: Center(
+                                      child: Icon(
+                                        Icons.headset_mic_outlined,
+                                        size: 22,
+                                        color: palette.textSecondary,
+                                      ),
+                                    ),
                                   ),
                                 );
                               },
@@ -588,6 +585,7 @@ class ChatComposer extends StatelessWidget {
                               : '${oficinaKind!.label}  ×',
                           icon: oficinaKind?.icon ?? Icons.handyman_rounded,
                           selected: true,
+                          iconOnly: compact,
                           onTap: oficinaKind == null
                               ? () => Navigator.of(context).push(
                                   GamaPageRoute<void>(
@@ -596,25 +594,6 @@ class ChatComposer extends StatelessWidget {
                                 )
                               : (onExitOficina ?? () {}),
                         );
-                        if (compact) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              modeChip,
-                              const SizedBox(height: 4),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: Wrap(
-                                  alignment: WrapAlignment.end,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  spacing: 2,
-                                  runSpacing: 2,
-                                  children: actions,
-                                ),
-                              ),
-                            ],
-                          );
-                        }
                         return Row(
                           children: [modeChip, const Spacer(), ...actions],
                         );
@@ -768,10 +747,13 @@ class _SendMessageIntent extends Intent {
   const _SendMessageIntent();
 }
 
+enum _ComposerVoiceAction { conversation, speakSend }
+
 class _ModeChip extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool selected;
+  final bool iconOnly;
   final VoidCallback onTap;
 
   const _ModeChip({
@@ -779,45 +761,54 @@ class _ModeChip extends StatelessWidget {
     required this.icon,
     required this.selected,
     required this.onTap,
+    this.iconOnly = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final g = context.gama;
 
-    return Material(
-      color: g.surfaceCard,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onTap();
-        },
+    return Tooltip(
+      message: label,
+      child: Material(
+        color: g.surfaceCard,
         borderRadius: BorderRadius.circular(20),
-        splashColor: g.accent.withValues(alpha: 0.08),
-        highlightColor: g.accent.withValues(alpha: 0.04),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: g.border, width: 1.15),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 14, color: g.textPrimary),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: TextStyle(
-                  color: g.textPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.1,
-                ),
-              ),
-            ],
+        child: InkWell(
+          onTap: () {
+            HapticFeedback.selectionClick();
+            onTap();
+          },
+          borderRadius: BorderRadius.circular(20),
+          splashColor: g.accent.withValues(alpha: 0.08),
+          highlightColor: g.accent.withValues(alpha: 0.04),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: EdgeInsets.symmetric(
+              horizontal: 11,
+              vertical: iconOnly ? 11 : 7,
+            ),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: g.border, width: 1.15),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 14, color: g.textPrimary),
+                if (!iconOnly) ...[
+                  const SizedBox(width: 5),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: g.textPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
