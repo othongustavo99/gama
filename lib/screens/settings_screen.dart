@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/constants.dart';
 import '../core/gama_colors.dart';
+import '../core/design_tokens.dart';
 import '../core/gama_page_route.dart';
 import '../services/memory_service.dart';
 import '../services/ollama_service.dart';
@@ -72,7 +73,7 @@ Widget _pageLink(
     title: Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
     subtitle: subtitle == null ? null : Text(subtitle,
         maxLines: 2, overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: context.gama.textMuted, fontSize: 12)),
+        style: TextStyle(color: context.gama.textMuted, fontSize: GamaType.label)),
     trailing: Icon(Icons.chevron_right_rounded, color: context.gama.textMuted),
     onTap: () => Navigator.of(context)
         .push(GamaPageRoute<void>(builder: (_) => page)),
@@ -105,7 +106,7 @@ class _SettingsGroup extends StatelessWidget {
             )),
             const SizedBox(height: 4),
             Text(description, style: TextStyle(
-              color: context.gama.textMuted, fontSize: 12.5,
+              color: context.gama.textMuted, fontSize: GamaType.secondary,
             )),
           ],
         ),
@@ -266,7 +267,7 @@ class _AppearanceSettingsState extends State<_AppearanceSettings> {
             ),
             Text(
               'Combina este ajuste com o tamanho de texto do sistema.',
-              style: TextStyle(color: context.gama.textMuted, fontSize: 12),
+              style: TextStyle(color: context.gama.textMuted, fontSize: GamaType.label),
             ),
             const Divider(height: 32),
             SwitchListTile.adaptive(

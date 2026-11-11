@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
+import '../core/design_tokens.dart';
 
 /// Camada de controles sem AppBar: nenhuma superfície é desenhada atrás
 /// da linha inteira. Apenas cada botão possui seu próprio fundo opaco.
@@ -145,9 +146,9 @@ class GamaFloatingControl extends StatelessWidget {
         border: Border.all(color: palette.border),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.23),
-            blurRadius: 18,
-            offset: const Offset(0, 7),
+            color: Colors.black.withValues(alpha: 0.13),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -157,7 +158,10 @@ class GamaFloatingControl extends StatelessWidget {
           child: IconTheme(
             data: IconThemeData(color: palette.textPrimary, size: 22),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              constraints: const BoxConstraints(
+                minWidth: GamaHitTarget.minimum,
+                minHeight: GamaHitTarget.minimum,
+              ),
               child: Center(child: child),
             ),
           ),

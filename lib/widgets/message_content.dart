@@ -435,133 +435,143 @@ class MessageContentView extends StatelessWidget {
     );
 
     Widget buildGeneratedImage(GeneratedImageData img) {
-      final filePath = img.filePath;
-      final fileExists =
-          filePath != null &&
-          filePath.isNotEmpty &&
-          File(filePath).existsSync();
-      if (!fileExists && img.base64.isEmpty) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: 10),
-          child: Text(
-            '[imagem indisponível]',
-            style: TextStyle(color: context.gama.textMuted),
-          ),
-        );
-      }
-      try {
-        final memoryBytes = img.base64.isEmpty
-            ? null
-            : base64Decode(img.base64);
-        final imageWidget = fileExists
-            ? Image.file(
-                File(filePath!),
-                fit: BoxFit.contain,
-                gaplessPlayback: true,
-                errorBuilder: (_, __, ___) => Text(
-                  '[imagem indisponível]',
-                  style: TextStyle(color: context.gama.textMuted),
-                ),
-              )
-            : Image.memory(
-                memoryBytes!,
-                fit: BoxFit.contain,
-                gaplessPlayback: true,
-                errorBuilder: (_, __, ___) => Text(
-                  '[imagem indisponível]',
-                  style: TextStyle(color: context.gama.textMuted),
-                ),
-              );
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Semantics(
-                button: true,
-                label: 'Abrir imagem em tela cheia',
-                child: GestureDetector(
-                  onTap: () => showDialog<void>(
-                    context: context,
-                    barrierColor: Colors.black87,
-                    builder: (_) => _FullscreenImageDialog(
-                      image: fileExists
-                          ? Image.file(File(filePath!), fit: BoxFit.contain)
-                          : Image.memory(memoryBytes!, fit: BoxFit.contain),
-                      sourcePath: fileExists ? filePath : null,
-                      base64Data: img.base64,
-                      mime: img.mime,
-                    ),
-                  ),
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(14),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 480),
-                        child: imageWidget,
-                      ),
-                    ),
-                  ),
-                ),
+      return _AsyncFileAvailability(
+        path: img.filePath,
+        builder: (fileExists, checking) {
+          final filePath = img.filePath;
+          if (checking && img.base64.isEmpty) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Text(
+                'Carregando imagem…',
+                style: TextStyle(color: context.gama.textMuted),
               ),
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Wrap(
-                  spacing: 4,
-                  children: [
-                    TextButton.icon(
-                      style: TextButton.styleFrom(
-                        foregroundColor: context.gama.accent,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        visualDensity: VisualDensity.compact,
+            );
+          }
+          if (!fileExists && img.base64.isEmpty) {
+            return Padding(
+              padding: EdgeInsets.only(bottom: 10),
+              child: Text(
+                '[imagem indisponível]',
+                style: TextStyle(color: context.gama.textMuted),
+              ),
+            );
+          }
+          try {
+            final memoryBytes = img.base64.isEmpty
+                ? null
+                : base64Decode(img.base64);
+            final imageWidget = fileExists
+                ? Image.file(
+                    File(filePath!),
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) => Text(
+                      '[imagem indisponível]',
+                      style: TextStyle(color: context.gama.textMuted),
+                    ),
+                  )
+                : Image.memory(
+                    memoryBytes!,
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) => Text(
+                      '[imagem indisponível]',
+                      style: TextStyle(color: context.gama.textMuted),
+                    ),
+                  );
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Semantics(
+                    button: true,
+                    label: 'Abrir imagem em tela cheia',
+                    child: GestureDetector(
+                      onTap: () => showDialog<void>(
+                        context: context,
+                        barrierColor: Colors.black87,
+                        builder: (_) => _FullscreenImageDialog(
+                          image: fileExists
+                              ? Image.file(File(filePath!), fit: BoxFit.contain)
+                              : Image.memory(memoryBytes!, fit: BoxFit.contain),
+                          sourcePath: fileExists ? filePath : null,
+                          base64Data: img.base64,
+                          mime: img.mime,
+                        ),
                       ),
-                      onPressed: () async {
-                        try {
-                          final path = await _saveImageFile(
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 480),
+                            child: imageWidget,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Wrap(
+                      spacing: 4,
+                      children: [
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: context.gama.accent,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          onPressed: () async {
+                            try {
+                              final path = await _saveImageFile(
+                                sourcePath: fileExists ? filePath : null,
+                                base64Data: img.base64,
+                                mime: img.mime,
+                              );
+                              await DownloadService.instance.openPath(path);
+                            } catch (error, stack) {
+                              logSwallowed(error, stack);
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text(
+                                  'Não foi possível salvar ou abrir a imagem. Tente novamente.',
+                                )),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.download_rounded, size: 18),
+                          label: const Text('Salvar imagem'),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => _shareImageFile(
+                            context,
                             sourcePath: fileExists ? filePath : null,
                             base64Data: img.base64,
                             mime: img.mime,
-                          );
-                          await DownloadService.instance.openPath(path);
-                        } catch (error, stack) {
-                          logSwallowed(error, stack);
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text(
-                              'Não foi possível salvar ou abrir a imagem. Tente novamente.',
-                            )),
-                          );
-                        }
-                      },
-                      icon: const Icon(Icons.download_rounded, size: 18),
-                      label: const Text('Salvar imagem'),
+                          ),
+                          icon: const Icon(Icons.share_outlined, size: 17),
+                          label: const Text('Compartilhar'),
+                        ),
+                      ],
                     ),
-                    TextButton.icon(
-                      onPressed: () => _shareImageFile(
-                        context,
-                        sourcePath: fileExists ? filePath : null,
-                        base64Data: img.base64,
-                        mime: img.mime,
-                      ),
-                      icon: const Icon(Icons.share_outlined, size: 17),
-                      label: const Text('Compartilhar'),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
-        );
-      } catch (error, stack) {
-        logSwallowed(error, stack);
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Text('Não foi possível exibir esta imagem.',
-              style: TextStyle(color: context.gama.textMuted)),
-        );
-      }
+            );
+          } catch (error, stack) {
+            logSwallowed(error, stack);
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text('Não foi possível exibir esta imagem.',
+                  style: TextStyle(color: context.gama.textMuted)),
+            );
+          }
+        },
+      );
     }
 
     final body = Column(
@@ -625,6 +635,64 @@ class MessageContentView extends StatelessWidget {
       return '[$url]($url)$trail';
     });
   }
+}
+
+/// Evita File.existsSync no build do chat: o acesso ao disco ocorre fora
+/// da thread de renderização e só é repetido quando o caminho da imagem muda.
+class _AsyncFileAvailability extends StatefulWidget {
+  const _AsyncFileAvailability({
+    required this.path,
+    required this.builder,
+  });
+
+  final String? path;
+  final Widget Function(bool exists, bool checking) builder;
+
+  @override
+  State<_AsyncFileAvailability> createState() => _AsyncFileAvailabilityState();
+}
+
+class _AsyncFileAvailabilityState extends State<_AsyncFileAvailability> {
+  bool _exists = false;
+  bool _checking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AsyncFileAvailability oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.path != widget.path) _check();
+  }
+
+  void _check() {
+    final path = widget.path;
+    _exists = false;
+    _checking = path != null && path.isNotEmpty;
+    if (!_checking) return;
+    unawaited(_resolve(path!));
+  }
+
+  Future<void> _resolve(String path) async {
+    bool exists;
+    try {
+      exists = await File(path).exists();
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+      exists = false;
+    }
+    if (!mounted || widget.path != path) return;
+    setState(() {
+      _exists = exists;
+      _checking = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(_exists, _checking);
 }
 
 /// Mantém árvores Markdown finalizadas prontas entre reconstruções da tela.

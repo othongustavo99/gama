@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
 import '../core/design_tokens.dart';
+import '../core/responsive_layout.dart';
 
 /// Subtle shimmer used for content that is still being fetched or prepared.
 class GamaSkeleton extends StatefulWidget {
@@ -29,7 +30,17 @@ class _GamaSkeletonState extends State<GamaSkeleton>
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1350),
-  )..repeat();
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.of(context).disableAnimations) {
+      _controller.stop();
+    } else if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
+  }
 
   @override
   void dispose() {
@@ -42,6 +53,7 @@ class _GamaSkeletonState extends State<GamaSkeleton>
     final palette = context.gama;
     final base = widget.baseColor ?? palette.surfaceCard;
     final highlight = widget.highlightColor ?? palette.surfaceHover;
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
     return Semantics(
       label: 'Carregando',
       child: SizedBox(
@@ -49,7 +61,9 @@ class _GamaSkeletonState extends State<GamaSkeleton>
         height: widget.height,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(widget.radius),
-          child: AnimatedBuilder(
+          child: reduceMotion
+              ? DecoratedBox(decoration: BoxDecoration(color: base))
+              : AnimatedBuilder(
             animation: _controller,
             builder: (context, _) => DecoratedBox(
               decoration: BoxDecoration(
@@ -131,16 +145,23 @@ class GamaSkeletonGrid extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => GridView.builder(
-    padding: padding,
-    itemCount: itemCount,
-    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: 2,
-      mainAxisSpacing: GamaSpace.md,
-      crossAxisSpacing: GamaSpace.md,
-      childAspectRatio: 0.9,
-    ),
-    itemBuilder: (_, __) =>
-        const GamaSkeleton(height: double.infinity, radius: GamaRadius.lg),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final usableWidth = (constraints.maxWidth - padding.horizontal)
+          .clamp(0.0, double.infinity);
+      final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+      return GridView.builder(
+        padding: padding,
+        itemCount: itemCount,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: GamaGalleryLayout.columns(usableWidth, textScale: scale),
+          mainAxisSpacing: GamaSpace.md,
+          crossAxisSpacing: GamaSpace.md,
+          childAspectRatio: 0.9,
+        ),
+        itemBuilder: (_, __) =>
+            const GamaSkeleton(height: double.infinity, radius: GamaRadius.lg),
+      );
+    },
   );
 }

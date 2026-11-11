@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import '../core/constants.dart';
@@ -6,6 +7,7 @@ import '../widgets/gama_floating_page.dart';
 import 'package:flutter/services.dart';
 
 import '../core/gama_colors.dart';
+import '../core/design_tokens.dart';
 import '../widgets/gama_orb.dart';
 
 /// Casca visual do modo voz. STT, TTS e envio continuam no ChatScreen,
@@ -42,21 +44,32 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
   Timer? _updateTimer;
   bool _busy = false;
   double _visualLevel = 0;
+  bool _showFullTranscript = false;
+  String _lastVoiceSnapshot = '';
 
   @override
   void initState() {
     super.initState();
     // Atualiza somente a camada visual: o áudio é gerenciado pela ChatScreen.
-    _updateTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
+    _updateTimer = Timer.periodic(const Duration(milliseconds: 120), (_) {
       if (!mounted) return;
-      final target = widget.isListening()
+      final listening = widget.isListening();
+      final speaking = widget.isSpeaking();
+      final target = listening
           ? widget.soundLevel().clamp(0.0, 1.0).toDouble()
-          : (widget.isSpeaking() ? 0.35 : 0.0);
-      // Filtro exponencial: remove picos sem atrasar excessivamente a reação.
-      _visualLevel +=
-          (target - _visualLevel) * (target > _visualLevel ? 0.31 : 0.16);
-      if ((_visualLevel - target).abs() < 0.003) _visualLevel = target;
-      setState(() {});
+          : (speaking ? 0.35 : 0.0);
+      final previous = _visualLevel;
+      _visualLevel += (target - _visualLevel) *
+          (target > _visualLevel ? 0.38 : 0.22);
+      if ((_visualLevel - target).abs() < 0.008) _visualLevel = target;
+      final snapshot = '${listening}|${widget.isReconnecting?.call()}|'
+          '$speaking|${widget.isPreparingSpeech?.call()}|'
+          '${widget.isProcessing()}|${widget.transcript()}';
+      if (snapshot != _lastVoiceSnapshot ||
+          (previous - _visualLevel).abs() > 0.008) {
+        _lastVoiceSnapshot = snapshot;
+        setState(() {});
+      }
     });
   }
 
@@ -126,9 +139,7 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
 
     return Scaffold(
       backgroundColor: palette.background,
-      
       body: GamaFloatingPage(
-        actions: const [],
         showBack: false,
         leading: IconButton(
           tooltip: 'Encerrar conversa por voz',
@@ -136,123 +147,179 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
           onPressed: () => Navigator.of(context).pop(),
         ),
         child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
-          child: Column(
-            children: [
-              const Spacer(),
-              Center(
-                child: GamaOrb(
-                  size: MediaQuery.sizeOf(context).width < 450 ? 235 : 285,
-                  intensity: reduceMotion ? 0.0 : _visualLevel,
-                ),
-              ),
-              const SizedBox(height: 26),
-              Semantics(
-                liveRegion: true,
-                child: AnimatedSwitcher(
-                  duration: reduceMotion
-                      ? Duration.zero
-                      : const Duration(milliseconds: 180),
-                  child: Row(
-                    key: ValueKey<String>(status),
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
+          top: false, // O cabeçalho flutuante já reserva a barra de status.
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxHeight < 620;
+              final orbSize = math.min(
+                compact ? 185.0 : 248.0,
+                math.min(constraints.maxWidth * 0.77,
+                    math.max(128.0, constraints.maxHeight * 0.38)),
+              );
+              final topSpace = math.max(12.0,
+                  (constraints.maxHeight - orbSize - 275) / 3);
+              return SingleChildScrollView(
+                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Icon(
-                        reconnecting
-                            ? Icons.sync_rounded
-                            : listening
-                            ? Icons.mic_rounded
-                            : speaking
-                            ? Icons.graphic_eq_rounded
-                            : processing
-                            ? Icons.auto_awesome_rounded
-                            : preparingSpeech
-                            ? Icons.hourglass_top_rounded
-                            : Icons.mic_off_rounded,
-                        color: palette.accent,
-                        size: 17,
+                      SizedBox(height: topSpace),
+                      Center(
+                        child: GamaOrb(
+                          size: orbSize,
+                          intensity: reduceMotion ? 0.0 : _visualLevel,
+                        ),
                       ),
-                      const SizedBox(width: 9),
-                      Flexible(
-                        child: Text(
-                          status,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: palette.textPrimary,
-                            fontSize: 20,
+                      SizedBox(height: compact ? 16 : 24),
+                      Semantics(
+                        liveRegion: true,
+                        child: AnimatedSwitcher(
+                          duration: reduceMotion
+                              ? Duration.zero
+                              : GamaMotion.fast,
+                          child: Row(
+                            key: ValueKey<String>(status),
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                reconnecting
+                                    ? Icons.sync_rounded
+                                    : listening
+                                        ? Icons.mic_rounded
+                                        : speaking
+                                            ? Icons.graphic_eq_rounded
+                                            : processing
+                                                ? Icons.auto_awesome_rounded
+                                                : preparingSpeech
+                                                    ? Icons.hourglass_top_rounded
+                                                    : Icons.mic_off_rounded,
+                                color: palette.accent,
+                                size: 19,
+                              ),
+                              const SizedBox(width: 9),
+                              Flexible(
+                                child: Text(
+                                  status,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: palette.textPrimary,
+                                    fontSize: GamaType.section,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
+                      const SizedBox(height: 14),
+                      Container(
+                        constraints: const BoxConstraints(maxWidth: 620),
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: palette.surfaceCard,
+                          borderRadius: BorderRadius.circular(GamaRadius.lg),
+                          border: Border.all(color: palette.borderSoft),
+                        ),
+                        child: Column(
+                          children: [
+                            if (text.isEmpty)
+                              Text(
+                                'Fale naturalmente com a $kAppName…',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: palette.textSecondary,
+                                  fontSize: GamaType.secondary,
+                                  height: 1.45,
+                                ),
+                              )
+                            else if (_showFullTranscript)
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(maxHeight: 180),
+                                child: SingleChildScrollView(
+                                  child: SelectableText(
+                                    text,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: palette.textSecondary,
+                                      fontSize: GamaType.secondary,
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else
+                              Text(
+                                text,
+                                textAlign: TextAlign.center,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: palette.textSecondary,
+                                  fontSize: GamaType.secondary,
+                                  height: 1.5,
+                                ),
+                              ),
+                            if (text.length > 130) ...[
+                              const SizedBox(height: 3),
+                              TextButton(
+                                onPressed: () => setState(
+                                    () => _showFullTranscript = !_showFullTranscript),
+                                child: Text(_showFullTranscript
+                                    ? 'Recolher transcrição'
+                                    : 'Ler transcrição completa'),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: compact ? 18 : 32),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 8,
+                        runSpacing: 12,
+                        children: [
+                          _VoiceAction(
+                            icon: (listening || reconnecting)
+                                ? Icons.mic_off_rounded
+                                : Icons.mic_rounded,
+                            label: (listening || reconnecting)
+                                ? 'Silenciar'
+                                : 'Ativar microfone',
+                            onTap: _busy ? null : _mic,
+                            primary: false,
+                          ),
+                          _VoiceAction(
+                            icon: Icons.close_rounded,
+                            label: 'Encerrar',
+                            onTap: () async {
+                              await HapticFeedback.lightImpact();
+                              if (context.mounted) Navigator.of(context).pop();
+                            },
+                            primary: true,
+                          ),
+                          if (speaking || preparingSpeech || processing)
+                            _VoiceAction(
+                              icon: Icons.stop_rounded,
+                              label: 'Interromper',
+                              onTap: _interrupt,
+                              primary: false,
+                            ),
+                        ],
+                      ),
+                      SizedBox(height: compact ? 8 : 20),
                     ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 86,
-                child: Center(
-                  child: AnimatedSwitcher(
-                    duration: reduceMotion
-                        ? Duration.zero
-                        : const Duration(milliseconds: 160),
-                    child: Text(
-                      text.isEmpty ? 'Fale naturalmente com a $kAppName…' : text,
-                      key: ValueKey<bool>(text.isEmpty),
-                      textAlign: TextAlign.center,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 14,
-                        height: 1.5,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const Spacer(),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _VoiceAction(
-                    icon: (listening || reconnecting)
-                        ? Icons.mic_off_rounded
-                        : Icons.mic_rounded,
-                    label: (listening || reconnecting)
-                        ? 'Silenciar'
-                        : 'Ativar microfone',
-                    onTap: _busy ? null : _mic,
-                    primary: false,
-                  ),
-                  const SizedBox(width: 22),
-                  _VoiceAction(
-                    icon: Icons.close_rounded,
-                    label: 'Encerrar',
-                    onTap: () async {
-                      await HapticFeedback.lightImpact();
-                      if (context.mounted) Navigator.of(context).pop();
-                    },
-                    primary: true,
-                  ),
-                  if (speaking || preparingSpeech || processing) ...[
-                    const SizedBox(width: 22),
-                    _VoiceAction(
-                      icon: Icons.stop_rounded,
-                      label: 'Interromper',
-                      onTap: _interrupt,
-                      primary: false,
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 12),
-            ],
+              );
+            },
           ),
         ),
-      )
       ),
     );
   }
@@ -276,8 +343,11 @@ class _VoiceAction extends StatelessWidget {
     final g = context.gama;
     return Semantics(
       button: true,
+      enabled: onTap != null,
       label: label,
-      child: Column(
+      child: SizedBox(
+        width: 91,
+        child: Column(
         children: [
           Material(
             color: primary ? g.accent : g.surfaceCard,
@@ -289,15 +359,21 @@ class _VoiceAction extends StatelessWidget {
                 dimension: 64,
                 child: Icon(
                   icon,
-                  color: primary ? Colors.white : g.textPrimary,
+                  color: primary ? g.onAccent : g.textPrimary,
                   size: 27,
                 ),
               ),
             ),
           ),
           const SizedBox(height: 9),
-          Text(label, style: TextStyle(fontSize: 12, color: g.textSecondary)),
+          Text(
+            label,
+            maxLines: 2,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: GamaType.label, color: g.textSecondary),
+          ),
         ],
+        ),
       ),
     );
   }

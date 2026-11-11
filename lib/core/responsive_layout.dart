@@ -14,3 +14,17 @@ abstract final class GamaResponsiveLayout {
     required double windowWidth,
   }) => isWindows && windowWidth >= 820;
 }
+
+
+/// Colunas baseadas na área real disponível e na fonte do usuário.
+/// Nunca força duas colunas em celulares muito estreitos.
+abstract final class GamaGalleryLayout {
+  static int columns(double gridWidth, {double textScale = 1.0}) {
+    if (gridWidth <= 0) return 1;
+    final idealTileWidth = 168.0 * textScale.clamp(1.0, 1.65);
+    // Leva em conta os 12 px de intervalo entre os cartões.
+    return ((gridWidth + 12) / (idealTileWidth + 12))
+        .floor()
+        .clamp(1, 6).toInt();
+  }
+}

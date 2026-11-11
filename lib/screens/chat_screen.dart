@@ -59,6 +59,7 @@ import '../utils/friendly_error.dart';
 import '../utils/speech_recovery_policy.dart';
 import '../utils/generation_session.dart';
 import '../utils/chat_history_window.dart';
+import '../utils/chat_message_presentation.dart';
 import '../utils/local_calendar.dart';
 import '../utils/chat_scroll_policy.dart';
 import '../utils/chat_generation_clock.dart';
@@ -4276,7 +4277,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final isWideDesktop = widget.persistentSidebar;
     final today = DateTime.now();
-    final lastAssistantIndex = _messages.lastIndexWhere((message) => message.isAssistant);
+    final messagePresentation = ChatMessagePresentation(
+      messages: _messages,
+      window: _historyWindow,
+    );
+    final lastAssistantIndex = messagePresentation.lastAssistantIndex;
     final topInset =
         MediaQuery.paddingOf(context).top +
         _headerControlHeight +
@@ -4395,14 +4400,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                       bottomInset,
                                     ),
                                     cacheExtent: 320,
-                                    itemCount: _historyWindow.listLength(
-                                      _messages.length,
-                                    ),
+                                    itemCount: messagePresentation.itemCount,
                                     itemBuilder: (context, listIndex) {
-                                      if (listIndex == 0 &&
-                                          _historyWindow.hasOlder(
-                                            _messages.length,
-                                          )) {
+                                      if (messagePresentation.isLoadEarlierRow(listIndex)) {
                                         return Center(
                                           child: Padding(
                                             padding: const EdgeInsets.only(
@@ -4415,7 +4415,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                 size: 18,
                                               ),
                                               label: Text(
-                                                'Carregar mensagens anteriores (${_historyWindow.remaining(_messages.length)})',
+                                                'Carregar mensagens anteriores (${messagePresentation.olderCount})',
                                               ),
                                             ),
                                           ),
@@ -4423,10 +4423,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                       }
                                       // Mantém o índice REAL usado por editar,
                                       // regenerar, anexos e histórico de fontes.
-                                      final index = _historyWindow.messageIndex(
-                                        listIndex,
-                                        _messages.length,
-                                      );
+                                      final index = messagePresentation.messageIndexForRow(listIndex);
                                       final msg = _messages[index];
                                       final isUser = msg.isUser;
                                       final isLastAssistant =
@@ -4434,9 +4431,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                           index == _messages.length - 1;
 
                                       final isSelected = _selectedMessageId == msg.id;
-                                      final startsDay =
-                                          index == _historyWindow.start(_messages.length) ||
-                                          localDaysAgo(msg.timestamp, _messages[index - 1].timestamp) != 0;
+                                      final startsDay = messagePresentation.startsDayAt(index);
 
                                       final bubble = TweenAnimationBuilder<double>(
                                         key: ValueKey(

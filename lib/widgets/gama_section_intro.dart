@@ -45,14 +45,14 @@ class GamaSectionIntro extends StatelessWidget {
               children: [
                 Text(title, style: TextStyle(
                   color: g.textPrimary,
-                  fontSize: compact ? 16 : 19,
+                  fontSize: compact ? 17 : GamaType.section,
                   fontWeight: FontWeight.w700,
                   letterSpacing: -0.35,
                 )),
                 const SizedBox(height: 3),
                 Text(description, style: TextStyle(
                   color: g.textSecondary,
-                  fontSize: compact ? 12 : 13,
+                  fontSize: GamaType.secondary,
                   height: 1.35,
                 )),
               ],

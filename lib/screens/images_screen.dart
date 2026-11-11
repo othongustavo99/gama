@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import '../widgets/gama_floating_page.dart';
@@ -7,13 +6,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/local_account_scope.dart';
 
 import '../core/gama_colors.dart';
+import '../core/responsive_layout.dart';
 import '../utils/error_logger.dart';
 import '../utils/library_filter.dart';
 import '../utils/local_file_metadata.dart';
+import '../utils/library_presentation.dart';
 import '../widgets/loading_skeleton.dart';
 import '../widgets/gama_section_intro.dart';
 import '../widgets/gama_empty_panel.dart';
+import '../widgets/gama_library_image_tile.dart';
 import 'library_screen.dart';
+import 'oficina_screen.dart';
+import '../core/gama_page_route.dart';
 
 /// Galeria leve sobre a mesma Biblioteca; não cria cópias adicionais.
 class ImagesScreen extends StatefulWidget {
@@ -31,6 +35,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
   String _query = '';
   String? _loadError;
   bool _loading = true;
+  LibrarySortOrder _sortOrder = LibrarySortOrder.newest;
 
   @override
   void initState() {
@@ -76,21 +81,33 @@ class _ImagesScreenState extends State<ImagesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = filterLibraryItems(_items, query: _query);
+    final filtered = sortLibraryItems(
+      filterLibraryItems(_items, query: _query),
+      order: _sortOrder,
+      metadata: _fileSnapshots,
+    );
     return Scaffold(
       backgroundColor: context.gama.background,
       
       body: GamaFloatingPage(
         actions: [
           IconButton(
+            tooltip: 'Abrir Biblioteca',
+            onPressed: () async {
+              await Navigator.of(context).push(
+                GamaPageRoute<void>(builder: (_) => const LibraryScreen()),
+              );
+              if (mounted) await _load();
+            },
+            icon: const Icon(Icons.folder_open_outlined),
+          ),
+          IconButton(
             tooltip: 'Atualizar imagens',
             onPressed: _loading ? null : _load,
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],
-        child: _loading
-          ? const GamaSkeletonGrid(itemCount: 6)
-          : Column(
+        child: Column(
               children: [
                 Padding(
                   padding: EdgeInsets.fromLTRB(
@@ -126,14 +143,46 @@ class _ImagesScreenState extends State<ImagesScreen> {
                     ),
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                  child: Row(children: [
+                    Expanded(child: Text(
+                      _loading ? 'Carregando imagens…' :
+                          '${filtered.length} ${filtered.length == 1 ? 'imagem' : 'imagens'}',
+                      style: TextStyle(color: context.gama.textMuted, fontSize: 12),
+                    )),
+                    PopupMenuButton<LibrarySortOrder>(
+                      key: const Key('gallery-sort-menu'),
+                      tooltip: 'Ordenar imagens',
+                      initialValue: _sortOrder,
+                      onSelected: (value) => setState(() => _sortOrder = value),
+                      itemBuilder: (_) => [
+                        for (final order in LibrarySortOrder.values)
+                          PopupMenuItem(value: order, child: Text(order.label)),
+                      ],
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Text(_sortOrder.label,
+                              style: TextStyle(fontSize: 12, color: context.gama.textSecondary)),
+                          const SizedBox(width: 4),
+                          Icon(Icons.sort_rounded, size: 18, color: context.gama.textSecondary),
+                        ]),
+                      ),
+                    ),
+                  ]),
+                ),
                 Expanded(
-                  child: _loadError != null
-                      ? Center(child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(_loadError!,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: context.gama.error)),
-                        ))
+                  child: _loading
+                      ? const GamaSkeletonGrid(itemCount: 6)
+                      : _loadError != null
+                          ? GamaEmptyPanel(
+                              icon: Icons.error_outline_rounded,
+                              title: 'Não foi possível carregar a Galeria',
+                              description: _loadError!,
+                              actionLabel: 'Tentar novamente',
+                              onAction: _load,
+                            )
                       : RefreshIndicator(
                           onRefresh: _load,
                           child: filtered.isEmpty
@@ -150,14 +199,31 @@ class _ImagesScreenState extends State<ImagesScreen> {
                                       description: _items.isEmpty
                                           ? 'Crie imagens na Oficina ou envie uma imagem na conversa.'
                                           : 'Tente pesquisar com outro nome.',
+                                      actionLabel: _items.isEmpty ? 'Abrir Oficina' : 'Limpar pesquisa',
+                                      onAction: _items.isEmpty
+                                          ? () async {
+                                              await Navigator.of(context).push(
+                                                GamaPageRoute<void>(builder: (_) => const OficinaScreen()),
+                                              );
+                                              if (mounted) await _load();
+                                            }
+                                          : () => setState(() {
+                                              _query = '';
+                                              _search.clear();
+                                            }),
                                     ),
                                   ),
                                 ])
                               : LayoutBuilder(builder: (context, constraints) {
-                                  final columns = (constraints.maxWidth / 190)
-                                      .floor().clamp(2, 6).toInt();
-                                  final thumbPixels = (constraints.maxWidth /
-                                          columns *
+                                  const padding = 16.0;
+                                  const gap = 12.0;
+                                  final usableWidth = (constraints.maxWidth - 2 * padding)
+                                      .clamp(0.0, double.infinity);
+                                  final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+                                  final columns = GamaGalleryLayout.columns(
+                                    usableWidth, textScale: scale);
+                                  final tileWidth = (usableWidth - (columns - 1) * gap) / columns;
+                                  final thumbPixels = (tileWidth *
                                           MediaQuery.devicePixelRatioOf(context))
                                       .round().clamp(180, 900).toInt();
                                   return GridView.builder(
@@ -176,67 +242,15 @@ class _ImagesScreenState extends State<ImagesScreen> {
                                       final name = it['name']?.toString() ?? 'Imagem';
                                       final exists = path != null &&
                                           (_fileSnapshots[path]?.hasContent ?? false);
-                                      return Material(
-                                        color: context.gama.surfaceCard,
-                                        borderRadius: BorderRadius.circular(14),
-                                        child: InkWell(
-                                          borderRadius: BorderRadius.circular(14),
-                                          onTap: exists
-                                              ? () => LibraryScreen.openEntry(context, it)
-                                              : null,
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                                            children: [
-                                              Expanded(child: Stack(
-                                                fit: StackFit.expand,
-                                                children: [
-                                                  ClipRRect(
-                                                    borderRadius: const BorderRadius.vertical(
-                                                      top: Radius.circular(14),
-                                                    ),
-                                                    child: exists
-                                                        ? Image.file(File(path!),
-                                                            cacheWidth: thumbPixels,
-                                                            fit: BoxFit.cover,
-                                                            semanticLabel: name,
-                                                            errorBuilder: (_, __, ___) =>
-                                                                Icon(Icons.broken_image_outlined,
-                                                                    color: context.gama.textMuted))
-                                                        : Center(child: Icon(
-                                                            Icons.image_not_supported_outlined,
-                                                            color: context.gama.textMuted,
-                                                          )),
-                                                  ),
-                                                  Positioned(
-                                                    top: 4, right: 4,
-                                                    child: Material(
-                                                      color: context.gama.surface.withValues(alpha: 0.92),
-                                                      shape: const CircleBorder(),
-                                                      child: IconButton(
-                                                        tooltip: 'Baixar $name',
-                                                        onPressed: exists
-                                                            ? () => LibraryScreen.downloadEntry(context, it)
-                                                            : null,
-                                                        icon: const Icon(Icons.download_outlined),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              )),
-                                              Padding(
-                                                padding: const EdgeInsets.all(10),
-                                                child: Text(name,
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                    color: context.gama.textSecondary,
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
+                                      return GamaLibraryImageTile(
+                                        name: name,
+                                        path: path,
+                                        available: exists,
+                                        cacheWidth: thumbPixels,
+                                        onOpen: () => LibraryScreen.openEntry(context, it),
+                                        onDownload: exists
+                                            ? () => LibraryScreen.downloadEntry(context, it)
+                                            : null,
                                       );
                                     },
                                   );

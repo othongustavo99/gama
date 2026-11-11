@@ -10,6 +10,7 @@ import 'package:media_kit/media_kit.dart';
 import 'core/constants.dart';
 import 'core/gama_colors.dart';
 import 'core/design_tokens.dart';
+import 'core/gama_text_scaler.dart';
 import 'models/conversation.dart';
 import 'models/message.dart';
 import 'screens/splash_screen.dart';
@@ -158,6 +159,13 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
       brightness: brightness,
       useMaterial3: true,
       fontFamily: 'Inter',
+      visualDensity: VisualDensity.standard,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      textTheme: const TextTheme(
+        bodyMedium: TextStyle(fontSize: GamaType.body, height: 1.45),
+        bodySmall: TextStyle(fontSize: GamaType.label, height: 1.4),
+        titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+      ),
       extensions: [palette],
       scaffoldBackgroundColor: background,
       colorScheme: scheme,
@@ -179,6 +187,13 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
         ),
       ),
       iconTheme: IconThemeData(color: textSecondary),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          foregroundColor: textPrimary,
+          minimumSize: const Size(GamaHitTarget.minimum, GamaHitTarget.minimum),
+          tapTargetSize: MaterialTapTargetSize.padded,
+        ),
+      ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: surface,
         modalBackgroundColor: surface,
@@ -238,6 +253,7 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           elevation: 0,
+          minimumSize: const Size(0, GamaHitTarget.minimum),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(GamaRadius.md),
           ),
@@ -246,6 +262,7 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: textPrimary,
+          minimumSize: const Size(0, GamaHitTarget.minimum),
           side: BorderSide(color: border),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(GamaRadius.md),
@@ -294,7 +311,6 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
           ],
           builder: (context, child) {
             final media = MediaQuery.of(context);
-            final systemScale = media.textScaler.scale(1.0);
             final isDark = Theme.of(context).brightness == Brightness.dark;
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: isDark
@@ -302,7 +318,7 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
                   : _gamaLightSystemUiOverlayStyle,
               child: MediaQuery(
                 data: media.copyWith(
-                  textScaler: TextScaler.linear(systemScale * scale),
+                  textScaler: gamaEffectiveTextScaler(media.textScaler, scale),
                   disableAnimations:
                       media.disableAnimations || SettingsService.instance.reduceMotion,
                 ),

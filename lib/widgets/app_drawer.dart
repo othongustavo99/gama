@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/constants.dart';
-import '../utils/local_calendar.dart';
+import '../utils/conversation_history_rows.dart';
 import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
+import '../core/design_tokens.dart';
 import 'gama_floating_page.dart';
 import '../models/conversation.dart';
 import '../models/oficina_kind.dart';
@@ -46,10 +49,25 @@ class AppDrawer extends StatefulWidget {
 class _AppDrawerState extends State<AppDrawer> {
   final TextEditingController _conversationSearchController = TextEditingController();
   String conversationQuery = '';
+  Timer? _searchDebounce;
 
+  // Evita reler todas as mensagens do Hive a cada tecla pressionada.
+  // Limpar a busca, porém, precisa refletir imediatamente na interface.
   void _updateSearch(String value) {
-    if (value == conversationQuery) return;
-    setState(() => conversationQuery = value);
+    _searchDebounce?.cancel();
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      if (conversationQuery.isNotEmpty) {
+        setState(() => conversationQuery = '');
+      }
+      return;
+    }
+    if (normalized == conversationQuery) return;
+    _searchDebounce = Timer(const Duration(milliseconds: 180), () {
+      if (mounted && normalized != conversationQuery) {
+        setState(() => conversationQuery = normalized);
+      }
+    });
   }
 
   VoidCallback get onNewChat => widget.onNewChat;
@@ -64,6 +82,7 @@ class _AppDrawerState extends State<AppDrawer> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _conversationSearchController.dispose();
     super.dispose();
   }
@@ -126,7 +145,7 @@ class _AppDrawerState extends State<AppDrawer> {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: context.gama.textPrimary,
-                                  fontSize: 13.5,
+                                  fontSize: GamaType.secondary,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -137,7 +156,7 @@ class _AppDrawerState extends State<AppDrawer> {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: context.gama.textMuted,
-                                  fontSize: 11.5,
+                                  fontSize: GamaType.caption,
                                 ),
                               ),
                             ],
@@ -247,7 +266,7 @@ class _AppDrawerState extends State<AppDrawer> {
                   Expanded(
                     child: Text('Histórico', style: TextStyle(
                       color: context.gama.textMuted,
-                      fontSize: 12,
+                      fontSize: GamaType.label,
                       fontWeight: FontWeight.w700,
                     )),
                   ),
@@ -261,7 +280,7 @@ class _AppDrawerState extends State<AppDrawer> {
                         padding: const EdgeInsets.symmetric(horizontal: 6),
                       ),
                       icon: const Icon(Icons.push_pin_outlined, size: 15),
-                      label: const Text('Fixadas', style: TextStyle(fontSize: 12)),
+                      label: const Text('Fixadas', style: TextStyle(fontSize: GamaType.label)),
                     ),
                 ],
               ),
@@ -286,8 +305,11 @@ class _AppDrawerState extends State<AppDrawer> {
                     }
                     final pinned = service.pinnedConversations.where(matches).toList();
                     final recent = service.recentConversations.where(matches).toList();
-                    final groupedRecent = _groupRecentConversations(recent);
-                    final hasAny = pinned.isNotEmpty || recent.isNotEmpty;
+                    final historyRows = buildConversationHistoryRows(
+                      pinned: pinned,
+                      recent: recent,
+                    );
+                    final hasAny = historyRows.isNotEmpty;
 
                     return Column(
                       children: [
@@ -359,50 +381,28 @@ class _AppDrawerState extends State<AppDrawer> {
                                     ),
                                   ),
                                 )
-                              : ListView(
+                              : ListView.builder(
+                                  key: const Key('drawer-history-list'),
                                   padding: const EdgeInsets.only(bottom: 8),
-                                  children: [
-                                    if (pinned.isNotEmpty) ...[
-                                      const _SectionLabel('Fixados'),
-                                      ...pinned.map(
-                                        (c) => _ConversationTile(
-                                          conversation: c,
-                                          searchSnippet: snippets[c.id],
-                                          isSelected:
-                                              c.id ==
-                                              service.currentConversationId,
-                                          onTap: () =>
-                                              onSelectConversation(c.id),
-                                          onPin: () => service.togglePin(c.id),
-                                          onDelete: () =>
-                                              _confirmDelete(context, c),
-                                          onRename: () =>
-                                              _renameDialog(context, c),
-                                        ),
-                                      ),
-                                    ],
-                                    for (final entry in groupedRecent.entries)
-                                      if (entry.value.isNotEmpty) ...[
-                                        _SectionLabel(entry.key),
-                                        ...entry.value.map(
-                                          (c) => _ConversationTile(
-                                            conversation: c,
-                                            searchSnippet: snippets[c.id],
-                                            isSelected:
-                                                c.id ==
-                                                service.currentConversationId,
-                                            onTap: () =>
-                                                onSelectConversation(c.id),
-                                            onPin: () =>
-                                                service.togglePin(c.id),
-                                            onDelete: () =>
-                                                _confirmDelete(context, c),
-                                            onRename: () =>
-                                                _renameDialog(context, c),
-                                          ),
-                                        ),
-                                      ],
-                                  ],
+                                  itemCount: historyRows.length,
+                                  itemBuilder: (context, index) {
+                                    final row = historyRows[index];
+                                    if (row.isSection) {
+                                      return _SectionLabel(row.sectionTitle!);
+                                    }
+                                    final conversation = row.conversation!;
+                                    return _ConversationTile(
+                                      key: ValueKey('drawer-conversation-${conversation.id}'),
+                                      conversation: conversation,
+                                      searchSnippet: snippets[conversation.id],
+                                      isSelected: conversation.id ==
+                                          service.currentConversationId,
+                                      onTap: () => onSelectConversation(conversation.id),
+                                      onPin: () => service.togglePin(conversation.id),
+                                      onDelete: () => _confirmDelete(context, conversation),
+                                      onRename: () => _renameDialog(context, conversation),
+                                    );
+                                  },
                                 ),
                         ),
                       ],
@@ -549,7 +549,7 @@ class _DrawerFooterButton extends StatelessWidget {
             Flexible(child: Text(label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: context.gama.textPrimary, fontSize: 12.5),
+              style: TextStyle(color: context.gama.textPrimary, fontSize: GamaType.label),
             )),
           ],
         ),
@@ -572,7 +572,7 @@ class _SectionLabel extends StatelessWidget {
         text,
         style: TextStyle(
           color: context.gama.textMuted,
-          fontSize: 12,
+          fontSize: GamaType.label,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.3,
         ),
@@ -609,29 +609,6 @@ String? _conversationSnippet(
   return null;
 }
 
-Map<String, List<Conversation>> _groupRecentConversations(
-  List<Conversation> conversations,
-) {
-  final groups = <String, List<Conversation>>{
-    'Hoje': [],
-    'Ontem': [],
-    'Últimos 7 dias': [],
-    'Mais antigas': [],
-  };
-  final now = DateTime.now();
-  for (final conversation in conversations) {
-    final daysAgo = localDaysAgo(conversation.updatedAt, now);
-    final group = daysAgo <= 0
-        ? 'Hoje'
-        : daysAgo == 1
-        ? 'Ontem'
-        : daysAgo <= 7
-        ? 'Últimos 7 dias'
-        : 'Mais antigas';
-    groups[group]!.add(conversation);
-  }
-  return groups;
-}
 
 class _DrawerItem extends StatelessWidget {
   final IconData icon;
@@ -691,6 +668,7 @@ class _ConversationTile extends StatelessWidget {
   final String? searchSnippet;
 
   const _ConversationTile({
+    super.key,
     required this.conversation,
     required this.isSelected,
     required this.onTap,
@@ -752,7 +730,7 @@ class _ConversationTile extends StatelessWidget {
                   color: isSelected
                       ? context.gama.textPrimary
                       : context.gama.textSecondary,
-                  fontSize: 13.5,
+                  fontSize: GamaType.secondary,
                   fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
                 ),
               ),
@@ -764,7 +742,7 @@ class _ConversationTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: context.gama.textMuted,
-                        fontSize: 12,
+                        fontSize: GamaType.label,
                       ),
                     ),
               dense: true,

@@ -49,7 +49,7 @@ class GamaEmptyPanel extends StatelessWidget {
               const SizedBox(height: 9),
               Text(description,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: g.textSecondary, fontSize: 13, height: 1.5),
+                style: TextStyle(color: g.textSecondary, fontSize: GamaType.secondary, height: 1.5),
               ),
               if (actionLabel != null && onAction != null) ...[
                 const SizedBox(height: 18),

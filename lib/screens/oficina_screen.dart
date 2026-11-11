@@ -10,7 +10,6 @@ import '../services/local_account_scope.dart';
 
 import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
-import '../core/design_tokens.dart';
 import '../core/responsive_layout.dart';
 import '../models/conversation.dart';
 import '../models/oficina_kind.dart';
@@ -23,6 +22,7 @@ import 'plugins_screen.dart';
 import 'projects_screen.dart';
 import 'scheduled_screen.dart';
 import '../utils/error_logger.dart';
+import '../utils/local_file_metadata.dart';
 
 /// Hub da Oficina: visual alinhado à chat screen, com 3 caminhos de criação.
 class OficinaScreen extends StatefulWidget {
@@ -62,12 +62,19 @@ class _OficinaScreenState extends State<OficinaScreen> {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(LocalAccountScope.current().libraryPrefsKey) ?? '[]';
     try {
-      return (jsonDecode(raw) as List)
+      final entries = (jsonDecode(raw) as List)
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList()
           .reversed
           .toList();
+      final images = entries.where((e) => e['kind'] == 'image').toList();
+      final metadata = await loadLocalFileMetadata(images);
+      for (final image in images) {
+        final path = image['path']?.toString();
+        image['_available'] = path != null && (metadata[path]?.hasContent ?? false);
+      }
+      return entries;
     } catch (error, stack) {
       logSwallowed(error, stack);
       return const [];
@@ -147,11 +154,17 @@ class _OficinaScreenState extends State<OficinaScreen> {
               constraints.maxWidth,
             );
             final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-            final cardHeight = textScale > 1.6 ? 450.0 : textScale > 1.25 ? 398.0 : 348.0;
-            final conversations = [
+            final cardHeight = textScale > 1.6 ? 430.0 : textScale > 1.25 ? 376.0 : 334.0;
+            // Pinned e recentes podem conter a mesma conversa; não repetir.
+            final unique = <String, Conversation>{};
+            for (final conversation in [
               ...ConversationService.instance.pinnedConversations,
               ...ConversationService.instance.recentConversations,
-            ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+            ]) {
+              unique[conversation.id] = conversation;
+            }
+            final conversations = unique.values.toList()
+              ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
             final recent = conversations
                 .where((c) => OficinaKindX.fromChatMode(c.mode) != null)
                 .take(8)
@@ -163,7 +176,7 @@ class _OficinaScreenState extends State<OficinaScreen> {
                   slivers: [
                     SliverPadding(
                       padding: EdgeInsets.fromLTRB(
-                        24, MediaQuery.paddingOf(context).top + 100, 24, 20,
+                        24, MediaQuery.paddingOf(context).top + 82, 24, 20,
                       ),
                       sliver: SliverToBoxAdapter(
                         child: Column(
@@ -185,9 +198,9 @@ class _OficinaScreenState extends State<OficinaScreen> {
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 18),
+                            const SizedBox(height: 14),
                             Text(
-                              'Modo criação',
+                              'Sua Oficina',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 color: g.textPrimary,
@@ -198,7 +211,7 @@ class _OficinaScreenState extends State<OficinaScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Escolha um caminho e comece com uma ideia.',
+                              'Imagem, vídeo e código em um só lugar.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 color: g.textMuted,
@@ -291,6 +304,7 @@ class _OficinaScreenState extends State<OficinaScreen> {
                                                 title: conversation.title,
                                                 prompt: prompt,
                                                 imagePath: imagePath,
+                                                hasImage: entry?['_available'] == true,
                                                 onTap: () => _openRecent(
                                                   context,
                                                   conversation,
@@ -517,7 +531,12 @@ class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
           child: DecoratedBox(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(22),
-              boxShadow: GamaElevation.card(accent),
+              border: Border.all(color: palette.borderSoft),
+              boxShadow: [BoxShadow(
+                color: Colors.black.withValues(alpha: 0.09),
+                blurRadius: 16,
+                offset: const Offset(0, 5),
+              )],
             ),
             child: Material(
               color: palette.surfaceCard,
@@ -563,85 +582,63 @@ class _AnimatedOficinaCardState extends State<_AnimatedOficinaCard> {
                       onTapUp: (_) => setState(() => _pressed = false),
                       splashColor: accent.withValues(alpha: 0.09),
                       highlightColor: accent.withValues(alpha: 0.04),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          return Align(
-                            alignment: Alignment.topCenter,
-                            child: Padding(
-                              padding: EdgeInsets.fromLTRB(
-                                18,
-                                scale > 1.25 ? 16 : 20,
-                                18,
-                                0,
-                              ),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  Text(
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(18, scale > 1.25 ? 16 : 20, 18, 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
                                     kind.label,
-                                    textAlign: TextAlign.center,
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 21,
                                       fontWeight: FontWeight.w700,
-                                      letterSpacing: -0.3,
-                                      shadows: [
-                                        Shadow(
-                                          color: Color(0x55000000),
-                                          blurRadius: 10,
-                                        ),
-                                      ],
+                                      letterSpacing: -0.4,
+                                      shadows: [Shadow(color: Color(0x55000000), blurRadius: 8)],
                                     ),
                                   ),
-                                  const SizedBox(height: 5),
-                                  Text(
-                                    kind.shortDescription,
-                                    textAlign: TextAlign.center,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Color(0xE6FFFFFF),
-                                      fontSize: 13,
-                                      height: 1.35,
-                                    ),
+                                ),
+                                Container(
+                                  width: 36,
+                                  height: 36,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xA51C2028),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: accent.withValues(alpha: 0.48)),
                                   ),
-                                  SizedBox(height: scale > 1.25 ? 10 : 12),
-                                  ConstrainedBox(
-                                    constraints: BoxConstraints(
-                                      maxWidth: constraints.maxWidth * 0.80,
-                                      minHeight: 42,
-                                    ),
-                                    child: FilledButton(
-                                      onPressed: widget.onTap,
-                                      style: FilledButton.styleFrom(
-                                        backgroundColor:
-                                            const Color(0xB522252D),
-                                        foregroundColor: Colors.white,
-                                        elevation: 0,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 20,
-                                          vertical: 11,
-                                        ),
-                                        side: BorderSide(
-                                          color: accent.withValues(alpha: 0.56),
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(15),
-                                        ),
-                                        textStyle: const TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      child: const Text('Abrir modo'),
-                                    ),
-                                  ),
-                                ],
+                                  child: const Icon(Icons.arrow_outward_rounded,
+                                      color: Colors.white, size: 19),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 7),
+                            Text(
+                              kind.subtitle,
+                              maxLines: scale > 1.4 ? 3 : 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xEDFFFFFF),
+                                fontSize: 13,
+                                height: 1.4,
+                                shadows: [Shadow(color: Color(0x66000000), blurRadius: 7)],
                               ),
                             ),
-                          );
-                        },
+                            const Spacer(),
+                            Text(
+                              'TOQUE PARA CRIAR',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.85),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.0,
+                                shadows: const [Shadow(color: Color(0x77000000), blurRadius: 6)],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -660,6 +657,7 @@ class _RecentCreation extends StatelessWidget {
   final String title;
   final String prompt;
   final String? imagePath;
+  final bool hasImage;
   final VoidCallback onTap;
 
   const _RecentCreation({
@@ -667,14 +665,14 @@ class _RecentCreation extends StatelessWidget {
     required this.title,
     required this.prompt,
     required this.imagePath,
+    required this.hasImage,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final g = context.gama;
-    final file = imagePath == null ? null : File(imagePath!);
-    final hasImage = file != null && file.existsSync();
+    final file = hasImage && imagePath != null ? File(imagePath!) : null;
     final color = kind.color(g);
     return SizedBox(
       width: 238,
@@ -693,9 +691,9 @@ class _RecentCreation extends StatelessWidget {
                 child: SizedBox(
                   width: 92,
                   height: 178,
-                  child: hasImage
+                  child: file != null
                       ? Image.file(
-                          file!,
+                          file,
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) =>
                               _RecentFallback(kind: kind, color: color),

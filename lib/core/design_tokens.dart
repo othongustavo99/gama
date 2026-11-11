@@ -37,3 +37,31 @@ abstract final class GamaElevation {
     ),
   ];
 }
+
+
+/// Escala semântica para telas e componentes compartilhados.
+/// A escala de acessibilidade do sistema é aplicada pelo próprio Flutter.
+abstract final class GamaType {
+  static const double caption = 12;
+  static const double label = 13;
+  static const double secondary = 14;
+  static const double body = 15;
+  static const double section = 18;
+  static const double heading = 22;
+
+  static const TextStyle sectionTitle = TextStyle(
+    fontSize: section,
+    fontWeight: FontWeight.w700,
+    letterSpacing: -0.3,
+    height: 1.2,
+  );
+  static const TextStyle description = TextStyle(
+    fontSize: secondary,
+    height: 1.45,
+  );
+}
+
+abstract final class GamaHitTarget {
+  /// Alvo de toque recomendado para botões com ícones.
+  static const double minimum = 48;
+}

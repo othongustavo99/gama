@@ -10,16 +10,20 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/gama_colors.dart';
+import '../core/responsive_layout.dart';
 import '../services/download_service.dart';
 import '../services/local_account_scope.dart';
 import '../widgets/video_jobs_panel.dart';
 import '../widgets/recovery_panel.dart';
 import '../widgets/gama_section_intro.dart';
 import '../widgets/gama_empty_panel.dart';
+import '../widgets/gama_library_image_tile.dart';
+import '../widgets/loading_skeleton.dart';
 import '../utils/error_logger.dart';
 import '../utils/friendly_error.dart';
 import '../utils/library_filter.dart';
 import '../utils/local_file_metadata.dart';
+import '../utils/library_presentation.dart';
 
 /// Biblioteca local de anexos (metadados + arquivo persistido).
 class LibraryScreen extends StatefulWidget {
@@ -259,6 +263,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String _query = '';
   String? _loadError;
   bool _busy = false;
+  bool _loading = true;
+  bool _selectionMode = false;
+  // Índices do snapshot do índice local, evitando colisões entre nomes iguais.
+  final Set<int> _selectedKeys = <int>{};
+  LibrarySortOrder _sortOrder = LibrarySortOrder.newest;
 
   @override
   void initState() {
@@ -274,6 +283,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _load() async {
     final revision = ++_loadRevision;
+    if (mounted) setState(() => _loading = true);
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(LocalAccountScope.current().libraryPrefsKey) ?? '[]';
@@ -283,9 +293,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
           .toList();
       final snapshots = await loadLocalFileMetadata(list);
       if (!mounted || revision != _loadRevision) return;
+      for (var i = 0; i < list.length; i++) {
+        list[i]['_localIndex'] = i; // somente estado de tela, jamais persistido
+      }
       setState(() {
         _items = list.reversed.toList();
         _fileSnapshots = snapshots;
+        _selectedKeys.clear();
+        _selectionMode = false;
         _loadError = null;
       });
     } catch (error, stack) {
@@ -293,6 +308,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (!mounted || revision != _loadRevision) return;
       setState(() => _loadError =
           'Não foi possível ler o índice da Biblioteca. Seus arquivos não foram apagados.');
+    } finally {
+      if (mounted && revision == _loadRevision) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -361,6 +380,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
         setState(() {
           _items = [];
           _fileSnapshots = {};
+          _selectedKeys.clear();
+          _selectionMode = false;
         });
         _snack(cleanupFailed
             ? 'Biblioteca esvaziada. Alguns arquivos locais não puderam ser removidos.'
@@ -430,12 +451,96 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  void _toggleSelected(Map<String, dynamic> entry) {
+    final key = entry['_localIndex'];
+    if (key is! int) return;
+    setState(() {
+      _selectionMode = true;
+      if (!_selectedKeys.add(key)) _selectedKeys.remove(key);
+    });
+  }
+
+  void _cancelSelection() => setState(() {
+    _selectionMode = false;
+    _selectedKeys.clear();
+  });
+
+  /// Exclusão múltipla: atualiza o índice antes de apagar SOMENTE cópias
+  /// pertencentes ao diretório privado da Biblioteca. Nunca toca em anexos
+  /// originais ou referências ainda usadas por outro registro.
+  Future<void> _removeSelected() async {
+    if (_busy || _selectedKeys.isEmpty || _loadError != null) return;
+    final count = _selectedKeys.length;
+    final confirmed = await _confirm(
+      title: 'Remover $count ${count == 1 ? 'arquivo' : 'arquivos'}?',
+      explanation: 'As cópias locais selecionadas serão removidas. As conversas '
+          'e os trabalhos salvos no servidor não serão apagados.',
+      action: 'Remover selecionados',
+    );
+    if (!confirmed || !mounted) return;
+    ++_loadRevision;
+    setState(() => _busy = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final all = (jsonDecode(prefs.getString(LocalAccountScope.current().libraryPrefsKey) ?? '[]') as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      // Evita apagar outro item caso a Biblioteca tenha mudado durante a seleção.
+      if (all.length != _items.length || all.asMap().entries.any((e) {
+        final snapshot = _items[_items.length - 1 - e.key];
+        return snapshot['name'] != e.value['name'] ||
+            snapshot['path'] != e.value['path'] ||
+            snapshot['at'] != e.value['at'];
+      })) {
+        throw const FormatException('O índice da Biblioteca mudou; atualize antes de remover.');
+      }
+      final indices = Set<int>.of(_selectedKeys);
+      final removed = <Map<String, dynamic>>[];
+      final remaining = <Map<String, dynamic>>[];
+      for (var i = 0; i < all.length; i++) {
+        if (indices.contains(i)) {
+          removed.add(all[i]);
+        } else {
+          remaining.add(all[i]);
+        }
+      }
+      if (!await prefs.setString(LocalAccountScope.current().libraryPrefsKey, jsonEncode(remaining))) {
+        throw const FileSystemException('Não foi possível salvar o índice');
+      }
+      final root = await getApplicationDocumentsDirectory();
+      final ownedDir = p.join(root.path, LocalAccountScope.current().libraryDirectoryName);
+      var cleanupFailed = false;
+      for (final path in removed.map((e) => e['path']?.toString()).whereType<String>().toSet()) {
+        if (path.isEmpty || remaining.any((e) => e['path'] == path) || !p.isWithin(ownedDir, path)) continue;
+        try {
+          final file = File(path);
+          if (await file.exists()) await file.delete();
+        } catch (error, stack) {
+          logSwallowed(error, stack, context: 'remoção múltipla da Biblioteca');
+          cleanupFailed = true;
+        }
+      }
+      if (mounted) _cancelSelection();
+      await _load();
+      _snack(cleanupFailed
+          ? 'Registros removidos. Algumas cópias não puderam ser apagadas.'
+          : '$count ${count == 1 ? 'arquivo removido' : 'arquivos removidos'} da Biblioteca.');
+    } catch (error, stack) {
+      logSwallowed(error, stack);
+      _snack('Não foi possível remover os arquivos selecionados.');
+      await _load();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final filtered = filterLibraryItems(
-      _items,
-      category: _category,
-      query: _query,
+    final filtered = sortLibraryItems(
+      filterLibraryItems(_items, category: _category, query: _query),
+      order: _sortOrder,
+      metadata: _fileSnapshots,
     );
     return Scaffold(
       backgroundColor: context.gama.background,
@@ -443,15 +548,34 @@ class _LibraryScreenState extends State<LibraryScreen> {
       body: GamaFloatingPage(
         actions: [
           IconButton(
+            tooltip: _selectionMode ? 'Cancelar seleção' : 'Selecionar arquivos',
+            onPressed: _busy || _loading || _items.isEmpty ? null :
+                (_selectionMode ? _cancelSelection : () => setState(() => _selectionMode = true)),
+            icon: Icon(_selectionMode ? Icons.close_rounded : Icons.checklist_rounded),
+          ),
+          IconButton(
             tooltip: 'Atualizar Biblioteca',
-            onPressed: _busy ? null : _load,
+            onPressed: _busy || _loading ? null : _load,
             icon: const Icon(Icons.refresh_rounded),
           ),
-          if (_items.isNotEmpty)
-            IconButton(
-              tooltip: 'Esvaziar Biblioteca',
-              onPressed: _busy || _loadError != null ? null : _clear,
-              icon: Icon(Icons.delete_sweep_outlined, color: context.gama.error),
+          if (_items.isNotEmpty && !_selectionMode)
+            PopupMenuButton<String>(
+              tooltip: 'Mais opções da Biblioteca',
+              enabled: !_busy && !_loading && _loadError == null,
+              onSelected: (choice) {
+                if (choice == 'clear') _clear();
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 'clear',
+                  child: Row(children: [
+                    Icon(Icons.delete_sweep_outlined, size: 18),
+                    SizedBox(width: 10),
+                    Text('Esvaziar Biblioteca'),
+                  ]),
+                ),
+              ],
+              icon: const Icon(Icons.more_horiz_rounded),
             ),
         ],
         child: Column(
@@ -470,14 +594,37 @@ class _LibraryScreenState extends State<LibraryScreen> {
               compact: true,
             ),
           ),
-          VideoJobsPanel(onLibraryChanged: _load),
-          RecoveryPanel(onLibraryChanged: _load),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: ExpansionTile(
+                key: const Key('library-activity-section'),
+                maintainState: true,
+                backgroundColor: context.gama.surfaceCard,
+                collapsedBackgroundColor: context.gama.surfaceCard,
+                tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+                leading: Icon(Icons.cloud_download_outlined, color: context.gama.accent),
+                title: const Text('Atividades e recuperações',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                subtitle: Text('Vídeos em andamento e entregas no servidor',
+                    style: TextStyle(fontSize: 11, color: context.gama.textMuted)),
+                children: [
+                  VideoJobsPanel(onLibraryChanged: _load),
+                  RecoveryPanel(onLibraryChanged: _load),
+                ],
+              ),
+            ),
+          ),
           if (_loadError != null)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(_loadError!,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: context.gama.error)),
+            Expanded(
+              child: GamaEmptyPanel(
+                icon: Icons.error_outline_rounded,
+                title: 'Não foi possível carregar a Biblioteca',
+                description: _loadError!,
+                actionLabel: 'Tentar novamente',
+                onAction: _load,
+              ),
             ),
           if (_loadError == null) ...[
             Padding(
@@ -520,20 +667,57 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '${filtered.length} ${filtered.length == 1 ? 'arquivo' : 'arquivos'}',
-                  style: TextStyle(color: context.gama.textMuted, fontSize: 12),
-                ),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              child: Row(
+                children: [
+                  Expanded(child: Text(
+                    _loading ? 'Carregando arquivos…' : _selectionMode
+                        ? '${_selectedKeys.length} ${_selectedKeys.length == 1 ? 'selecionado' : 'selecionados'}'
+                        : '${filtered.length} ${filtered.length == 1 ? 'arquivo' : 'arquivos'}',
+                    style: TextStyle(color: context.gama.textMuted, fontSize: 12),
+                  )),
+                  if (_selectionMode) ...[
+                    TextButton(
+                      onPressed: _busy ? null : _cancelSelection,
+                      child: const Text('Cancelar'),
+                    ),
+                    TextButton.icon(
+                      onPressed: _busy || _selectedKeys.isEmpty ? null : _removeSelected,
+                      icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                      label: const Text('Remover'),
+                    ),
+                  ] else
+                    PopupMenuButton<LibrarySortOrder>(
+                      key: const Key('library-sort-menu'),
+                      tooltip: 'Ordenar arquivos',
+                      initialValue: _sortOrder,
+                      onSelected: (value) => setState(() => _sortOrder = value),
+                      itemBuilder: (_) => [
+                        for (final order in LibrarySortOrder.values)
+                          PopupMenuItem(value: order, child: Text(order.label)),
+                      ],
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Text(_sortOrder.label,
+                              style: TextStyle(color: context.gama.textSecondary, fontSize: 12)),
+                          const SizedBox(width: 4),
+                          Icon(Icons.sort_rounded, size: 18, color: context.gama.textSecondary),
+                        ]),
+                      ),
+                    ),
+                ],
               ),
             ),
           ],
           Expanded(
             child: _loadError != null
                 ? const SizedBox.shrink()
-                : RefreshIndicator(
+                : _loading
+                    ? (_category == LibraryCategory.images
+                        ? const GamaSkeletonGrid(itemCount: 6)
+                        : const GamaSkeletonList(itemCount: 5))
+                    : RefreshIndicator(
                     onRefresh: _load,
                     child: filtered.isEmpty
                         ? ListView(children: [
@@ -569,20 +753,38 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               final name = entry['name']?.toString() ?? 'Arquivo';
                               final size = fileExists ? actualSize :
                                   (entry['bytes'] is num ? (entry['bytes'] as num).toInt() : 0);
+                              final created = DateTime.tryParse(entry['at']?.toString() ?? '');
+                              final date = created == null ? '' :
+                                  ' · ${MaterialLocalizations.of(context).formatMediumDate(created.toLocal())}';
                               return Material(
                                 color: context.gama.surfaceCard,
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(14),
+                                clipBehavior: Clip.antiAlias,
                                 child: InkWell(
                                   borderRadius: BorderRadius.circular(12),
-                                  onTap: hasFile
-                                      ? () => LibraryScreen.openEntry(context, entry)
-                                      : null,
+                                  onTap: _selectionMode
+                                      ? () => _toggleSelected(entry)
+                                      : hasFile
+                                          ? () => LibraryScreen.openEntry(context, entry)
+                                          : null,
+                                  onLongPress: () => _toggleSelected(entry),
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 12, vertical: 10,
                                     ),
                                     child: Row(
                                       children: [
+                                        if (_selectionMode) ...[
+                                          Icon(
+                                            _selectedKeys.contains(entry['_localIndex'])
+                                                ? Icons.check_circle_rounded
+                                                : Icons.circle_outlined,
+                                            size: 22,
+                                            color: _selectedKeys.contains(entry['_localIndex'])
+                                                ? context.gama.accent : context.gama.textMuted,
+                                          ),
+                                          const SizedBox(width: 8),
+                                        ],
                                         Icon(_icon(kind),
                                             color: hasFile
                                                 ? context.gama.accent
@@ -603,7 +805,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                               const SizedBox(height: 3),
                                               Text(
                                                 '${categoryForLibraryItem(entry).label} · ${_fmtBytes(size)}'
-                                                '${hasFile ? '' : fileExists ? ' · Arquivo vazio' : ' · Indisponível neste dispositivo'}',
+                                                '${hasFile ? date : fileExists ? ' · Arquivo vazio' : ' · Indisponível neste dispositivo'}',
                                                 maxLines: 2,
                                                 style: TextStyle(
                                                   color: context.gama.textMuted,
@@ -613,19 +815,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                             ],
                                           ),
                                         ),
-                                        if (hasFile)
-                                          IconButton(
-                                            tooltip: 'Salvar $name nos downloads',
-                                            onPressed: _busy ? null : () =>
-                                                LibraryScreen.downloadEntry(context, entry),
-                                            icon: const Icon(Icons.download_outlined),
+                                        if (!_selectionMode)
+                                          PopupMenuButton<String>(
+                                            tooltip: 'Opções de $name',
+                                            enabled: !_busy,
+                                            onSelected: (action) {
+                                              if (action == 'download') {
+                                                LibraryScreen.downloadEntry(context, entry);
+                                              } else if (action == 'remove') {
+                                                _removeOne(entry);
+                                              }
+                                            },
+                                            itemBuilder: (_) => [
+                                              if (hasFile)
+                                                const PopupMenuItem(value: 'download', child: Text('Baixar')),
+                                              const PopupMenuItem(value: 'remove', child: Text('Remover')),
+                                            ],
                                           ),
-                                        IconButton(
-                                          tooltip: 'Remover $name da Biblioteca',
-                                          onPressed: _busy ? null : () => _removeOne(entry),
-                                          icon: Icon(Icons.delete_outline_rounded,
-                                              color: context.gama.textMuted),
-                                        ),
                                       ],
                                     ),
                                   ),
@@ -646,12 +852,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       builder: (context, constraints) {
         const gap = 12.0;
         const padding = 16.0;
-        final width = constraints.maxWidth - 2 * padding;
-        final columns = (width / 165).floor().clamp(1, 6);
+        final width = (constraints.maxWidth - 2 * padding).clamp(0.0, double.infinity);
+        final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        final columns = GamaGalleryLayout.columns(width, textScale: scale);
         final tileWidth = (width - (columns - 1) * gap) / columns;
         final cacheWidth = (tileWidth * MediaQuery.devicePixelRatioOf(context))
-            .round()
-            .clamp(180, 900);
+            .round().clamp(180, 900).toInt();
         return GridView.builder(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(padding),
@@ -659,71 +865,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
             crossAxisCount: columns,
             mainAxisSpacing: gap,
             crossAxisSpacing: gap,
-            childAspectRatio: .95,
+            childAspectRatio: .90,
           ),
           itemCount: entries.length,
           itemBuilder: (context, index) {
             final entry = entries[index];
             final name = entry['name']?.toString() ?? 'Imagem';
             final path = entry['path']?.toString();
-            final exists = path != null &&
-                (_fileSnapshots[path]?.hasContent ?? false);
-            final file = exists ? File(path!) : null;
-            final palette = context.gama;
-            final unavailable = Icon(
-              Icons.image_not_supported_outlined,
-              color: palette.textMuted,
-              semanticLabel: 'Imagem indisponível',
-            );
-
-            return Material(
-              color: palette.surfaceCard,
-              borderRadius: BorderRadius.circular(14),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: exists ? () => LibraryScreen.openEntry(context, entry) : null,
-                      child: SizedBox.expand(
-                        child: exists
-                            ? Image.file(
-                                file!,
-                                fit: BoxFit.cover,
-                                cacheWidth: cacheWidth,
-                                semanticLabel: name,
-                                errorBuilder: (_, _, _) => Center(child: unavailable),
-                              )
-                            : Center(child: unavailable),
-                      ),
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      ),
-                      PopupMenuButton<String>(
-                        enabled: !_busy,
-                        tooltip: 'Opções de $name',
-                        onSelected: (action) {
-                          if (action == 'download') {
-                            LibraryScreen.downloadEntry(context, entry);
-                          } else {
-                            _removeOne(entry);
-                          }
-                        },
-                        itemBuilder: (_) => [
-                          if (exists)
-                            const PopupMenuItem(value: 'download', child: Text('Baixar')),
-                          const PopupMenuItem(value: 'remove', child: Text('Remover')),
-                        ],
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+            final exists = path != null && (_fileSnapshots[path]?.hasContent ?? false);
+            return GamaLibraryImageTile(
+              name: name,
+              path: path,
+              available: exists,
+              cacheWidth: cacheWidth,
+              onOpen: () => LibraryScreen.openEntry(context, entry),
+              onDownload: !_busy && exists ? () => LibraryScreen.downloadEntry(context, entry) : null,
+              onRemove: _busy ? null : () => _removeOne(entry),
+              selectionMode: _selectionMode,
+              selected: _selectedKeys.contains(entry['_localIndex']),
+              onSelect: () => _toggleSelected(entry),
             );
           },
         );
