@@ -287,18 +287,13 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
       backgroundColor: context.gama.background,
       
       floatingActionButton: FloatingActionButton(
+        tooltip: 'Novo lembrete',
         backgroundColor: context.gama.accent,
+        foregroundColor: context.gama.onAccent,
         onPressed: _add,
-        child: const Icon(Icons.add, color: Colors.white),
+        child: const Icon(Icons.add_rounded),
       ),
       body: GamaFloatingPage(
-        actions: [
-          IconButton(
-            tooltip: 'Novo lembrete',
-            onPressed: _add,
-            icon: const Icon(Icons.add_rounded),
-          ),
-        ],
         child: _loading
           ? const GamaSkeletonList(itemCount: 5)
           : _items.isEmpty

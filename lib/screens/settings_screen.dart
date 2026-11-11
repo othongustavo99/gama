@@ -8,7 +8,7 @@ import '../services/ollama_service.dart';
 import '../services/settings_service.dart';
 import '../utils/friendly_error.dart';
 import '../widgets/gama_floating_page.dart';
-import 'account_deletion_screen.dart';
+import 'account_screen.dart';
 import 'commercial_screen.dart';
 import 'memory_screen.dart';
 
@@ -49,7 +49,7 @@ class SettingsScreen extends StatelessWidget {
           context,
           Icons.person_outline_rounded,
           'Conta',
-          const AccountDeletionScreen(),
+          const AccountScreen(),
         ),
         const Divider(),
         ListenableBuilder(

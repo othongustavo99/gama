@@ -82,6 +82,14 @@ class GamaPalette extends ThemeExtension<GamaPalette> {
     bubbleAssistant: Color(0xFF121821),
   );
 
+  /// Cor legível sobre a ação laranja do tema.
+  /// No tema escuro o laranja é luminoso (texto escuro); no tema claro
+  /// o laranja é fechado (texto branco). Mantém a identidade sem sacrificar
+  /// o contraste dos ícones e dos rótulos.
+  Color get onAccent => accent.computeLuminance() > 0.30
+      ? const Color(0xFF171B22)
+      : Colors.white;
+
   /// Identidade cromática preservada; contraste específico para superfícies claras.
   /// O balão do usuário permanece escuro para manter texto e ações legíveis.
   factory GamaPalette.light() => const GamaPalette(

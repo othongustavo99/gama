@@ -528,9 +528,7 @@ class ChatComposer extends StatelessWidget {
                                     scale: (canSend || isLoading) ? 1 : 0.92,
                                     child: Material(
                                       color: isLoading
-                                          ? palette.accent.withValues(
-                                              alpha: 0.55,
-                                            )
+                                          ? palette.surfaceHover
                                           : canSend
                                           ? palette.accent
                                           : palette.surfaceHover,
@@ -567,7 +565,11 @@ class ChatComposer extends StatelessWidget {
                                               isLoading
                                                   ? Icons.stop_rounded
                                                   : Icons.arrow_upward_rounded,
-                                              color: Colors.white,
+                                              color: isLoading
+                                                  ? palette.textPrimary
+                                                  : canSend
+                                                      ? palette.onAccent
+                                                      : palette.textMuted,
                                               size: isLoading ? 22 : 20,
                                             ),
                                           ),

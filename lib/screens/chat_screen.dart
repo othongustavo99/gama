@@ -323,16 +323,18 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _pasteClipboardContent() async {
-    if (_isLoading || _waitingForAttachment) return;
+    // Ctrl+V sempre deve permitir texto no rascunho, mesmo durante a resposta.
+    // Apenas novos anexos ficam bloqueados durante geração/preparação.
+    final allowMedia = !_isLoading && !_waitingForAttachment;
     try {
-      final files = await Pasteboard.files();
+      final files = allowMedia ? await Pasteboard.files() : <String>[];
       if (files.isNotEmpty) {
         for (final path in files) {
           await _addPath(path);
         }
         return;
       }
-      final image = await Pasteboard.image;
+      final image = allowMedia ? await Pasteboard.image : null;
       if (image != null && image.isNotEmpty) {
         final path =
             '${Directory.systemTemp.path}${Platform.pathSeparator}'

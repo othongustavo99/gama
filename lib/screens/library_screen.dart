@@ -19,6 +19,7 @@ import '../widgets/gama_empty_panel.dart';
 import '../utils/error_logger.dart';
 import '../utils/friendly_error.dart';
 import '../utils/library_filter.dart';
+import '../utils/local_file_metadata.dart';
 
 /// Biblioteca local de anexos (metadados + arquivo persistido).
 class LibraryScreen extends StatefulWidget {
@@ -252,6 +253,8 @@ class LibraryScreen extends StatefulWidget {
 class _LibraryScreenState extends State<LibraryScreen> {
   final TextEditingController _searchController = TextEditingController();
   List<Map<String, dynamic>> _items = [];
+  Map<String, LocalFileMetadata> _fileSnapshots = {};
+  int _loadRevision = 0;
   LibraryCategory _category = LibraryCategory.all;
   String _query = '';
   String? _loadError;
@@ -270,6 +273,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _load() async {
+    final revision = ++_loadRevision;
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(LocalAccountScope.current().libraryPrefsKey) ?? '[]';
@@ -277,14 +281,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
-      if (!mounted) return;
+      final snapshots = await loadLocalFileMetadata(list);
+      if (!mounted || revision != _loadRevision) return;
       setState(() {
         _items = list.reversed.toList();
+        _fileSnapshots = snapshots;
         _loadError = null;
       });
     } catch (error, stack) {
       logSwallowed(error, stack);
-      if (!mounted) return;
+      if (!mounted || revision != _loadRevision) return;
       setState(() => _loadError =
           'Não foi possível ler o índice da Biblioteca. Seus arquivos não foram apagados.');
     }
@@ -333,18 +339,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
       action: 'Esvaziar Biblioteca',
     );
     if (!confirmed || !mounted) return;
+    ++_loadRevision; // invalida carregamentos antigos antes da exclusão
     setState(() => _busy = true);
     try {
       final prefs = await SharedPreferences.getInstance();
       final dir = await getApplicationDocumentsDirectory();
       final libDir = Directory(p.join(dir.path, LocalAccountScope.current().libraryDirectoryName));
-      if (await libDir.exists()) await libDir.delete(recursive: true);
+      // Confirma primeiro o índice: uma falha ao persistir não pode apagar
+      // arquivos que ainda seriam apresentados como disponíveis na lista.
       if (!await prefs.setString(LocalAccountScope.current().libraryPrefsKey, '[]')) {
         throw const FileSystemException('Falha ao atualizar o índice local');
       }
+      var cleanupFailed = false;
+      try {
+        if (await libDir.exists()) await libDir.delete(recursive: true);
+      } catch (error, stack) {
+        logSwallowed(error, stack, context: 'limpar arquivos da Biblioteca');
+        cleanupFailed = true;
+      }
       if (mounted) {
-        setState(() => _items = []);
-        _snack('Biblioteca local esvaziada.');
+        setState(() {
+          _items = [];
+          _fileSnapshots = {};
+        });
+        _snack(cleanupFailed
+            ? 'Biblioteca esvaziada. Alguns arquivos locais não puderam ser removidos.'
+            : 'Biblioteca local esvaziada.');
       }
     } catch (error, stack) {
       logSwallowed(error, stack);
@@ -436,15 +456,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
         child: Column(
         children: [
-          if (MediaQuery.sizeOf(context).width >= 720)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(24, 16, 24, 5),
-              child: GamaSectionIntro(
-                title: 'Suas entregas',
-                description: 'Arquivos locais e tarefas recuperáveis da $kAppName.',
-                icon: Icons.folder_open_rounded,
-              ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              MediaQuery.sizeOf(context).width >= 720 ? 24 : 16,
+              14,
+              MediaQuery.sizeOf(context).width >= 720 ? 24 : 16,
+              6,
             ),
+            child: const GamaSectionIntro(
+              title: 'Biblioteca',
+              description: 'Arquivos locais e tarefas recuperáveis da $kAppName.',
+              icon: Icons.folder_open_rounded,
+              compact: true,
+            ),
+          ),
           VideoJobsPanel(onLibraryChanged: _load),
           RecoveryPanel(onLibraryChanged: _load),
           if (_loadError != null)
@@ -537,10 +562,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               final entry = filtered[index];
                               final kind = entry['kind']?.toString() ?? '';
                               final path = entry['path']?.toString();
-                              final localFile = path == null ? null : File(path);
-                              final fileExists = localFile != null &&
-                                  path!.isNotEmpty && localFile.existsSync();
-                              final actualSize = fileExists ? localFile.lengthSync() : 0;
+                              final metadata = path == null ? null : _fileSnapshots[path];
+                              final fileExists = metadata?.exists ?? false;
+                              final actualSize = metadata?.bytes ?? 0;
                               final hasFile = fileExists && actualSize > 0;
                               final name = entry['name']?.toString() ?? 'Arquivo';
                               final size = fileExists ? actualSize :
@@ -642,8 +666,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
             final entry = entries[index];
             final name = entry['name']?.toString() ?? 'Imagem';
             final path = entry['path']?.toString();
-            final file = path == null || path.isEmpty ? null : File(path);
-            final exists = file?.existsSync() ?? false;
+            final exists = path != null &&
+                (_fileSnapshots[path]?.hasContent ?? false);
+            final file = exists ? File(path!) : null;
             final palette = context.gama;
             final unavailable = Icon(
               Icons.image_not_supported_outlined,

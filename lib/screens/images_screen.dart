@@ -9,6 +9,7 @@ import '../services/local_account_scope.dart';
 import '../core/gama_colors.dart';
 import '../utils/error_logger.dart';
 import '../utils/library_filter.dart';
+import '../utils/local_file_metadata.dart';
 import '../widgets/loading_skeleton.dart';
 import '../widgets/gama_section_intro.dart';
 import '../widgets/gama_empty_panel.dart';
@@ -25,6 +26,8 @@ class ImagesScreen extends StatefulWidget {
 class _ImagesScreenState extends State<ImagesScreen> {
   final TextEditingController _search = TextEditingController();
   List<Map<String, dynamic>> _items = [];
+  Map<String, LocalFileMetadata> _fileSnapshots = {};
+  int _loadRevision = 0;
   String _query = '';
   String? _loadError;
   bool _loading = true;
@@ -42,6 +45,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
   }
 
   Future<void> _load() async {
+    final revision = ++_loadRevision;
     if (mounted) setState(() => _loading = true);
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -50,18 +54,23 @@ class _ImagesScreenState extends State<ImagesScreen> {
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
-      if (!mounted) return;
+      final images = filterLibraryItems(
+        list.reversed, category: LibraryCategory.images);
+      final snapshots = await loadLocalFileMetadata(images);
+      if (!mounted || revision != _loadRevision) return;
       setState(() {
-        _items = filterLibraryItems(list.reversed,
-            category: LibraryCategory.images);
+        _items = images;
+        _fileSnapshots = snapshots;
         _loadError = null;
       });
     } catch (error, stack) {
       logSwallowed(error, stack);
-      if (mounted) setState(() => _loadError =
+      if (mounted && revision == _loadRevision) setState(() => _loadError =
           'Não foi possível ler a galeria. Os arquivos continuam preservados.');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && revision == _loadRevision) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -83,15 +92,20 @@ class _ImagesScreenState extends State<ImagesScreen> {
           ? const GamaSkeletonGrid(itemCount: 6)
           : Column(
               children: [
-                if (MediaQuery.sizeOf(context).width >= 720)
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(24, 16, 24, 0),
-                    child: GamaSectionIntro(
-                      title: 'Galeria',
-                      description: 'Suas imagens geradas e recebidas em um só lugar.',
-                      icon: Icons.collections_outlined,
-                    ),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    MediaQuery.sizeOf(context).width >= 720 ? 24 : 16,
+                    14,
+                    MediaQuery.sizeOf(context).width >= 720 ? 24 : 16,
+                    0,
                   ),
+                  child: const GamaSectionIntro(
+                    title: 'Galeria',
+                    description: 'Imagens geradas e recebidas em um só lugar.',
+                    icon: Icons.collections_outlined,
+                    compact: true,
+                  ),
+                ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                   child: TextField(
@@ -161,7 +175,7 @@ class _ImagesScreenState extends State<ImagesScreen> {
                                       final path = it['path']?.toString();
                                       final name = it['name']?.toString() ?? 'Imagem';
                                       final exists = path != null &&
-                                          path.isNotEmpty && File(path).existsSync();
+                                          (_fileSnapshots[path]?.hasContent ?? false);
                                       return Material(
                                         color: context.gama.surfaceCard,
                                         borderRadius: BorderRadius.circular(14),

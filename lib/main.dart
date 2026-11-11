@@ -150,7 +150,7 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
       secondary: palette.accentCool,
       surface: palette.surface,
       error: palette.error,
-      onPrimary: Colors.white,
+      onPrimary: palette.onAccent,
       onSecondary: Colors.white,
       onSurface: palette.textPrimary,
     );

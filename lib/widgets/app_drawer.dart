@@ -165,14 +165,8 @@ class _AppDrawerState extends State<AppDrawer> {
                   borderRadius: BorderRadius.circular(16),
                   child: Container(
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          context.gama.accentBright,
-                          context.gama.accentMuted,
-                        ],
-                      ),
+                      // Superfície sólida: o texto mantém contraste em ambos os temas.
+                      color: context.gama.accent,
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
@@ -182,8 +176,8 @@ class _AppDrawerState extends State<AppDrawer> {
                         ),
                       ],
                     ),
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
                         horizontal: 14,
                         vertical: 13,
                       ),
@@ -191,14 +185,14 @@ class _AppDrawerState extends State<AppDrawer> {
                         children: [
                           Icon(
                             Icons.add_rounded,
-                            color: Colors.white,
+                            color: context.gama.onAccent,
                             size: 21,
                           ),
-                          SizedBox(width: 10),
+                          const SizedBox(width: 10),
                           Text(
                             'Nova conversa',
                             style: TextStyle(
-                              color: Colors.white,
+                              color: context.gama.onAccent,
                               fontSize: 14,
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0.1,
