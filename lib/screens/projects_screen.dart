@@ -6,7 +6,7 @@ import '../services/conversation_service.dart';
 import '../widgets/gama_empty_panel.dart';
 import '../widgets/gama_section_intro.dart';
 
-/// Projetos = conversas fixadas / espaços de trabalho leves.
+/// Acesso rápido às conversas fixadas no histórico.
 class ProjectsScreen extends StatelessWidget {
   const ProjectsScreen({super.key});
 
@@ -27,8 +27,8 @@ class ProjectsScreen extends StatelessWidget {
           if (pinned.isEmpty) {
             return const GamaEmptyPanel(
               icon: Icons.folder_special_outlined,
-              title: 'Nenhum projeto ainda',
-              description: 'Fixe uma conversa no menu do histórico para encontrá-la aqui como espaço de trabalho.',
+              title: 'Nenhuma conversa fixada',
+              description: 'Fixe uma conversa pelo menu do histórico para encontrá-la aqui.',
             );
           }
           return ListView.separated(
@@ -42,8 +42,8 @@ class ProjectsScreen extends StatelessWidget {
                 return const Padding(
                   padding: EdgeInsets.fromLTRB(8, 8, 8, 14),
                   child: GamaSectionIntro(
-                    title: 'Projetos fixados',
-                    description: 'Encontre rapidamente suas conversas de trabalho.',
+                    title: 'Conversas fixadas',
+                    description: 'Abra as conversas que você fixou no histórico.',
                     icon: Icons.folder_special_outlined,
                   ),
                 );
@@ -90,11 +90,11 @@ class ProjectsScreen extends StatelessWidget {
                       builder: (ctx) => AlertDialog(
                         backgroundColor: context.gama.surfaceCard,
                         title: Text(
-                          'Desafixar projeto?',
+                          'Desafixar conversa?',
                           style: TextStyle(color: context.gama.textPrimary),
                         ),
                         content: Text(
-                          'A conversa "${c.title}" sai da lista de projetos, '
+                          'A conversa "${c.title}" sai da lista de conversas fixadas, '
                           'mas continua no histórico.',
                           style: TextStyle(color: context.gama.textSecondary),
                         ),

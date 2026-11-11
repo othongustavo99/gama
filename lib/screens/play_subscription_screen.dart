@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import '../core/constants.dart';
 import '../widgets/gama_floating_page.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -73,7 +74,7 @@ class _PlaySubscriptionScreenState extends State<PlaySubscriptionScreen> {
             for (final ProductDetails product in billing.products)
               Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Gamma ${billing.planFor(product.id)}',
+                  Text('$kAppName ${billing.planFor(product.id)}',
                     style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 8),
                   Text(product.description.isEmpty ? product.title : product.description),

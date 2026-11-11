@@ -1,4 +1,7 @@
-/// Constantes centrais do app Gama.
+/// Nome exibido na interface do aplicativo.
+const String kAppName = 'Gamma';
+
+/// Constantes centrais do app.
 class AppConstants {
   /// URL base da API (HTTPS obrigatório para APK release).
   static const String apiBaseUrl =

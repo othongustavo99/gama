@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -5,19 +6,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
-import 'package:flutter_highlight/themes/github.dart';
-import 'package:flutter_highlight/themes/monokai.dart';
 import 'package:highlight/highlight.dart' show highlight, Node;
 import 'package:markdown/markdown.dart' as md;
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../core/constants.dart';
 import '../core/gama_colors.dart';
 import '../core/gama_page_route.dart';
 import '../screens/oficina_screen.dart';
 import '../screens/code_diff_screen.dart';
 import '../services/download_service.dart';
 import '../utils/error_logger.dart';
+import '../utils/friendly_error.dart';
 import '../utils/streaming_text_preview.dart';
 
 class ParsedMessage {
@@ -257,12 +258,14 @@ Future<void> _shareImageFile(
           mime: mime,
         );
     await SharePlus.instance.share(
-      ShareParams(files: [XFile(path)], title: 'Imagem da Gama'),
+      ShareParams(files: [XFile(path)], title: 'Imagem da $kAppName'),
     );
-  } catch (error) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Não consegui compartilhar a imagem: $error')),
+  } catch (error, stack) {
+    showFriendlyError(
+      context.mounted ? context : null,
+      error,
+      stack,
+      acao: 'compartilhar a imagem',
     );
   }
 }
@@ -336,14 +339,12 @@ class _FullscreenImageDialog extends StatelessWidget {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('Imagem salva')),
                                 );
-                              } catch (error) {
-                                if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'Não consegui salvar a imagem: $error',
-                                    ),
-                                  ),
+                              } catch (error, stack) {
+                                showFriendlyError(
+                                  context.mounted ? context : null,
+                                  error,
+                                  stack,
+                                  acao: 'salvar a imagem',
                                 );
                               }
                             },
@@ -396,21 +397,18 @@ class MessageContentView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Durante a geração não precisamos interpretar Markdown parcial como
-    // imagens, fórmulas ou tabelas. Em determinados Androids isso produzia
-    // grandes áreas de renderização vazias e reconstruções custosas.
-    // A resposta final continua passando pelo renderer completo abaixo.
     if (streaming && !isUser) {
-      final preview = streamingTextPreview(content);
-      return Text(
-        preview,
-        softWrap: true,
-        style: TextStyle(
+      return _MarkdownMessage(
+        text: content,
+        isUser: false,
+        streaming: true,
+        textStyle: TextStyle(
           color: context.gama.textPrimary,
           fontSize: 15,
           height: 1.55,
           letterSpacing: 0.1,
         ),
+        onTapLink: onTapLink,
       );
     }
     final extracted = extractGamaImages(content);
@@ -699,7 +697,7 @@ class _MemoizedMessageContentViewState
 /// Renderiza Markdown normalmente, mas separa blocos cercados por ``` em
 /// caixas próprias. Isso permite colocar o botão de copiar sem interferir
 /// no restante do Markdown já usado pela Gama.
-class _MarkdownMessage extends StatelessWidget {
+class _MarkdownMessage extends StatefulWidget {
   final String text;
   final bool isUser;
   final String? referenceCode;
@@ -719,32 +717,7 @@ class _MarkdownMessage extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    // Os blocos cercados por código já são cacheados. Durante o stream,
-    // também congela parágrafos de texto completos e independentes; somente
-    // o último trecho incompleto precisa passar pelo parser a cada frame.
-    final original = _splitCodeBlocks(text);
-    final parts = streaming ? _splitStableParagraphs(original) : original;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var index = 0; index < parts.length; index++)
-          _MarkdownPartView(
-            streaming: streaming,
-            key: ValueKey(
-              'message-part-$index-${parts[index].isCode}-${parts[index].isOpenCode}',
-            ),
-            part: parts[index],
-            isUser: isUser,
-            referenceCode: referenceCode,
-            referenceLanguage: referenceLanguage,
-            textStyle: textStyle,
-            onTapLink: onTapLink,
-          ),
-      ],
-    );
-  }
+  State<_MarkdownMessage> createState() => _MarkdownMessageState();
 
   static MarkdownStyleSheet _markdownStyleSheet(
     bool isUser,
@@ -816,6 +789,62 @@ class _MarkdownMessage extends StatelessWidget {
   }
 }
 
+class _MarkdownMessageState extends State<_MarkdownMessage> {
+  final List<_CodePart> _completedParts = [];
+  int _parsedLength = 0;
+
+  @override
+  void didUpdateWidget(covariant _MarkdownMessage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.streaming ||
+        !oldWidget.streaming ||
+        !widget.text.startsWith(oldWidget.text)) {
+      _completedParts.clear();
+      _parsedLength = 0;
+    }
+  }
+
+  List<_CodePart> _streamingParts() {
+    final tail = widget.text.substring(_parsedLength);
+    if (tail.isEmpty) return _completedParts;
+    final parts = _splitStableParagraphs(
+      _splitCodeBlocks(tail, streaming: true),
+      tail.length,
+    );
+    final offset = _parsedLength;
+    for (final part in parts) {
+      final end = part.endOffset;
+      if (end == null) return [..._completedParts, part];
+      _completedParts.add(part);
+      _parsedLength = offset + end;
+    }
+    return _completedParts;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = widget.streaming
+        ? _streamingParts()
+        : _splitCodeBlocks(widget.text);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var index = 0; index < parts.length; index++)
+          _MarkdownPartView(
+            streaming: widget.streaming,
+            key: ValueKey('message-part-$index'),
+            part: parts[index],
+            isUser: widget.isUser,
+            referenceCode: widget.referenceCode,
+            referenceLanguage: widget.referenceLanguage,
+            textStyle: widget.textStyle,
+            onTapLink: widget.onTapLink,
+          ),
+      ],
+    );
+  }
+}
+
 class _MarkdownPartView extends StatefulWidget {
   final bool streaming;
   final _CodePart part;
@@ -860,6 +889,7 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
         oldPart.language != newPart.language ||
         oldPart.isCode != newPart.isCode ||
         oldPart.isOpenCode != newPart.isOpenCode ||
+        (oldPart.endOffset == null) != (newPart.endOffset == null) ||
         oldWidget.streaming != widget.streaming ||
         oldWidget.isUser != widget.isUser ||
         oldWidget.textStyle != widget.textStyle ||
@@ -898,6 +928,12 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
           part.content,
           style: widget.textStyle.copyWith(fontFamily: 'monospace'),
         ),
+      );
+    }
+    if (widget.streaming && part.endOffset == null) {
+      return Text(
+        streamingTextPreview(part.content),
+        style: widget.textStyle,
       );
     }
     return Padding(
@@ -1012,12 +1048,14 @@ class _BoundedMarkdownImage extends StatelessWidget {
 class _CodePart {
   final bool isCode;
   final bool isOpenCode;
+  final int? endOffset;
   final String content;
   final String language;
 
   const _CodePart({
     required this.isCode,
     this.isOpenCode = false,
+    this.endOffset,
     required this.content,
     this.language = '',
   });
@@ -1026,7 +1064,7 @@ class _CodePart {
 // Divide apenas parágrafos fechados e estruturalmente independentes.
 // Não fragmenta listas, tabelas, blocos matemáticos, citações, HTML ou links
 // por referência: esses dependem do contexto entre linhas no Markdown.
-List<_CodePart> _splitStableParagraphs(List<_CodePart> parts) {
+List<_CodePart> _splitStableParagraphs(List<_CodePart> parts, int length) {
   final output = <_CodePart>[];
   final blank = RegExp(r'\r?\n[ \t]*\r?\n');
   final structural = RegExp(
@@ -1039,6 +1077,7 @@ List<_CodePart> _splitStableParagraphs(List<_CodePart> parts) {
       continue;
     }
     final value = part.content;
+    final offset = (part.endOffset ?? length) - value.length;
     var start = 0;
     for (final boundary in blank.allMatches(value)) {
       final segment = value.substring(start, boundary.end);
@@ -1051,36 +1090,42 @@ List<_CodePart> _splitStableParagraphs(List<_CodePart> parts) {
           segment.contains(r'\]')) {
         continue;
       }
-      output.add(_CodePart(isCode: false, content: segment));
+      output.add(_CodePart(
+        isCode: false, content: segment, endOffset: offset + boundary.end,
+      ));
       start = boundary.end;
     }
     if (start < value.length) {
-      output.add(_CodePart(isCode: false, content: value.substring(start)));
+      output.add(_CodePart(
+        isCode: false, content: value.substring(start), endOffset: part.endOffset,
+      ));
     }
   }
   return output;
 }
 
-List<_CodePart> _splitCodeBlocks(String text) {
+List<_CodePart> _splitCodeBlocks(String text, {bool streaming = false}) {
   // Split robusto: fechamento ``` só conta no início da linha.
   // Código com ``` interno (ex.: buf.writeln('```dart')) não quebra o bloco.
   final parts = <_CodePart>[];
-  final openRe = RegExp(r'```([^\r\n]*)\r?\n');
+  final openRe = RegExp(r'^[ 	]{0,3}```([^\r\n]*)\r?\n', multiLine: true);
   var cursor = 0;
   var i = 0;
   final src = text;
 
   while (i < src.length) {
-    final open = openRe.firstMatch(src.substring(i));
+    final open = openRe.allMatches(src, i).firstOrNull;
     if (open == null) break;
-    final openStart = i + open.start;
-    final openEnd = i + open.end;
+    final openStart = open.start;
+    final openEnd = open.end;
     final language = (open.group(1) ?? '').trim();
 
     // markdown antes do fence
     if (openStart > cursor) {
       parts.add(
-        _CodePart(isCode: false, content: src.substring(cursor, openStart)),
+        _CodePart(
+          isCode: false, content: src.substring(cursor, openStart), endOffset: openStart,
+        ),
       );
     }
 
@@ -1097,7 +1142,7 @@ List<_CodePart> _splitCodeBlocks(String text) {
       if (line.endsWith('\r')) {
         line = line.substring(0, line.length - 1);
       }
-      if (line.trim() == '```') {
+      if (line.trim() == '```' && (!streaming || lineEnd < src.length)) {
         closeStart = lineStart;
         closeEnd = lineEnd < src.length ? lineEnd + 1 : lineEnd;
         break;
@@ -1129,7 +1174,7 @@ List<_CodePart> _splitCodeBlocks(String text) {
     } else if (code.endsWith('\n')) {
       code = code.substring(0, code.length - 1);
     }
-    parts.add(_CodePart(isCode: true, content: code, language: language));
+    parts.add(_CodePart(isCode: true, content: code, language: language, endOffset: closeEnd));
     cursor = closeEnd;
     i = closeEnd;
   }
@@ -1167,9 +1212,10 @@ class _CopyableCodeBlock extends StatefulWidget {
   State<_CopyableCodeBlock> createState() => _CopyableCodeBlockState();
 }
 
-final Map<String, TextSpan> _highlightedCodeCache = <String, TextSpan>{};
+final _highlightedCodeCache = <(String, String, GamaPalette), TextSpan>{};
 
 class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
+  final ScrollController _codeScrollController = ScrollController();
   bool _copied = false;
   bool _saved = false;
   bool _wrapLines = true;
@@ -1219,11 +1265,30 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
     }
   }
 
-  Future<void> _copy(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: widget.code));
-    await HapticFeedback.lightImpact();
+  @override
+  void dispose() {
+    _codeScrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _copy() async {
+    try {
+      await Clipboard.setData(ClipboardData(text: widget.code));
+    } catch (error, stack) {
+      showFriendlyError(
+        mounted ? context : null,
+        error,
+        stack,
+        acao: 'copiar o código',
+        retry: _copy,
+      );
+      return;
+    }
     if (!mounted) return;
     setState(() => _copied = true);
+    unawaited(HapticFeedback.lightImpact().catchError((Object error, StackTrace stack) {
+      logSwallowed(error, stack, context: 'confirmar cópia do código');
+    }));
     await Future<void>.delayed(const Duration(milliseconds: 1400));
     if (mounted) setState(() => _copied = false);
   }
@@ -1239,10 +1304,13 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
       setState(() => _saved = true);
       await Future<void>.delayed(const Duration(milliseconds: 1400));
       if (mounted) setState(() => _saved = false);
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Não consegui salvar o código: $error')),
+    } catch (error, stack) {
+      showFriendlyError(
+        mounted ? context : null,
+        error,
+        stack,
+        acao: 'salvar o código',
+        retry: _save,
       );
     }
   }
@@ -1257,18 +1325,34 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
     );
   }
 
-  TextSpan _highlightedText(Map<String, TextStyle> theme, bool isDark) {
+  TextSpan _highlightedText(GamaPalette palette) {
     final language = _normalizeCodeLanguage(widget.language);
-    final cacheKey =
-        '${isDark ? 'dark' : 'light'}\u0000$language\u0000${widget.code}';
+    final cacheKey = (language, widget.code, palette);
     final cached = _highlightedCodeCache[cacheKey];
     if (cached != null) return cached;
+    final theme = <String, TextStyle>{
+      'comment': TextStyle(color: palette.textMuted, fontStyle: FontStyle.italic),
+      'quote': TextStyle(color: palette.textMuted),
+      'keyword': TextStyle(color: palette.accentCool, fontWeight: FontWeight.w600),
+      'selector-tag': TextStyle(color: palette.accentCool),
+      'title': TextStyle(color: palette.accent),
+      'function': TextStyle(color: palette.accent),
+      'built_in': TextStyle(color: palette.accentCool),
+      'type': TextStyle(color: palette.accentCool),
+      'string': TextStyle(color: palette.success),
+      'number': TextStyle(color: palette.accent),
+      'literal': TextStyle(color: palette.accent),
+      'attr': TextStyle(color: palette.accent),
+      'meta': TextStyle(color: palette.textSecondary),
+      'addition': TextStyle(color: palette.success),
+      'deletion': TextStyle(color: palette.error),
+    };
     final base = TextStyle(
       fontFamily: 'monospace',
       fontSize: 13,
       height: 1.55,
       letterSpacing: 0,
-      color: theme['root']?.color ?? widget.textStyle.color,
+      color: palette.textPrimary,
     );
     try {
       final result = highlight.parse(widget.code, language: language);
@@ -1288,7 +1372,7 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
     }
   }
 
-  void _cacheHighlight(String key, TextSpan span) {
+  void _cacheHighlight((String, String, GamaPalette) key, TextSpan span) {
     if (_highlightedCodeCache.length >= 80) {
       _highlightedCodeCache.remove(_highlightedCodeCache.keys.first);
     }
@@ -1324,17 +1408,11 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark =
-        widget.isUser || Theme.of(context).brightness == Brightness.dark;
-    final theme = isDark ? monokaiTheme : githubTheme;
-    final background = isDark
-        ? const Color(0xFF272822)
-        : const Color(0xFFF8F8F8);
-    final border = widget.isUser
-        ? Colors.white.withValues(alpha: 0.12)
-        : context.gama.border;
-    final muted = isDark ? const Color(0xFFB8B8B2) : const Color(0xFF666666);
-    final highlighted = _highlightedText(theme, isDark);
+    final palette = context.gama;
+    final background = palette.surfaceInput;
+    final border = palette.border;
+    final muted = palette.textSecondary;
+    final highlighted = _highlightedText(palette);
     final content = SelectionArea(
       child: RichText(
         text: highlighted,
@@ -1363,9 +1441,7 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
                 height: 48,
                 padding: const EdgeInsets.only(left: 12, right: 6),
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(
-                    alpha: widget.isUser ? 0.10 : 0.18,
-                  ),
+                  color: palette.surfaceElevated,
                   border: Border(bottom: BorderSide(color: border)),
                 ),
                 child: Row(
@@ -1425,7 +1501,7 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
                         icon: Icon(_saved
                             ? Icons.check_rounded : Icons.download_outlined,
                           size: 18),
-                        color: _saved ? Colors.green : muted,
+                        color: _saved ? palette.success : muted,
                       ),
                       if (!widget.isUser)
                         IconButton(
@@ -1441,11 +1517,11 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
                       tooltip: _copied ? 'Código copiado' : 'Copiar código',
                       constraints: const BoxConstraints.tightFor(
                         width: 48, height: 48),
-                      onPressed: () => _copy(context),
+                      onPressed: _copy,
                       icon: Icon(_copied
                           ? Icons.check_rounded : Icons.copy_rounded,
                         size: 17),
-                      color: _copied ? Colors.green : muted,
+                      color: _copied ? palette.success : muted,
                     ),
                   ],
                 ),
@@ -1455,8 +1531,10 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 420),
             child: Scrollbar(
+              controller: _codeScrollController,
               thumbVisibility: true,
               child: SingleChildScrollView(
+                controller: _codeScrollController,
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
                 child: _wrapLines
                     ? content

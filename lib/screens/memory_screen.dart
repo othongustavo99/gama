@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../core/constants.dart';
 import '../widgets/gama_floating_page.dart';
 
 import '../core/gama_colors.dart';
@@ -294,7 +295,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
               child: ListTile(
                 title: Text(fact.text),
                 subtitle: Text(
-                  '${fact.pinned ? 'Fixada • ' : ''}${fact.kind == 'project' ? 'Projeto • ' : ''}${fact.source == 'user' ? 'Adicionada por você' : 'Salva pela Gama'}',
+                  '${fact.pinned ? 'Fixada • ' : ''}${fact.kind == 'project' ? 'Projeto • ' : ''}${fact.source == 'user' ? 'Adicionada por você' : 'Salva pela $kAppName'}',
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,

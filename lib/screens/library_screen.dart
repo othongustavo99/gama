@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import '../core/constants.dart';
 import '../widgets/gama_floating_page.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -16,6 +17,7 @@ import '../widgets/recovery_panel.dart';
 import '../widgets/gama_section_intro.dart';
 import '../widgets/gama_empty_panel.dart';
 import '../utils/error_logger.dart';
+import '../utils/friendly_error.dart';
 import '../utils/library_filter.dart';
 
 /// Biblioteca local de anexos (metadados + arquivo persistido).
@@ -113,12 +115,10 @@ class LibraryScreen extends StatefulWidget {
           ),
         );
       }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Não consegui baixar o arquivo: $e')),
-        );
-      }
+    } catch (e, stack) {
+      showFriendlyError(context.mounted ? context : null, e, stack, acao: 'baixar o arquivo',
+        retry: () => downloadEntry(context, it),
+      );
     }
   }
 
@@ -238,11 +238,10 @@ class LibraryScreen extends StatefulWidget {
     // PDF, ZIP, código, áudio → seletor nativo / Explorer.
     try {
       await DownloadService.instance.openGeneratedFile(path);
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erro ao abrir: $e')));
-      }
+    } catch (e, stack) {
+      showFriendlyError(context.mounted ? context : null, e, stack, acao: 'abrir o arquivo',
+        retry: () => openEntry(context, it),
+      );
     }
   }
 
@@ -442,7 +441,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               padding: EdgeInsets.fromLTRB(24, 16, 24, 5),
               child: GamaSectionIntro(
                 title: 'Suas entregas',
-                description: 'Arquivos locais e tarefas recuperáveis da Gamma.',
+                description: 'Arquivos locais e tarefas recuperáveis da $kAppName.',
                 icon: Icons.folder_open_rounded,
               ),
             ),

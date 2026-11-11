@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/constants.dart';
 import '../core/gama_colors.dart';
 
 /// Apresentação leve da Gamma, sem onboarding obrigatório e sem chamadas de rede.
@@ -48,7 +49,7 @@ class GamaWelcomeExperience extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Bem-vindo à Gamma', style: TextStyle(
+                      Text('Bem-vindo à $kAppName', style: TextStyle(
                         color: colors.textPrimary,
                         fontSize: 21,
                         fontWeight: FontWeight.w700,

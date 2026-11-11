@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import '../utils/error_logger.dart';
+import '../utils/friendly_error.dart';
+import '../core/constants.dart';
 import '../widgets/gama_floating_page.dart';
 import 'package:uuid/uuid.dart';
 
@@ -34,7 +37,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     setState(() { _loading = true; _overview = null; _error = null; _identity = id; });
     try {
       if (!await AdminService.instance.checkAccess()) {
-        throw const AdminException('Esta conta não está autorizada a administrar a Gamma.');
+        throw const AdminException('Esta conta não está autorizada a administrar a $kAppName.');
       }
       final result = await AdminService.instance.overview(_days);
       if (!mounted || seq != _seq) return;
@@ -173,7 +176,7 @@ class _OverviewTab extends StatelessWidget {
               ],
               const SizedBox(height: 8),
               Text('Custos sem informação do provedor: ${overview.unknownCosts}. '
-                'Valores exibidos não incluem necessariamente todos os serviços ou despesas da Gamma.',
+                'Valores exibidos não incluem necessariamente todos os serviços ou despesas da $kAppName.',
                 style: TextStyle(color: g.textSecondary, fontSize: 12, height: 1.4)),
             ])),
             const SizedBox(height: 16),
@@ -281,8 +284,13 @@ class _ManagementTabState extends State<_ManagementTab> {
       final result = await AdminService.instance.findAccount(_normalizedEmail);
       if (!mounted) return;
       setState(() { _account = result; _loadedEmail = _normalizedEmail; });
-    } catch (error) {
-      if (mounted) setState(() => _message = error.toString());
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'consultar a conta');
+      if (mounted) {
+        setState(() => _message = error is AdminException
+            ? error.message
+            : friendlyError(error, acao: 'consultar a conta'));
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -349,9 +357,13 @@ class _ManagementTabState extends State<_ManagementTab> {
             'de atualização falhou. Use Consultar conta para atualizar o saldo. '
             'Não repita a alteração.');
       }
-    } catch (error) {
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'confirmar a alteração');
       if (!mounted) return;
-      setState(() => _message = '$error\nSe a conexão falhou após confirmar, '
+      final message = error is AdminException
+          ? error.message
+          : friendlyError(error, acao: 'confirmar a alteração');
+      setState(() => _message = '$message\nSe a conexão falhou após confirmar, '
           'tente novamente com os mesmos dados nesta tela: o ID será reutilizado.');
     } finally {
       if (mounted) setState(() => _busy = false);

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../core/constants.dart';
 import '../utils/error_logger.dart';
 import 'local_account_scope.dart';
 
@@ -19,7 +20,7 @@ class LocalNotificationService {
 
   static String get remindersKey => LocalAccountScope.current().remindersPrefsKey;
   static const String channelId = 'gama_reminders';
-  static const String channelName = 'Lembretes da Gama';
+  static const String channelName = 'Lembretes da $kAppName';
 
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
@@ -124,14 +125,14 @@ class LocalNotificationService {
 
     await _plugin.zonedSchedule(
       id: _notificationId(id),
-      title: 'Lembrete da Gama',
+      title: 'Lembrete da $kAppName',
       body: text,
       scheduledDate: tz.TZDateTime.from(when, tz.local),
       notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           channelId,
           channelName,
-          channelDescription: 'Notificações dos lembretes locais da Gama',
+          channelDescription: 'Notificações dos lembretes locais da $kAppName',
           importance: Importance.high,
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
@@ -235,14 +236,14 @@ class LocalNotificationService {
         // configuração; a permissão já concedida não gera novo diálogo.
         await _plugin.zonedSchedule(
           id: _notificationId(id),
-          title: 'Lembrete da Gama',
+          title: 'Lembrete da $kAppName',
           body: text,
           scheduledDate: tz.TZDateTime.from(when, tz.local),
           notificationDetails: const NotificationDetails(
             android: AndroidNotificationDetails(
               channelId,
               channelName,
-              channelDescription: 'Notificações dos lembretes locais da Gama',
+              channelDescription: 'Notificações dos lembretes locais da $kAppName',
               importance: Importance.high,
               priority: Priority.high,
               icon: '@mipmap/ic_launcher',

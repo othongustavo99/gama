@@ -13,10 +13,10 @@ import 'package:flutter/material.dart';
 
 import '../widgets/gama_floating_page.dart';
 
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:pasteboard/pasteboard.dart';
 
@@ -48,10 +48,9 @@ import '../utils/message_sanitize.dart';
 import '../utils/commercial_limit_message.dart';
 import '../services/tts_service.dart';
 import '../services/plugin_settings_service.dart';
-import '../services/identity_service.dart';
-import '../services/local_account_scope.dart';
 import 'oficina_screen.dart';
 import '../utils/error_logger.dart';
+import '../utils/friendly_error.dart';
 import '../utils/speech_recovery_policy.dart';
 import '../utils/generation_session.dart';
 import '../utils/chat_history_window.dart';
@@ -120,22 +119,22 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _scrollCallbackScheduled = false;
   bool _pendingForceScroll = false;
   bool _showScrollToBottom = false;
+  final GlobalKey _composerLayoutKey = GlobalKey();
+  double _composerHeight = 0;
+  bool _composerMeasurementPending = false;
+  static const _headerControlHeight = 46.0;
+  static const _headerVerticalPadding = 6.0;
+  static const _messageInset = 12.0;
   final ValueNotifier<String> _streamingText = ValueNotifier<String>('');
   final ValueNotifier<String> _voiceReplyDisplayedText = ValueNotifier<String>(
     '',
   );
   String? _voiceReplyDisplayMessageId;
+  int? _streamRevealFrame;
   final Queue<int> _streamRevealQueue = Queue<int>();
   StringBuffer _streamDisplayedBuffer = StringBuffer();
-  bool _streamPreviewTruncated = false;
   final SpeechRevealBuffer _speechReveal = SpeechRevealBuffer();
   final Map<String, GlobalKey> _messageKeys = <String, GlobalKey>{};
-  Timer? _streamRevealTimer;
-  DateTime? _streamRevealLastFrame;
-  double _streamRevealBudget = 0;
-  bool _finishingStreamReveal = false;
-  String _streamRevealFinalText = '';
-  DateTime? _streamRevealFinishStarted;
   bool _messageKeyPruneScheduled = false;
   StringBuffer _streamRawText = StringBuffer();
   final GamaStreamDisplayFilter _streamDisplayFilter =
@@ -187,7 +186,6 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, List<Map<String, dynamic>>> _sourcesByMessageId = {};
   final Map<String, List<String>> _activityByMessageId = {};
   final Set<String> _truncatedMessageIds = <String>{};
-  final Map<String, int> _feedbackByMessageId = {};
   StreamSubscription<ChatStreamEvent>? _streamSubscription;
   Future<void>? _assistantPersistence;
   // Cada geração recebe um token de sessão: callbacks de streams cancelados
@@ -256,7 +254,6 @@ class _ChatScreenState extends State<ChatScreen> {
     unawaited(_restoreDraft());
     _initSpeech();
     _scrollController.addListener(_handleScrollChange);
-    unawaited(_loadFeedback());
   }
 
   void _onModeSettingsChanged() {
@@ -358,46 +355,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _loadFeedback() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final prefix = LocalAccountScope.current().feedbackPrefix;
-      final loaded = <String, int>{};
-      for (final key in prefs.getKeys()) {
-        if (!key.startsWith(prefix)) continue;
-        final value = prefs.getInt(key);
-        if (value == 1 || value == -1) {
-          loaded[key.substring(prefix.length)] = value!;
-        }
-      }
-      if (mounted) setState(() => _feedbackByMessageId.addAll(loaded));
-    } catch (error, stack) {
-      logSwallowed(error, stack);
-    }
-  }
-
-  Future<void> _setMessageFeedback(Message message, int value) async {
-    final next = _feedbackByMessageId[message.id] == value ? 0 : value;
-    setState(() {
-      if (next == 0) {
-        _feedbackByMessageId.remove(message.id);
-      } else {
-        _feedbackByMessageId[message.id] = next;
-      }
-    });
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final key = '${LocalAccountScope.current().feedbackPrefix}${message.id}';
-      if (next == 0) {
-        await prefs.remove(key);
-      } else {
-        await prefs.setInt(key, next);
-      }
-    } catch (error, stack) {
-      logSwallowed(error, stack);
-    }
-  }
-
   void _handleScrollChange() {
     if (!_scrollController.hasClients) return;
     final position = _scrollController.position;
@@ -454,137 +411,47 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  // Mantém somente uma janela de prévia em memória de renderização.
-  // O conteúdo integral permanece em _streamRawText e é salvo ao finalizar.
-  // Assim, o custo por frame não cresce com respostas de 20 ou 100 mil chars.
-  void _publishStreamPreview() {
-    const maxPreview = 16000;
-    if (_streamDisplayedBuffer.length > maxPreview) {
-      final text = _streamDisplayedBuffer.toString();
-      var start = text.length - maxPreview;
-      if (start < text.length &&
-          text.codeUnitAt(start) >= 0xDC00 &&
-          text.codeUnitAt(start) <= 0xDFFF) {
-        start++;
-      }
-      _streamDisplayedBuffer = StringBuffer(text.substring(start));
-      _streamPreviewTruncated = true;
-    }
-    final visible = _streamDisplayedBuffer.toString();
-    _streamingText.value = _streamPreviewTruncated
-        ? '… [prévia anterior ocultada durante a geração]\n\n$visible'
-        : visible;
-  }
-
-  // Revelação adaptativa a cada ~frame, limitada pelo tempo efetivamente
-  // decorrido. A fila é por code point: não quebra pares UTF-16/emoji.
-  // O texto original e a persistência não são modificados por este efeito.
   void _queueStreamText(String text) {
     _streamRawText.write(text);
-    // Ferramentas retornam blocos internos grandes ([[GAMA_FILES]], base64).
-    // Eles precisam ser salvos, mas jamais renderizados como texto no chat.
     final visible = _streamDisplayFilter.append(text);
     if (visible.isEmpty) return;
-    // Opção do sistema para reduzir movimento (TalkBack/acessibilidade).
-    if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
-      _streamRevealTimer?.cancel();
-      _streamRevealTimer = null;
-      _streamRevealLastFrame = null;
-      _streamRevealBudget = 0;
-      final pending = String.fromCharCodes(_streamRevealQueue);
-      _streamRevealQueue.clear();
-      _streamDisplayedBuffer.write(pending);
-      _streamDisplayedBuffer.write(visible);
-      _publishStreamPreview();
-      if (_followStream) _scrollToBottom(followStream: true);
-      return;
-    }
-
     _streamRevealQueue.addAll(visible.runes);
-    if (_streamRevealTimer == null) {
-      _streamRevealLastFrame = DateTime.now();
-      _streamRevealBudget = 0;
-      _streamRevealTimer = Timer.periodic(
-        const Duration(milliseconds: 48),
-        _revealStreamFrame,
-      );
-    }
+    _scheduleStreamReveal();
   }
 
-  void _revealStreamFrame(Timer timer) {
-    if (!mounted || _streamRevealQueue.isEmpty) {
-      timer.cancel();
-      _streamRevealTimer = null;
-      _streamRevealLastFrame = null;
-      _streamRevealBudget = 0;
-      if (_finishingStreamReveal && mounted) {
-        _streamDisplayedBuffer = StringBuffer();
-        _streamPreviewTruncated = false;
-        _streamingText.value = _streamRevealFinalText;
-        setState(() => _finishingStreamReveal = false);
-        if (_followStream) _scrollToBottom(followStream: true);
-      }
-      return;
-    }
-    final now = DateTime.now();
-    final elapsed = now
-        .difference(_streamRevealLastFrame ?? now)
-        .inMicroseconds;
-    _streamRevealLastFrame = now;
-    // Mantém movimento constante em 60/90/120 Hz e após frames atrasados.
-    final seconds = (elapsed / 1000000).clamp(0.0, 0.050).toDouble();
+  void _scheduleStreamReveal() {
+    _streamRevealFrame ??= SchedulerBinding.instance.scheduleFrameCallback(
+      _revealStreamFrame,
+    );
+  }
+
+  void _revealStreamFrame(Duration _) {
+    _streamRevealFrame = null;
+    if (!mounted) return;
+
+    // Tokens normais aparecem no próximo frame. Um bloco grande é drenado
+    // proporcionalmente ao que chegou, em vez de seguir uma taxa fixa.
     final pending = _streamRevealQueue.length;
-    final charsPerSecond = pending > 650
-        ? 390.0
-        : pending > 260
-        ? 260.0
-        : pending > 80
-        ? 170.0
-        : 92.0;
-    _streamRevealBudget += seconds * charsPerSecond;
-    // Ao concluir a requisição, drena a fila em até ~450 ms, mantendo
-    // a animação visível em vez de substituir todo o texto de uma vez.
-    final elapsedFinish = _streamRevealFinishStarted == null
-        ? 0
-        : now.difference(_streamRevealFinishStarted!).inMilliseconds;
-    final finishFrames = ((450 - elapsedFinish).clamp(48, 450) / 48).ceil();
-    final minimumFinishCount = _finishingStreamReveal
-        ? (pending / finishFrames).ceil()
-        : 0;
-    final count = _finishingStreamReveal
-        ? _streamRevealBudget.floor().clamp(minimumFinishCount, pending).toInt()
-        : _streamRevealBudget.floor().clamp(0, 24).toInt();
-    if (count == 0) return;
-    _streamRevealBudget -= count;
-    final next = StringBuffer();
-    for (var i = 0; i < count && _streamRevealQueue.isNotEmpty; i++) {
-      next.writeCharCode(_streamRevealQueue.removeFirst());
+    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final count = pending <= 256 || reduceMotion
+        ? pending
+        : (pending / 2).ceil();
+    for (var i = 0; i < count; i++) {
+      _streamDisplayedBuffer.writeCharCode(_streamRevealQueue.removeFirst());
     }
-    _streamDisplayedBuffer.write(next);
-    _publishStreamPreview();
+    _streamingText.value = _streamDisplayedBuffer.toString();
+    if (_streamRevealQueue.isNotEmpty) _scheduleStreamReveal();
     if (_followStream) _scrollToBottom(followStream: true);
   }
 
-  void _finishStreamReveal(String finalText, {bool animate = false}) {
-    if (animate &&
-        mounted &&
-        _streamRevealQueue.isNotEmpty &&
-        !(MediaQuery.maybeOf(context)?.disableAnimations ?? false)) {
-      _streamRevealFinalText = finalText;
-      _streamRevealFinishStarted = DateTime.now();
-      setState(() => _finishingStreamReveal = true);
-      return;
+  void _resetStreamReveal() {
+    final frame = _streamRevealFrame;
+    if (frame != null) {
+      SchedulerBinding.instance.cancelFrameCallbackWithId(frame);
     }
-    _finishingStreamReveal = false;
-    _streamRevealFinishStarted = null;
-    _streamRevealTimer?.cancel();
-    _streamRevealTimer = null;
-    _streamRevealLastFrame = null;
-    _streamRevealBudget = 0;
+    _streamRevealFrame = null;
     _streamRevealQueue.clear();
     _streamDisplayedBuffer = StringBuffer();
-    _streamPreviewTruncated = false;
-    if (mounted) _streamingText.value = finalText;
   }
 
   // Conserva chaves visíveis e das mensagens mais recentes. Mensagens antigas
@@ -1097,8 +964,8 @@ class _ChatScreenState extends State<ChatScreen> {
         debugLogging: kDebugMode,
       );
       if (mounted) setState(() {});
-    } catch (e) {
-      debugPrint('speech init: $e');
+    } catch (e, stack) {
+      logSwallowed(e, stack, context: 'preparar o microfone');
       _speechReady = false;
     }
   }
@@ -1316,12 +1183,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       await _startListenSession();
-    } catch (e) {
+    } catch (e, stack) {
       _micArmed = false;
-      if (mounted) {
-        setState(() => _isListening = false);
-        _snack('Microfone: $e');
-      }
+      if (mounted) setState(() => _isListening = false);
+      _showActionError(
+        e,
+        stack,
+        acao: 'iniciar o microfone',
+        retry: _toggleListen,
+      );
     }
   }
 
@@ -1337,17 +1207,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _generation.invalidate();
       _stopGenerationClock();
       _streamSubscription?.cancel();
-      _streamRevealTimer?.cancel();
-      _streamRevealTimer = null;
-      _streamRevealLastFrame = null;
-      _streamRevealBudget = 0;
-      _streamRevealQueue.clear();
-      _finishingStreamReveal = false;
-      _streamRevealFinishStarted = null;
+      _resetStreamReveal();
       _streamRawText = StringBuffer();
       _streamDisplayFilter.reset();
-      _streamDisplayedBuffer = StringBuffer();
-      _streamPreviewTruncated = false;
       _streamingText.value = '';
       _streamSearchQuery = '';
       _isLoading = false;
@@ -1578,7 +1440,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String get _streamStatusLabel =>
-      _voiceResponsePending ? 'Gamma ainda está respondendo' : _chatStatusLabel;
+      _voiceResponsePending ? '$kAppName ainda está respondendo' : _chatStatusLabel;
 
   String get _chatStatusLabel {
     if (_streamPhase.startsWith('artifact_generating:')) {
@@ -1631,7 +1493,7 @@ class _ChatScreenState extends State<ChatScreen> {
       case 'typing':
         return 'Escrevendo a resposta…';
       default:
-        return 'Gamma está respondendo…';
+        return '$kAppName está respondendo…';
     }
   }
 
@@ -1708,7 +1570,7 @@ class _ChatScreenState extends State<ChatScreen> {
             maxLines: 12,
             style: TextStyle(color: context.gama.textPrimary),
             decoration: const InputDecoration(
-              hintText: 'Edite o pedido para a Gama',
+              hintText: 'Edite o pedido para a $kAppName',
               border: OutlineInputBorder(),
             ),
           ),
@@ -1733,8 +1595,8 @@ class _ChatScreenState extends State<ChatScreen> {
     List<ProcessedAttachment> restored;
     try {
       restored = await _restoreAttachmentsForMessage(message);
-    } catch (e) {
-      _snack('Não consegui recuperar os anexos: $e');
+    } catch (e, stack) {
+      _showActionError(e, stack, acao: 'recuperar os anexos');
       return;
     }
     if (!mounted) return;
@@ -1826,8 +1688,8 @@ class _ChatScreenState extends State<ChatScreen> {
     List<ProcessedAttachment> restored;
     try {
       restored = await _restoreAttachmentsForMessage(prompt);
-    } catch (e) {
-      _snack('Não consegui recuperar os anexos: $e');
+    } catch (e, stack) {
+      _showActionError(e, stack, acao: 'recuperar os anexos');
       return;
     }
     if (!mounted) return;
@@ -1879,11 +1741,35 @@ class _ChatScreenState extends State<ChatScreen> {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!ok) {
         // fallback Windows / alguns Android
-        await launchUrl(uri, mode: LaunchMode.platformDefault);
+        if (!await launchUrl(uri, mode: LaunchMode.platformDefault)) {
+          throw StateError('Nenhum aplicativo abriu o link.');
+        }
       }
-    } catch (e) {
-      _snack('Não abriu o link: $e');
+    } catch (e, stack) {
+      _showActionError(
+        e,
+        stack,
+        acao: 'abrir o link',
+        retry: () => _openLink(href),
+      );
     }
+  }
+
+  void _showActionError(
+    Object error,
+    StackTrace stack, {
+    required String acao,
+    VoidCallback? retry,
+    String? prefix,
+  }) {
+    showFriendlyError(
+      mounted ? context : null,
+      error,
+      stack,
+      acao: acao,
+      retry: retry,
+      prefix: prefix,
+    );
   }
 
   void _snack(String text) {
@@ -1902,12 +1788,12 @@ class _ChatScreenState extends State<ChatScreen> {
   String _conversationMarkdown() {
     final title =
         _service.conversationById(widget.conversationId)?.title ??
-        'Conversa Gama';
+        'Conversa $kAppName';
     final out = StringBuffer('# $title\n\n');
     for (final message in _messages) {
       final text = _cleanMessageText(message);
       if (text.isEmpty) continue;
-      out.writeln(message.isUser ? '## Você' : '## Gama');
+      out.writeln(message.isUser ? '## Você' : '## $kAppName');
       out.writeln();
       out.writeln(text);
       out.writeln();
@@ -1938,7 +1824,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final box = object is RenderBox ? object : null;
       await SharePlus.instance.share(
         ShareParams(
-          title: 'Conversa da Gama',
+          title: 'Conversa da $kAppName',
           text: text,
           sharePositionOrigin: box == null
               ? null
@@ -1959,7 +1845,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _speakMessage(Message message) async {
     if (!await PluginSettingsService.instance.isEnabled('tts')) {
-      _snack('Voz (TTS) está desativada em Plugins.');
+      _snack('Voz (TTS) está desativada em Preferências.');
       return;
     }
     final text = _cleanMessageText(message);
@@ -1983,8 +1869,8 @@ class _ChatScreenState extends State<ChatScreen> {
           _showSpeechProgress(chunk, fraction);
         },
       );
-    } catch (error) {
-      _snack('Não consegui reproduzir a mensagem: $error');
+    } catch (error, stack) {
+      _showActionError(error, stack, acao: 'reproduzir a mensagem');
     } finally {
       if (mounted && request == _manualSpeechEpoch) {
         _voiceReplyDisplayMessageId = null;
@@ -2155,28 +2041,6 @@ class _ChatScreenState extends State<ChatScreen> {
               color: context.gama.textMuted,
               iconSize: 18,
             ),
-          IconButton(
-            tooltip: 'Boa resposta',
-            onPressed: () => _setMessageFeedback(message, 1),
-            icon: Icon(
-              Icons.thumb_up_alt_outlined,
-              color: _feedbackByMessageId[message.id] == 1
-                  ? context.gama.accent
-                  : context.gama.textMuted,
-            ),
-            iconSize: 17,
-          ),
-          IconButton(
-            tooltip: 'Resposta ruim',
-            onPressed: () => _setMessageFeedback(message, -1),
-            icon: Icon(
-              Icons.thumb_down_alt_outlined,
-              color: _feedbackByMessageId[message.id] == -1
-                  ? context.gama.accent
-                  : context.gama.textMuted,
-            ),
-            iconSize: 17,
-          ),
           moreButton,
         ],
       ),
@@ -2243,13 +2107,13 @@ class _ChatScreenState extends State<ChatScreen> {
           : box.localToGlobal(Offset.zero) & box.size;
       await SharePlus.instance.share(
         ShareParams(
-          title: 'Mensagem da Gama',
+          title: 'Mensagem da $kAppName',
           text: text,
           sharePositionOrigin: origin,
         ),
       );
-    } catch (error) {
-      _snack('Não consegui compartilhar a mensagem: $error');
+    } catch (error, stack) {
+      _showActionError(error, stack, acao: 'compartilhar a mensagem');
     }
   }
 
@@ -2295,19 +2159,24 @@ class _ChatScreenState extends State<ChatScreen> {
           filename: filename,
         );
       }
-    } catch (e) {
-      _snack('Não consegui baixar o arquivo: $e');
+    } catch (e, stack) {
+      _showActionError(e, stack, acao: 'baixar o arquivo');
       return;
     }
 
     if (!openAfterDownload) {
-      _snack('Arquivo salvo na Biblioteca e em Downloads/Gama.');
+      _snack('Arquivo salvo na Biblioteca e na pasta de downloads.');
       return;
     }
     try {
       await DownloadService.instance.openGeneratedFile(savedPath);
-    } catch (e) {
-      _snack('Arquivo salvo na Biblioteca, mas não consegui abrir: $e');
+    } catch (e, stack) {
+      _showActionError(
+        e,
+        stack,
+        acao: 'abrir o arquivo',
+        prefix: 'Arquivo salvo na Biblioteca.',
+      );
     }
   }
 
@@ -2328,8 +2197,13 @@ class _ChatScreenState extends State<ChatScreen> {
         conversationId: widget.conversationId,
       );
       if (mounted) setState(() => _videoPathsByArtifactId[id] = path);
-    } catch (error) {
-      _snack('Não consegui preparar o vídeo: $error');
+    } catch (error, stack) {
+      _showActionError(
+        error,
+        stack,
+        acao: 'preparar o vídeo',
+        retry: () => _cacheVideoArtifact(artifact),
+      );
     }
   }
 
@@ -2486,9 +2360,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _pickFromCamera() async {
-    final ok = await _ensurePermission(Permission.camera, 'câmera');
-    if (!ok) return;
     try {
+      final ok = await _ensurePermission(Permission.camera, 'câmera');
+      if (!ok || !mounted) return;
       final picker = ImagePicker();
       final shot = await picker.pickImage(
         source: ImageSource.camera,
@@ -2497,8 +2371,13 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (shot == null) return;
       await _addPath(shot.path);
-    } catch (e) {
-      _snack('Câmera: $e');
+    } catch (e, stack) {
+      _showActionError(
+        e,
+        stack,
+        acao: 'abrir a câmera',
+        retry: _pickFromCamera,
+      );
     }
   }
 
@@ -2513,8 +2392,13 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (img == null) return;
       await _addPath(img.path);
-    } catch (e) {
-      _snack('Galeria: $e');
+    } catch (e, stack) {
+      _showActionError(
+        e,
+        stack,
+        acao: 'abrir a galeria',
+        retry: _pickFromGallery,
+      );
     }
   }
 
@@ -2535,8 +2419,13 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         await _addPath(path);
       }
-    } catch (e) {
-      _snack('Arquivos: $e');
+    } catch (e, stack) {
+      _showActionError(
+        e,
+        stack,
+        acao: 'selecionar arquivos',
+        retry: () => _pickFiles(zipOnly: zipOnly),
+      );
     }
   }
 
@@ -2565,10 +2454,9 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _attachments.add(processed);
       });
-    } catch (e) {
+    } catch (e, stack) {
       _attachmentProcessingFailed = true;
-      if (!mounted) return;
-      _snack('$e');
+      _showActionError(e, stack, acao: 'anexar o arquivo');
     } finally {
       _attachmentsInProgress--;
       if (_attachmentsInProgress == 0) {
@@ -2612,7 +2500,7 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _mode = mode);
       await SettingsService.instance.setMode(mode);
       _snack(
-        'Modo alterado para ${mode == GamaMode.programar ? 'Trabalhar' : 'Conversar'}',
+        'Modo alterado para ${mode == GamaMode.programar ? 'Programar' : 'Conversar'}',
       );
       return true;
     }
@@ -2652,8 +2540,8 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           );
         }
-      } catch (e) {
-        _snack('Erro ao listar memória: $e');
+      } catch (e, stack) {
+        _showActionError(e, stack, acao: 'listar a memória');
       }
       return true;
     }
@@ -2662,8 +2550,8 @@ class _ChatScreenState extends State<ChatScreen> {
       try {
         await _memory.clear();
         _snack('Memória limpa');
-      } catch (e) {
-        _snack('Erro ao limpar: $e');
+      } catch (e, stack) {
+        _showActionError(e, stack, acao: 'limpar a memória');
       }
       return true;
     }
@@ -2679,8 +2567,8 @@ class _ChatScreenState extends State<ChatScreen> {
         try {
           await _memory.addFact(fact);
           _snack('Salvei na memória: $fact');
-        } catch (e) {
-          _snack('Erro ao salvar: $e');
+        } catch (e, stack) {
+          _showActionError(e, stack, acao: 'salvar na memória');
         }
         return true;
       }
@@ -2848,8 +2736,8 @@ class _ChatScreenState extends State<ChatScreen> {
         attachments = _retryAttachments.isNotEmpty
             ? List<ProcessedAttachment>.from(_retryAttachments)
             : await _restoreAttachmentsForMessage(prompt);
-      } catch (e) {
-        _snack('Não consegui recuperar os anexos: $e');
+      } catch (e, stack) {
+        _showActionError(e, stack, acao: 'recuperar os anexos');
         return;
       }
       if (!mounted) return;
@@ -2898,8 +2786,7 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await _sendMessageImpl();
     } catch (error, stack) {
-      debugPrint('Gamma: falha ao preparar envio: $error');
-      debugPrintStack(stackTrace: stack);
+      logSwallowed(error, stack, context: 'preparar o envio');
       _stopGenerationClock();
       if (mounted) {
         setState(() {
@@ -2908,8 +2795,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _speakNextReply = false;
           _voiceResponsePending = false;
           _isSpeaking = false;
-          _chatErrorMessage =
-              'Falha ao preparar o envio. Confira o console do Flutter.';
+          _chatErrorMessage = friendlyError(error, acao: 'preparar o envio');
         });
         // Se o campo já tiver sido limpo, preserve o rascunho para reenvio.
         if (_controller.text.isEmpty && originalDraft.trim().isNotEmpty) {
@@ -2918,7 +2804,7 @@ class _ChatScreenState extends State<ChatScreen> {
             offset: originalDraft.length,
           );
         }
-        _snack('Não foi possível iniciar o envio. Veja o erro no terminal.');
+        _snack(_chatErrorMessage!);
       }
     } finally {
       _submittingMessage = false;
@@ -2986,9 +2872,7 @@ class _ChatScreenState extends State<ChatScreen> {
     var rawText = _controller.text.trim();
     if ((rawText.isEmpty && _attachments.isEmpty) || _isLoading) return;
 
-    // SharedPreferences pode falhar em uma instalação Desktop com plugins
-    // não registrados. Um envio de TEXTO não depende desses toggles:
-    // degrade com segurança, sem habilitar rede/memória/arquivos extras.
+    // O envio continua se o armazenamento local de preferências falhar.
     late final Map<String, bool> pluginFlags;
     try {
       pluginFlags = await PluginSettingsService.instance.load().timeout(
@@ -3003,34 +2887,18 @@ class _ChatScreenState extends State<ChatScreen> {
       pluginFlags = <String, bool>{
         'web_search': false,
         'memory': false,
-        'attachments': false,
-        'vision': false,
-        'code_analyzer': false,
+        'attachments': true,
+        'vision': true,
+        'code_analyzer': true,
         'tts': false,
         'scheduled': false,
       };
-      debugPrint(
-        'Gamma: preferências de plugins indisponíveis; envio de texto com recursos opcionais desativados.',
-      );
-    }
-    if (_attachments.isNotEmpty && pluginFlags['attachments'] == false) {
-      _snack(
-        'Anexos está desativado em Plugins. Ative o recurso para enviar arquivos.',
-      );
-      return;
-    }
-    if (_attachments.any((a) => a.isNativeImage) &&
-        pluginFlags['vision'] == false) {
-      _snack(
-        'Visão está desativada em Plugins. Ative o recurso para analisar imagens.',
-      );
-      return;
     }
     if (pluginFlags['tts'] == false &&
         (_speakNextReply || SettingsService.instance.ttsAuto)) {
       _speakNextReply = false;
       _snack(
-        'Voz (TTS) está desativada em Plugins; a resposta será exibida em texto.',
+        'Voz (TTS) está desativada em Preferências; a resposta será exibida em texto.',
       );
     }
 
@@ -3079,15 +2947,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _streamDisplayFilter.reset();
     _pendingGeneratedImages.clear();
     _assistantPersistence = null;
-    _streamRevealTimer?.cancel();
-    _streamRevealTimer = null;
-    _streamRevealLastFrame = null;
-    _streamRevealBudget = 0;
-    _streamRevealQueue.clear();
-    _finishingStreamReveal = false;
-    _streamRevealFinishStarted = null;
-    _streamDisplayedBuffer = StringBuffer();
-    _streamPreviewTruncated = false;
+    _resetStreamReveal();
     _speechReveal.reset();
     _voiceReplyDisplayedText.value = '';
     _streamingText.value = '';
@@ -3229,6 +3089,7 @@ class _ChatScreenState extends State<ChatScreen> {
         model: resolvedModel,
         images: imagePayload.isEmpty ? null : imagePayload,
         voiceMode: willSpeak && oficina == null,
+        featurePreferences: pluginFlags,
         chatMode: resolvedChatMode,
         imageAspectRatio: oficina == OficinaKind.imagem
             ? _imageAspectRatio
@@ -3439,10 +3300,7 @@ class _ChatScreenState extends State<ChatScreen> {
               if (!isVoiceReply && completedText.isNotEmpty) completedText,
               ...generatedImageBlocks,
             ].join('\n\n');
-            _finishStreamReveal(
-              isVoiceReply ? '' : completedText,
-              animate: !isVoiceReply,
-            );
+            _resetStreamReveal();
           }
           final latestAssistant =
               _messages.isNotEmpty && _messages.last.isAssistant
@@ -3455,8 +3313,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ? (_voiceResponseBuffer.trim().isNotEmpty ||
                     (latestAssistant?.content.trim().isNotEmpty ?? false) ||
                     hasArtifact)
-              : (_streamingText.value.trim().isNotEmpty ||
-                    (latestAssistant?.content.trim().isNotEmpty ?? false) ||
+              : ((latestAssistant?.content.trim().isNotEmpty ?? false) ||
                     hasArtifact);
           if (!hasResponse) {
             final speech = _liveSpeech;
@@ -3493,6 +3350,7 @@ class _ChatScreenState extends State<ChatScreen> {
             });
           }
           _stopGenerationClock();
+          if (_followStream) _scrollToBottom(force: true);
 
           if (_messages.isNotEmpty && _messages.last.isAssistant) {
             _ttsEarlyStarted = false;
@@ -3572,7 +3430,8 @@ class _ChatScreenState extends State<ChatScreen> {
               _chatErrorMessage = null;
               _regeneratingAssistantMessage = null;
               _regeneratingUserMessage = null;
-            } catch (e) {
+            } catch (e, stack) {
+              logSwallowed(e, stack, context: 'concluir a resposta');
               if (!_generation.isCurrent(generationEpoch)) return;
               // Se o áudio falhar, ainda mostramos a resposta completa para
               // não perder a mensagem que o servidor já gerou.
@@ -3605,12 +3464,7 @@ class _ChatScreenState extends State<ChatScreen> {
               _regeneratingAssistantMessage = null;
               _regeneratingUserMessage = null;
               if (mounted && e is! ChatApiException) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Voz: $e'),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
+                _snack(friendlyError(e, acao: 'reproduzir a resposta'));
               }
             } finally {
               if (_generation.isCurrent(generationEpoch)) {
@@ -3623,19 +3477,17 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           }
         },
-        onError: (e) async {
+        onError: (Object e, StackTrace stack) async {
+          logSwallowed(e, stack, context: 'receber a resposta');
           if (!_generation.isCurrent(generationEpoch)) return;
           final speech = _liveSpeech;
           _liveSpeech = null;
           if (speech != null) await speech.cancel();
           _stopGenerationClock();
-          _streamRevealTimer?.cancel();
-          _streamRevealTimer = null;
-          _streamRevealQueue.clear();
-          _finishingStreamReveal = false;
+          _resetStreamReveal();
           final friendly = e is ChatApiException
               ? e.message
-              : 'A resposta foi interrompida. Verifique a conexão e tente novamente.';
+              : friendlyError(e, acao: 'receber a resposta completa');
           final failed = _messages.isNotEmpty && _messages.last.isAssistant
               ? _messages.last
               : null;
@@ -3679,12 +3531,13 @@ class _ChatScreenState extends State<ChatScreen> {
         },
         cancelOnError: true,
       );
-    } catch (e) {
+    } catch (e, stack) {
+      logSwallowed(e, stack, context: 'enviar a mensagem');
       _stopGenerationClock();
       if (!mounted) return;
       final friendly = e is ChatApiException
           ? e.message
-          : 'Não foi possível enviar a mensagem. Verifique a conexão e tente novamente.';
+          : friendlyError(e, acao: 'enviar a mensagem');
       final failed = _messages.isNotEmpty && _messages.last.isAssistant
           ? _messages.last
           : null;
@@ -3724,7 +3577,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     await _streamSubscription?.cancel();
     _streamSubscription = null;
-    _finishStreamReveal(_streamRawText.toString());
+    _resetStreamReveal();
     try {
       await TtsService.instance.stop();
     } catch (error, stack) {
@@ -3859,10 +3712,7 @@ class _ChatScreenState extends State<ChatScreen> {
         unawaited(_assistantPersistence!);
       }
     }
-    _streamRevealTimer?.cancel();
-    _streamRevealLastFrame = null;
-    _streamRevealBudget = 0;
-    _streamRevealQueue.clear();
+    _resetStreamReveal();
     _voiceAutoSendTimer?.cancel();
     _draftSaveTimer?.cancel();
     unawaited(_persistDraft(_controller.text));
@@ -3880,7 +3730,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final palette = context.gama;
     return DecoratedBox(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(color: palette.border.withValues(alpha: 0.55)),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -3899,7 +3749,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(21),
+        borderRadius: BorderRadius.circular(23),
         child: PopupMenuButton<GamaMode>(
             enabled: !_isLoading,
             tooltip: 'Selecionar modo de IA',
@@ -3916,7 +3766,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(Icons.chat_bubble_outline_rounded),
                   title: Text('Conversar'),
-                  subtitle: Text('GPT-5.4 Mini'),
+                  subtitle: Text('Conversas e tarefas do dia a dia'),
                 ),
               ),
               const PopupMenuItem(
@@ -3925,41 +3775,47 @@ class _ChatScreenState extends State<ChatScreen> {
                   dense: true,
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(Icons.code_rounded),
-                  title: Text('Trabalhar'),
-                  subtitle: Text('GLM 5.3 Flash'),
+                  title: Text('Programar'),
+                  subtitle: Text('Código e análise técnica'),
                 ),
               ),
             ],
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: EdgeInsets.zero,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(20),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _mode == GamaMode.conversar
-                      ? Icons.chat_bubble_outline_rounded
-                      : Icons.auto_awesome_rounded,
-                  size: 17,
-                  color: palette.textPrimary,
+            child: SizedBox(
+              height: 48,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 13),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _mode == GamaMode.conversar
+                          ? Icons.chat_bubble_outline_rounded
+                          : Icons.auto_awesome_rounded,
+                      size: 17,
+                      color: palette.textPrimary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _mode == GamaMode.conversar ? 'Conversar' : 'Programar',
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.expand_more_rounded,
+                      size: 18,
+                      color: palette.textSecondary,
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  _mode == GamaMode.conversar ? 'Conversar' : 'Trabalhar',
-                  style: TextStyle(
-                    color: palette.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Icon(
-                  Icons.expand_more_rounded,
-                  size: 18,
-                  color: palette.textSecondary,
-                ),
-              ],
+              ),
             ),
           ),
       ),
@@ -4091,6 +3947,25 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  void _measureComposer() {
+    if (_composerMeasurementPending) return;
+    _composerMeasurementPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _composerMeasurementPending = false;
+      if (!mounted) return;
+      final height = _composerLayoutKey.currentContext?.size?.height;
+      if (height == null || height == _composerHeight) return;
+      final userScrollDirection = _scrollController.hasClients
+          ? _scrollController.position.userScrollDirection
+          : ScrollDirection.idle;
+      final keepAtEnd = _nearBottomCache &&
+          (!_isLoading || _followStream) &&
+          userScrollDirection == ScrollDirection.idle;
+      setState(() => _composerHeight = height);
+      if (keepAtEnd) _scrollToBottom(force: true);
+    });
+  }
+
   Widget _buildComposerOverlay(BuildContext context) {
     return ChatComposer(
       controller: _controller,
@@ -4181,6 +4056,12 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final isWideDesktop = widget.persistentSidebar;
+    final topInset =
+        MediaQuery.paddingOf(context).top +
+        _headerControlHeight +
+        2 * _headerVerticalPadding;
+    final bottomInset = _composerHeight + _messageInset;
+    _measureComposer();
     return Material(
       color: Colors.transparent,
       child: DropTarget(
@@ -4286,11 +4167,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                   onNotification: _handleListScrollNotification,
                                   child: ListView.builder(
                                     controller: _scrollController,
-                                    padding: const EdgeInsets.fromLTRB(
+                                    padding: EdgeInsets.fromLTRB(
                                       16,
-                                      92,
+                                      topInset + _messageInset,
                                       16,
-                                      220,
+                                      bottomInset,
                                     ),
                                     cacheExtent: 320,
                                     itemCount: _historyWindow.listLength(
@@ -4365,7 +4246,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                           explicitChildNodes: true,
                                           label: isUser
                                               ? 'Você disse'
-                                              : 'Gamma respondeu',
+                                              : '$kAppName respondeu',
                                           child: GestureDetector(
                                             behavior:
                                                 HitTestBehavior.translucent,
@@ -4580,8 +4461,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                 )
                                                               else if (!isUser &&
                                                                   isLastAssistant &&
-                                                                  (_isLoading ||
-                                                                      _finishingStreamReveal) &&
+                                                                  _isLoading &&
                                                                   !_voiceResponsePending &&
                                                                   _firstTokenReceived)
                                                                 ValueListenableBuilder<
@@ -4614,8 +4494,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                               isUser: false,
                                                                               onTapLink: _openLink,
                                                                             ),
-                                                                            if (!_finishingStreamReveal)
-                                                                              const _StreamingCursor(),
+                                                                            const _StreamingCursor(),
                                                                           ],
                                                                         ),
                                                                 )
@@ -5041,7 +4920,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       if (_showScrollToBottom || (_isLoading && !_followStream))
                         Positioned(
                           right: 16,
-                          bottom: 155,
+                          bottom: bottomInset,
                           child: AnimatedOpacity(
                             opacity: 1,
                             duration: MediaQuery.of(context).disableAnimations
@@ -5067,13 +4946,22 @@ class _ChatScreenState extends State<ChatScreen> {
                         left: 0,
                         right: 0,
                         bottom: 0,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (_attachments.isNotEmpty)
-                              _buildAttachmentTray(context),
-                            _buildComposerOverlay(context),
-                          ],
+                        child: NotificationListener<SizeChangedLayoutNotification>(
+                          onNotification: (_) {
+                            _measureComposer();
+                            return false;
+                          },
+                          child: SizeChangedLayoutNotifier(
+                            key: _composerLayoutKey,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_attachments.isNotEmpty)
+                                  _buildAttachmentTray(context),
+                                _buildComposerOverlay(context),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -5127,9 +5015,12 @@ class _ChatScreenState extends State<ChatScreen> {
               child: SafeArea(
                 bottom: false,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: _headerVerticalPadding,
+                  ),
                   child: SizedBox(
-                    height: 46,
+                    height: _headerControlHeight,
                     child: Row(
                       children: [
                         // O acesso ao histórico permanece visível, como no layout original.
@@ -5176,7 +5067,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               vertical: 7,
                             ),
                             child: Text(
-                              'GLM 5.3 Flash',
+                              'Programar',
                               style: TextStyle(
                                 color: context.gama.textSecondary,
                                 fontSize: 12,
@@ -5895,7 +5786,7 @@ class _TypingDotsState extends State<_TypingDots>
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Gamma está falando e exibindo a resposta',
+      label: '$kAppName está falando e exibindo a resposta',
       liveRegion: false,
       child: RepaintBoundary(
         child: AnimatedBuilder(

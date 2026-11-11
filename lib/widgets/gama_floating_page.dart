@@ -90,16 +90,22 @@ class GamaFloatingPage extends StatelessWidget {
   }
 }
 
-/// Sombra sutil, com alfa decrescente até zero: o conteúdo que passa
-/// por trás permanece visível. Adapta-se ao tema atual.
+/// Superfície visual contínua com o fundo do tema na barra de notificações,
+/// degradê descendo sobre a tela e transparência total na extremidade.
+/// A camada é usada ATRÁS dos controles; nenhum botão perde sua cor sólida.
 class GamaTopShade extends StatelessWidget {
   const GamaTopShade({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final shadow = isDark ? Colors.black : const Color(0xFF18202D);
-    final height = MediaQuery.paddingOf(context).top + 150.0;
+    final background = context.gama.background;
+    final statusBarHeight = MediaQuery.paddingOf(context).top;
+    final height = statusBarHeight + 180.0;
+    final statusStop = (statusBarHeight / height).clamp(0.02, 0.40);
+    final midStop = ((statusBarHeight + 85.0) / height).clamp(
+      statusStop + 0.01,
+      0.99,
+    );
 
     return SizedBox(
       height: height,
@@ -108,12 +114,12 @@ class GamaTopShade extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            stops: const [0.0, 0.30, 0.68, 1.0],
+            stops: [0.0, statusStop, midStop, 1.0],
             colors: [
-              shadow.withValues(alpha: isDark ? 0.32 : 0.13),
-              shadow.withValues(alpha: isDark ? 0.20 : 0.075),
-              shadow.withValues(alpha: isDark ? 0.055 : 0.02),
-              shadow.withValues(alpha: 0),
+              background,
+              background,
+              background.withValues(alpha: 0.30),
+              background.withValues(alpha: 0),
             ],
           ),
         ),

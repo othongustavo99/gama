@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../core/constants.dart';
 import '../core/gama_colors.dart';
 
 /// Identidade visual da Gama. Não requer imagens, plugins ou rede.
@@ -50,7 +51,7 @@ class _GamaOrbState extends State<GamaOrb> with SingleTickerProviderStateMixin {
     final palette = context.gama;
     final intensity = widget.intensity.clamp(0.0, 1.0).toDouble();
     return Semantics(
-      label: 'Aura da Gama',
+      label: 'Aura da $kAppName',
       image: true,
       child: RepaintBoundary(
         child: SizedBox.square(

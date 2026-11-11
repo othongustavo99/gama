@@ -76,7 +76,7 @@ class GammaPlayBillingService extends ChangeNotifier {
       return Map<String, dynamic>.from(result.data as Map);
     } on DioException catch (exception) {
       if (exception.response?.statusCode == 401 || exception.response?.statusCode == 403) {
-        throw StateError('Esta compra não pertence à conta Gamma atual, ou sua sessão expirou.');
+        throw StateError('Esta compra não pertence à conta $kAppName atual, ou sua sessão expirou.');
       }
       throw StateError('Não foi possível consultar a Google Play pelo servidor. Tente novamente.');
     } finally {

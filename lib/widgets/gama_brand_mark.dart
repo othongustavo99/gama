@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../core/constants.dart';
 import '../core/gama_colors.dart';
 import '../core/design_tokens.dart';
 
 /// Identidade visual usada na splash e no login.
 /// A marca continua sendo o recurso já distribuído com o aplicativo.
 class GamaBrandMark extends StatelessWidget {
-  const GamaBrandMark({super.key, this.size = 80, this.label = 'Gamma'});
+  const GamaBrandMark({super.key, this.size = 80, this.label = kAppName});
 
   final double size;
   final String label;

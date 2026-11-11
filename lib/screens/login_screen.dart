@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../core/constants.dart';
+import '../widgets/gama_floating_page.dart';
 
 import '../core/gama_colors.dart';
 import '../widgets/gama_brand_mark.dart';
@@ -11,6 +13,7 @@ import '../services/memory_service.dart';
 import '../services/conversation_service.dart';
 import 'home_screen.dart';
 import '../utils/error_logger.dart';
+import '../utils/friendly_error.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -82,7 +85,7 @@ class _LoginScreenState extends State<LoginScreen> {
           }
           await AccountPrivacyService.instance.startNewAccount();
         } else if (accountStatus != 'active') {
-          throw StateError('A exclusão dos dados ainda está em processamento. '
+          throw const FriendlyActionException('A exclusão dos dados ainda está em processamento. '
               'Tente novamente mais tarde.');
         }
         // Unifica memória legada (google_<id>) → google_email_* entre Android/Windows
@@ -99,13 +102,12 @@ class _LoginScreenState extends State<LoginScreen> {
           _error = 'Login cancelado';
         });
       }
-    } catch (e) {
+    } catch (e, stack) {
+      logSwallowed(e, stack, context: 'entrar com o Google');
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error =
-            'Falha no Google Sign-In.\n'
-            'Confira SHA-1 e OAuth no Google Cloud.\n$e';
+        _error = friendlyError(e, acao: 'entrar com o Google');
       });
     }
   }
@@ -161,6 +163,12 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
+          const Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(child: GamaTopShade()),
+          ),
           SafeArea(
             child: LayoutBuilder(
               builder: (context, constraints) => Center(
@@ -200,7 +208,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           const GamaBrandMark(size: 78),
                           const SizedBox(height: 20),
                           Text(
-                            'Gamma',
+                            kAppName,
                             style: TextStyle(
                               color: context.gama.textPrimary,
                               fontSize: 29,

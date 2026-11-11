@@ -10,6 +10,7 @@ import 'settings_service.dart';
 import 'identity_service.dart';
 import 'auth_interceptor.dart';
 import '../utils/error_logger.dart';
+import '../utils/friendly_error.dart';
 
 enum AttachmentKind { text, zip, pdf, document, image, video, audio, other }
 
@@ -130,7 +131,7 @@ class AttachmentService {
     final ext = p.extension(path).toLowerCase();
     final file = File(path);
     if (!await file.exists()) {
-      throw Exception('Arquivo não encontrado: $name');
+      throw FileSystemException('Arquivo não encontrado', path);
     }
     final bytes = await file.length();
     final kind = kindFor(ext);
@@ -142,13 +143,13 @@ class AttachmentService {
     if (bytes > sizeLimit) {
       final limitMb = sizeLimit ~/ (1024 * 1024);
       if (kind == AttachmentKind.zip) {
-        throw Exception(
+        throw FriendlyActionException(
           '$name tem ${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB. '
           'O limite deste app é $limitMb MiB por ZIP. Remova .git, venv, '
           'node_modules, build e caches antes de compactar novamente.',
         );
       }
-      throw Exception('$name é grande demais (máx. $limitMb MiB)');
+      throw FriendlyActionException('$name é grande demais (máx. $limitMb MiB)');
     }
 
     switch (kind) {
@@ -260,7 +261,7 @@ class AttachmentService {
         // Nativo: NÃO converte em texto via /extract.
         // Manda bytes base64 no chat para o modelo de visão ver a imagem.
         if (bytes > maxImageBytes) {
-          throw Exception(
+          throw FriendlyActionException(
             '$name é grande demais para análise visual (máx. 8 MB). '
             'Tente outra foto ou comprima.',
           );

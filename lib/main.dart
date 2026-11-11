@@ -7,6 +7,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'core/constants.dart';
 import 'core/gama_colors.dart';
 import 'core/design_tokens.dart';
 import 'models/conversation.dart';
@@ -19,6 +20,8 @@ import 'services/identity_service.dart';
 import 'services/temporary_file_service.dart';
 import 'services/play_billing_service.dart';
 import 'widgets/gama_navigation_bar_surface.dart';
+import 'utils/error_logger.dart';
+import 'utils/friendly_error.dart';
 
 const _gamaLightSystemUiOverlayStyle = SystemUiOverlayStyle(
   statusBarColor: Colors.transparent,
@@ -65,8 +68,7 @@ Future<void> main() async {
   } catch (e, stack) {
     // Nunca apague automaticamente as caixas do Hive em produção.
     // Um erro transitório de abertura não deve destruir todo o histórico.
-    debugPrint('Erro na inicialização: $e');
-    debugPrintStack(stackTrace: stack);
+    logSwallowed(e, stack, context: 'iniciar o aplicativo');
     startupError = e;
 
     try {
@@ -77,8 +79,7 @@ Future<void> main() async {
       await ConversationService.instance.init();
       startupError = null;
     } catch (retryError, retryStack) {
-      debugPrint('Falha na segunda tentativa: $retryError');
-      debugPrintStack(stackTrace: retryStack);
+      logSwallowed(retryError, retryStack, context: 'recuperar a inicialização');
       startupError = retryError;
     }
   }
@@ -86,7 +87,7 @@ Future<void> main() async {
   runApp(
     startupError == null
         ? const GamaApp()
-        : GamaStartupError(error: startupError!),
+        : GamaStartupError(error: startupError),
   );
 }
 
@@ -279,7 +280,7 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
           GamaAppearance.dark => ThemeMode.dark,
         };
         return MaterialApp(
-          title: 'Gamma',
+          title: kAppName,
           debugShowCheckedModeBanner: false,
           theme: _theme(Brightness.light),
           darkTheme: _theme(Brightness.dark),
@@ -357,7 +358,7 @@ class GamaStartupError extends StatelessWidget {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'Não foi possível iniciar a Gama',
+                  'Não foi possível iniciar a $kAppName',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: context.gama.textPrimary,
@@ -378,7 +379,7 @@ class GamaStartupError extends StatelessWidget {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  error.toString(),
+                  friendlyError(error, acao: 'carregar os dados do aplicativo'),
                   textAlign: TextAlign.center,
                   maxLines: 4,
                   overflow: TextOverflow.ellipsis,

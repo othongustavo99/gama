@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import '../core/constants.dart';
 import '../widgets/gama_floating_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -93,7 +94,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
             .requestPermission();
         if (!permitted) {
           _snack(
-            'Permita as notificações da Gama nas configurações do aparelho para receber lembretes.',
+            'Permita as notificações da $kAppName nas configurações do aparelho para receber lembretes.',
           );
         }
       }
@@ -223,7 +224,7 @@ class _ScheduledScreenState extends State<ScheduledScreen> {
         _snack('Lembrete salvo e notificação agendada.');
       } else {
         _snack(
-          'Lembrete salvo. Ative Agendamentos em Plugins para receber notificações.',
+          'Lembrete salvo. Ative Agendamentos em Preferências para receber notificações.',
         );
       }
     } catch (e) {

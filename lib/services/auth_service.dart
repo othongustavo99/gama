@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'identity_service.dart';
+import '../core/constants.dart';
 import '../core/launch_policy.dart';
 import '../utils/error_logger.dart';
 
@@ -302,7 +303,7 @@ class AuthService {
           ..headers.contentType = ContentType.html
           ..write(
             '<!DOCTYPE html><html><body style="font-family:system-ui;text-align:center;padding:48px">'
-            '<h2 style="color:#FF6B00">Gama</h2>'
+            '<h2 style="color:#FF6B00">$kAppName</h2>'
             '<p>Login concluído. Pode fechar e voltar ao app.</p>'
             '</body></html>',
           );

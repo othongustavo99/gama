@@ -151,7 +151,7 @@ class GammaAuthInterceptor extends Interceptor {
           error: error,
           stackTrace: stackTrace,
           type: DioExceptionType.unknown,
-          message: 'Não foi possível preparar a autenticação da Gama.',
+          message: 'Não foi possível preparar a autenticação da $kAppName.',
         ),
       );
     }

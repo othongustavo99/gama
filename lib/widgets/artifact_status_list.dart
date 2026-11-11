@@ -256,7 +256,7 @@ class ArtifactStatusList extends StatelessWidget {
                               : Icons.info_outline,
                           size: 16,
                           color: zipFailed
-                              ? Colors.orangeAccent
+                              ? context.gama.error
                               : context.gama.accentBright,
                         ),
                         const SizedBox(width: 7),
@@ -287,7 +287,7 @@ class ArtifactStatusList extends StatelessWidget {
                               : Icons.info_outline_rounded,
                           size: 16,
                           color: syntaxStatus == 'issues_found'
-                              ? Colors.orangeAccent
+                              ? context.gama.error
                               : context.gama.accentBright,
                         ),
                         const SizedBox(width: 7),

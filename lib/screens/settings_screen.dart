@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../core/constants.dart';
 import '../widgets/gama_floating_page.dart';
 
 import 'account_deletion_screen.dart';
@@ -92,7 +93,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           style: TextStyle(color: context.gama.textPrimary),
         ),
         content: Text(
-          'Todos os fatos que a Gama guardou sobre você serão apagados. '
+          'Todos os fatos que a $kAppName guardou sobre você serão apagados. '
           'Essa ação não pode ser desfeita.',
           style: TextStyle(color: context.gama.textMuted, height: 1.4),
         ),
@@ -259,12 +260,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             title: Text(
               SettingsService.instance.mode == GamaMode.conversar
-                  ? 'GPT-5.4 Mini'
-                  : 'GLM 5.3 Flash',
+                  ? 'Conversar'
+                  : 'Programar',
               style: TextStyle(color: context.gama.textPrimary),
             ),
             subtitle: Text(
-              'Altere o modo na tela principal. A Oficina usa o modelo da tarefa.',
+              'Altere o modo na tela principal.',
               style: TextStyle(color: context.gama.textMuted, fontSize: 12),
             ),
           ),
@@ -372,7 +373,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const _SectionTitle('Memória'),
           const SizedBox(height: 6),
           Text(
-            'Apaga tudo o que a Gama lembra sobre você (nome, preferências, '
+            'Apaga tudo o que a $kAppName lembra sobre você (nome, preferências, '
             'projetos…).',
             style: TextStyle(
               color: context.gama.textMuted,

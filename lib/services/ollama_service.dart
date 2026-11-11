@@ -14,6 +14,7 @@ import 'settings_service.dart';
 import 'plugin_settings_service.dart';
 import 'context_manager.dart';
 import '../utils/error_logger.dart';
+import '../utils/friendly_error.dart';
 
 class ChatStreamEvent {
   final String? token;
@@ -92,7 +93,7 @@ ChatApiException _friendlyDioException(DioException error) {
             : serverDetail);
   if (status == 401) {
     return ChatApiException(
-      boundedDetail ?? error.message ?? 'A sessão Google expirou ou não pôde ser renovada. Entre novamente e tente de novo.',
+      'A sessão expirou ou não pôde ser renovada. Entre novamente e tente de novo.',
       retryable: false,
     );
   }
@@ -114,17 +115,17 @@ ChatApiException _friendlyDioException(DioException error) {
       'O servidor está ocupado ou atingiu o limite de requisições. Aguarde um pouco e tente novamente.',
     );
   }
-  if (status != null && status >= 500) {
-    return const ChatApiException(
-      'O servidor está temporariamente indisponível. Tente novamente em instantes.',
-    );
-  }
   if (error.type == DioExceptionType.connectionTimeout ||
       error.type == DioExceptionType.connectionError ||
       error.type == DioExceptionType.sendTimeout ||
-      error.type == DioExceptionType.receiveTimeout) {
+      error.type == DioExceptionType.receiveTimeout ||
+      status == 408 ||
+      status == 504) {
+    return ChatApiException(friendlyError(error, acao: 'receber a resposta'));
+  }
+  if (status != null && status >= 500) {
     return const ChatApiException(
-      'Sem conexão com a Gama. Verifique a internet e tente novamente.',
+      'O servidor está temporariamente indisponível. Tente novamente em instantes.',
     );
   }
   if (status == 413) {
@@ -138,9 +139,6 @@ ChatApiException _friendlyDioException(DioException error) {
       'A solicitação enviada está inválida. Confira os campos e anexos e tente novamente.',
       retryable: false,
     );
-  }
-  if (boundedDetail != null && boundedDetail.isNotEmpty) {
-    return ChatApiException(boundedDetail, retryable: false);
   }
   return const ChatApiException(
     'Não foi possível concluir a solicitação. Tente novamente.',
@@ -336,6 +334,7 @@ class OllamaService {
 
     /// 'conversar' | 'programar' | 'oficina_imagem' | 'oficina_video' | 'oficina_programar'
     String? chatMode,
+    Map<String, bool>? featurePreferences,
 
     /// ID da conversa no app — mantém project_id/ZIP entre mensagens.
     String? conversationId,
@@ -349,7 +348,8 @@ class OllamaService {
   }) async* {
     final selectedModel = model ?? SettingsService.instance.model;
     final dio = _client();
-    final pluginFlags = await PluginSettingsService.instance.load();
+    final pluginFlags =
+        featurePreferences ?? await PluginSettingsService.instance.load();
     final isOficina = (chatMode ?? '').startsWith('oficina_');
 
     try {
@@ -445,7 +445,7 @@ class OllamaService {
       }
     }
     throw const ChatApiException(
-      'A conexão foi interrompida antes de a Gama concluir a resposta. '
+      'A conexão foi interrompida antes de a $kAppName concluir a resposta. '
       'O texto recebido foi preservado; você pode tentar novamente.',
     );
   }
@@ -509,7 +509,7 @@ class OllamaService {
       throw ChatApiException(
         detail.isNotEmpty
             ? detail
-            : 'A Gama não conseguiu concluir a resposta. Tente novamente.',
+            : 'A $kAppName não conseguiu concluir a resposta. Tente novamente.',
       );
     }
 

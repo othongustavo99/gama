@@ -26,7 +26,7 @@
         android:maxSdkVersion="28" />
 
     <application
-        android:label="Gama"
+        android:label="Gamma"
         android:icon="@mipmap/ic_launcher">
 
         <activity

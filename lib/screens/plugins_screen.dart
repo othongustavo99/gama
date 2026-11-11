@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+
 import '../widgets/gama_floating_page.dart';
 
 import '../core/gama_colors.dart';
 import '../widgets/loading_skeleton.dart';
 import '../services/plugin_settings_service.dart';
 import '../utils/error_logger.dart';
+import '../utils/friendly_error.dart';
 
 /// Capacidade do sistema (ligada no backend ou local).
 class _Plugin {
@@ -12,17 +14,12 @@ class _Plugin {
   final String title;
   final String subtitle;
   final IconData icon;
-  final bool
-  serverSide; // recurso executado no backend, controlado por requisição
-  final bool defaultOn;
 
   const _Plugin({
     required this.id,
     required this.title,
     required this.subtitle,
     required this.icon,
-    this.serverSide = true,
-    this.defaultOn = true,
   });
 }
 
@@ -40,61 +37,31 @@ class _PluginsScreenState extends State<PluginsScreen> {
       title: 'Busca na web',
       subtitle: 'Respostas com fontes quando o tema exige informação atual',
       icon: Icons.travel_explore_rounded,
-      serverSide: true,
-      defaultOn: true,
     ),
     _Plugin(
       id: 'memory',
       title: 'Memória por usuário',
       subtitle: 'Fatos salvos e sincronizados no servidor',
       icon: Icons.psychology_rounded,
-      serverSide: true,
-      defaultOn: true,
-    ),
-    _Plugin(
-      id: 'attachments',
-      title: 'Anexos',
-      subtitle: 'Imagens, PDF, ZIP e código no chat',
-      icon: Icons.attach_file_rounded,
-      serverSide: true,
-      defaultOn: true,
-    ),
-    _Plugin(
-      id: 'vision',
-      title: 'Visão',
-      subtitle: 'Análise de imagem quando você anexa foto',
-      icon: Icons.image_search_rounded,
-      serverSide: true,
-      defaultOn: true,
-    ),
-    _Plugin(
-      id: 'code_analyzer',
-      title: 'Code Analyzer',
-      subtitle: 'Indexação seletiva de projetos ZIP / GitHub / PDF',
-      icon: Icons.account_tree_rounded,
-      serverSide: true,
-      defaultOn: true,
     ),
     _Plugin(
       id: 'tts',
-      title: 'Voz (TTS)',
-      subtitle: 'Leitura das respostas em voz alta',
+      title: 'Leitura em voz alta',
+      subtitle: 'Permite ouvir as respostas no chat',
       icon: Icons.record_voice_over_rounded,
-      serverSide: false,
-      defaultOn: true,
     ),
     _Plugin(
       id: 'scheduled',
       title: 'Agendamentos',
       subtitle: 'Lembretes locais (tela Agendado)',
       icon: Icons.schedule_rounded,
-      serverSide: false,
-      defaultOn: true,
     ),
   ];
 
   final Map<String, bool> _toggles = {};
   bool _loading = true;
+  bool _saving = false;
+  String? _loadError;
 
   @override
   void initState() {
@@ -103,45 +70,50 @@ class _PluginsScreenState extends State<PluginsScreen> {
   }
 
   Future<void> _load() async {
-    final map = await PluginSettingsService.instance.load();
-    for (final p in _catalog) {
-      map.putIfAbsent(p.id, () => p.defaultOn);
-    }
-    if (!mounted) return;
     setState(() {
-      _toggles
-        ..clear()
-        ..addAll(map);
-      _loading = false;
+      _loading = true;
+      _loadError = null;
     });
+    try {
+      final map = await PluginSettingsService.instance.load();
+      if (!mounted) return;
+      setState(() {
+        _toggles
+          ..clear()
+          ..addAll(map);
+      });
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'carregar preferências');
+      if (mounted) {
+        setState(() {
+          _loadError = friendlyError(error, acao: 'carregar as preferências');
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
-  Future<void> _set(String id, bool value, {required bool serverSide}) async {
-    final previous = _toggles[id];
-    setState(() => _toggles[id] = value);
+  Future<void> _set(String id, bool value) async {
+    if (_saving) return;
+    final previous = _toggles[id] ?? true;
+    setState(() {
+      _saving = true;
+      _toggles[id] = value;
+    });
     try {
       await PluginSettingsService.instance.setEnabled(id, value);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            value
-                ? 'Recurso ativado para as próximas mensagens.'
-                : 'Recurso desativado para as próximas mensagens.',
-          ),
-          duration: const Duration(seconds: 2),
-        ),
-      );
     } catch (error, stack) {
-      logSwallowed(error, stack);
-      if (mounted) setState(() => _toggles[id] = previous ?? true);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Não foi possível salvar a configuração.'),
-          ),
-        );
-      }
+      if (mounted) setState(() => _toggles[id] = previous);
+      showFriendlyError(
+        mounted ? context : null,
+        error,
+        stack,
+        acao: 'salvar a preferência',
+        retry: () => _set(id, value),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -149,87 +121,104 @@ class _PluginsScreenState extends State<PluginsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.gama.background,
-      
+
       body: GamaFloatingPage(
         actions: const [],
         contentBehindHeader: true,
         child: _loading
-          ? const GamaSkeletonList(itemCount: 6)
-          : ListView.separated(
-              padding: EdgeInsets.fromLTRB(
-                16, MediaQuery.paddingOf(context).top + 86, 16, 16,
-              ),
-              itemCount: _catalog.length + 1,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (_, i) {
-                if (i == 0) {
-                  return Padding(
-                    padding: EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      'Essas opções controlam os recursos usados nas próximas mensagens. '
-                      'As alterações são salvas neste aparelho e enviadas à API quando necessário.',
-                      style: TextStyle(
-                        color: context.gama.textMuted,
-                        fontSize: 13,
-                        height: 1.4,
-                      ),
-                    ),
-                  );
-                }
-                final p = _catalog[i - 1];
-                final on = _toggles[p.id] ?? p.defaultOn;
-                return Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: context.gama.surfaceCard,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: context.gama.border),
-                  ),
-                  child: Row(
+            ? const GamaSkeletonList(itemCount: 4)
+            : _loadError != null
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        p.icon,
-                        color: on
-                            ? context.gama.accent
-                            : context.gama.textMuted,
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              p.title,
-                              style: TextStyle(
-                                color: context.gama.textPrimary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              p.subtitle,
-                              style: TextStyle(
-                                color: context.gama.textMuted,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Switch(
-                        value: on,
-                        activeThumbColor: context.gama.accent,
-                        onChanged: (v) =>
-                            _set(p.id, v, serverSide: p.serverSide),
+                      Text(_loadError!, textAlign: TextAlign.center),
+                      TextButton(
+                        onPressed: _load,
+                        child: const Text('Tentar de novo'),
                       ),
                     ],
                   ),
-                );
-              },
-            )
+                ),
+              )
+            : ListView.separated(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  MediaQuery.paddingOf(context).top + 86,
+                  16,
+                  16,
+                ),
+                itemCount: _catalog.length + 1,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (_, i) {
+                  if (i == 0) {
+                    return Padding(
+                      padding: EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        'Preferências do chat e dos lembretes',
+                        style: TextStyle(
+                          color: context.gama.textMuted,
+                          fontSize: 13,
+                          height: 1.4,
+                        ),
+                      ),
+                    );
+                  }
+                  final p = _catalog[i - 1];
+                  final on = _toggles[p.id] ?? true;
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: context.gama.surfaceCard,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: context.gama.border),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          p.icon,
+                          color: on
+                              ? context.gama.accent
+                              : context.gama.textMuted,
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                p.title,
+                                style: TextStyle(
+                                  color: context.gama.textPrimary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                p.subtitle,
+                                style: TextStyle(
+                                  color: context.gama.textMuted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: on,
+                          activeThumbColor: context.gama.accent,
+                          onChanged: _saving ? null : (v) => _set(p.id, v),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
       ),
     );
   }

@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../core/constants.dart';
+import '../widgets/gama_floating_page.dart';
 
 import '../core/gama_colors.dart';
 import '../widgets/gama_brand_mark.dart';
@@ -70,8 +72,17 @@ class _SplashScreenState extends State<SplashScreen> {
     final g = context.gama;
     return Scaffold(
       backgroundColor: g.background,
-      body: SafeArea(
-        child: Stack(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(child: GamaTopShade()),
+          ),
+          SafeArea(
+            child: Stack(
           fit: StackFit.expand,
           children: [
             // Uma única composição responsiva, sem recortar a imagem vertical
@@ -103,7 +114,7 @@ class _SplashScreenState extends State<SplashScreen> {
                     children: [
                       const GamaBrandMark(size: 96),
                       const SizedBox(height: 24),
-                      Text('Gamma',
+                      Text(kAppName,
                         textAlign: TextAlign.center,
                         style: TextStyle(color: g.textPrimary, fontSize: 30,
                           fontWeight: FontWeight.w700, letterSpacing: -0.7),
@@ -121,7 +132,7 @@ class _SplashScreenState extends State<SplashScreen> {
                         child: CircularProgressIndicator(
                           strokeWidth: 2.1,
                           color: g.accent,
-                          semanticsLabel: 'Preparando a Gamma',
+                          semanticsLabel: 'Preparando a $kAppName',
                         ),
                       ),
                       const SizedBox(height: 11),
@@ -133,8 +144,10 @@ class _SplashScreenState extends State<SplashScreen> {
                 ),
               ),
             ),
-          ],
-        ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

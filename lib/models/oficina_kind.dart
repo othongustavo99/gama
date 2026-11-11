@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/constants.dart';
 import '../core/gama_colors.dart';
 
 /// Creation modes offered by Oficina.
@@ -71,7 +72,7 @@ extension OficinaKindX on OficinaKind {
   String get emptyHeadline => 'Oficina · $label';
 
   String get emptySubtitle => switch (this) {
-    OficinaKind.imagem => 'Crie, edite, transforme ou analise imagens.\nA Gama entende a intenção de cada pedido.',
+    OficinaKind.imagem => 'Crie, edite, transforme ou analise imagens.\nA $kAppName entende a intenção de cada pedido.',
     OficinaKind.video => 'Gere, edite e melhore vídeos.\nDescreva o que quer e anexe referências se precisar.',
     OficinaKind.programar => 'Código, análise e arquivos.\nCada mensagem é tratada como tarefa de criação.',
   };

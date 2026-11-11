@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../core/constants.dart';
 import '../widgets/gama_floating_page.dart';
 import 'package:flutter/services.dart';
 
@@ -112,9 +113,9 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
     final text = widget.transcript().trim();
     final reduceMotion = MediaQuery.of(context).disableAnimations;
     final status = speaking
-        ? 'Gama está falando'
+        ? '$kAppName está falando'
         : processing
-        ? 'Gama está pensando'
+        ? '$kAppName está pensando'
         : preparingSpeech
         ? 'Preparando voz…'
         : listening
@@ -198,7 +199,7 @@ class _VoiceModeScreenState extends State<VoiceModeScreen> {
                         ? Duration.zero
                         : const Duration(milliseconds: 160),
                     child: Text(
-                      text.isEmpty ? 'Fale naturalmente com a Gama…' : text,
+                      text.isEmpty ? 'Fale naturalmente com a $kAppName…' : text,
                       key: ValueKey<bool>(text.isEmpty),
                       textAlign: TextAlign.center,
                       maxLines: 3,

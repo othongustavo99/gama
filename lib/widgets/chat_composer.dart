@@ -120,7 +120,7 @@ class ChatComposer extends StatelessWidget {
               ('/memoria ', 'Salvar um fato na memória'),
               ('/limpar', 'Limpar esta conversa'),
               if (oficinaKind == null) ...[
-                ('/modo programar', 'Mudar para Trabalhar'),
+                ('/modo programar', 'Mudar para Programar'),
                 ('/modo conversar', 'Mudar para Conversar'),
               ],
             ]
@@ -132,6 +132,9 @@ class ChatComposer extends StatelessWidget {
             .toList();
     final reducedMotion = MediaQuery.of(context).disableAnimations;
     final palette = context.gama;
+    final bottomGap = !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+        ? 3.0
+        : 12.0;
     return AnimatedBuilder(
       animation: focusNode ?? controller,
       builder: (context, child) {
@@ -139,7 +142,7 @@ class ChatComposer extends StatelessWidget {
         return SafeArea(
           top: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            padding: EdgeInsets.fromLTRB(12, 10, 12, bottomGap),
             child: Container(
                 padding: const EdgeInsets.all(1),
                 decoration: BoxDecoration(
@@ -294,34 +297,38 @@ class ChatComposer extends StatelessWidget {
                             Container(
                               margin: const EdgeInsets.only(bottom: 8),
                               constraints: const BoxConstraints(maxHeight: 190),
-                              decoration: BoxDecoration(
+                              child: Material(
                                 color: context.gama.surfaceCard,
-                                border: Border.all(color: context.gama.border),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: ListView(
-                                shrinkWrap: true,
-                                children: [
-                                  for (final command in slashCommands)
-                                    ListTile(
-                                      dense: true,
-                                      title: Text(
-                                        command.$1,
-                                        style: TextStyle(
-                                          color: context.gama.textPrimary,
+                                shape: RoundedRectangleBorder(
+                                  side: BorderSide(color: context.gama.border),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: ListView(
+                                  primary: false,
+                                  shrinkWrap: true,
+                                  children: [
+                                    for (final command in slashCommands)
+                                      ListTile(
+                                        dense: true,
+                                        title: Text(
+                                          command.$1,
+                                          style: TextStyle(
+                                            color: context.gama.textPrimary,
+                                          ),
+                                        ),
+                                        subtitle: Text(
+                                          command.$2,
+                                          style: TextStyle(
+                                            color: context.gama.textMuted,
+                                          ),
+                                        ),
+                                        onTap: () => onSlashCommandSelected?.call(
+                                          command.$1,
                                         ),
                                       ),
-                                      subtitle: Text(
-                                        command.$2,
-                                        style: TextStyle(
-                                          color: context.gama.textMuted,
-                                        ),
-                                      ),
-                                      onTap: () => onSlashCommandSelected?.call(
-                                        command.$1,
-                                      ),
-                                    ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                           // Campo de texto — SEM caixa de fundo por trás do placeholder.

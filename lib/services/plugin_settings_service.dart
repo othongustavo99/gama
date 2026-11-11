@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'local_notification_service.dart';
 import '../utils/error_logger.dart';
 
-/// Fonte única para os toggles da tela Plugins.
+/// Preferências opcionais e recursos internos do chat.
 /// Mantém o formato de armazenamento já usado pelo app para não perder
 /// preferências existentes em atualizações.
 class PluginSettingsService {
@@ -21,13 +21,17 @@ class PluginSettingsService {
     'scheduled': true,
   };
 
+  static const _alwaysEnabled = {'attachments', 'vision', 'code_analyzer'};
+
   Future<Map<String, bool>> load() async {
     final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getStringList(prefsKey) ?? const <String>[];
     final result = Map<String, bool>.from(defaults);
     for (final entry in stored) {
       final split = entry.split('=');
-      if (split.length == 2 && result.containsKey(split[0])) {
+      if (split.length == 2 &&
+          result.containsKey(split[0]) &&
+          !_alwaysEnabled.contains(split[0])) {
         result[split[0]] = split[1] == '1';
       }
     }
@@ -40,14 +44,17 @@ class PluginSettingsService {
   }
 
   Future<void> setEnabled(String id, bool enabled) async {
+    if (!defaults.containsKey(id) || _alwaysEnabled.contains(id)) return;
     final settings = await load();
-    if (!settings.containsKey(id)) return;
     settings[id] = enabled;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(
-      prefsKey,
-      settings.entries.map((e) => '${e.key}=${e.value ? '1' : '0'}').toList(),
-    );
+    final saved = await prefs.setStringList(prefsKey, [
+      for (final entry in settings.entries)
+        if (!_alwaysEnabled.contains(entry.key))
+          '${entry.key}=${entry.value ? '1' : '0'}',
+    ]);
+
+    if (!saved) throw StateError('Falha ao persistir a preferência.');
 
     if (id == 'scheduled') {
       // A desativação cancela notificações pendentes, mas conserva os

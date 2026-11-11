@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../core/constants.dart';
 import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
+import 'gama_floating_page.dart';
 import '../models/conversation.dart';
 import '../models/oficina_kind.dart';
 import '../services/conversation_service.dart';
@@ -74,8 +76,16 @@ class _AppDrawerState extends State<AppDrawer> {
 
     return Drawer(
       backgroundColor: context.gama.surface,
-      child: SafeArea(
-        child: Column(
+      child: Stack(
+        children: [
+          const Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(child: GamaTopShade()),
+          ),
+          SafeArea(
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // ===== MINI PERFIL =====
@@ -132,7 +142,7 @@ class _AppDrawerState extends State<AppDrawer> {
                     if (onOpenWelcome != null)
                       IconButton(
                         icon: const Icon(Icons.help_outline_rounded, size: 20),
-                        tooltip: 'Conheça a Gamma',
+                        tooltip: 'Conheça a $kAppName',
                         onPressed: onOpenWelcome,
                       ),
                     IconButton(
@@ -258,7 +268,7 @@ class _AppDrawerState extends State<AppDrawer> {
             ),
             _DrawerItem(
               icon: Icons.folder_outlined,
-              label: 'Projetos',
+              label: 'Conversas fixadas',
               onTap: onOpenProjects ?? () => _comingSoon(context),
             ),
             _DrawerItem(
@@ -268,7 +278,7 @@ class _AppDrawerState extends State<AppDrawer> {
             ),
             _DrawerItem(
               icon: Icons.extension_outlined,
-              label: 'Plugins',
+              label: 'Preferências',
               onTap: onOpenPlugins ?? () => _comingSoon(context),
             ),
             _DrawerItem(
@@ -488,8 +498,10 @@ class _AppDrawerState extends State<AppDrawer> {
                 ],
               ),
             ),
-          ],
-        ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

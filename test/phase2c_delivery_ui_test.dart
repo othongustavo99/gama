@@ -83,6 +83,7 @@ void main() {
       brightness: Brightness.light,
       extensions: [GamaPalette.light()],
     )));
+    await tester.pumpAndSettle();
     final light = tester.widget<MarkdownBody>(find.byType(MarkdownBody).first);
     expect(light.styleSheet?.p?.color, GamaPalette.light().textPrimary);
   });

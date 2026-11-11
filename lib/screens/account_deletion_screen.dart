@@ -5,6 +5,8 @@ import '../core/gama_colors.dart';
 import '../services/account_privacy_service.dart';
 import '../services/auth_service.dart';
 import '../services/identity_service.dart';
+import '../utils/error_logger.dart';
+import '../utils/friendly_error.dart';
 import 'login_screen.dart';
 
 class AccountDeletionScreen extends StatefulWidget {
@@ -33,9 +35,13 @@ class _AccountDeletionScreenState extends State<AccountDeletionScreen> {
       // Não apaga dados locais antes da confirmação do backend.
       await AccountPrivacyService.instance.deleteAccount();
       _serverDeleted = true;
-    } catch (error) {
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'excluir a conta');
       if (!mounted) return;
-      setState(() { _busy = false; _error = '$error'; });
+      setState(() {
+        _busy = false;
+        _error = friendlyError(error, acao: 'confirmar a exclusão da conta');
+      });
       return;
     }
     await _finishLocalPurge();
@@ -50,13 +56,13 @@ class _AccountDeletionScreenState extends State<AccountDeletionScreen> {
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const LoginScreen()), (_) => false);
-    } catch (error) {
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'limpar dados do aparelho');
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = 'Os dados do servidor foram excluídos, mas houve uma falha '
-            'na limpeza deste aparelho. Toque em tentar novamente. '
-            'Detalhes: $error';
+        final message = friendlyError(error, acao: 'limpar os dados deste aparelho');
+        _error = 'Os dados do servidor foram excluídos. $message';
       });
     }
   }

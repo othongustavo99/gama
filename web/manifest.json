@@ -1,11 +1,11 @@
 {
-    "name": "Gama",
-    "short_name": "Gama",
+    "name": "Gamma",
+    "short_name": "Gamma",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0xFFFF6B00",
-    "description": "Assistente de IA pessoal Gama",
+    "description": "Assistente de IA pessoal Gamma",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

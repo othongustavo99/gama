@@ -217,21 +217,6 @@ class DownloadService {
       }
       await partial.rename(destination.path);
       return destination.path;
-    } on DioException catch (error) {
-      if (await partial.exists()) await partial.delete();
-      final body = error.response?.data;
-      String detail = '';
-      if (body is Map) {
-        detail = (body['detail'] ?? body['message'] ?? '').toString();
-      } else if (body is String) {
-        detail = body.trim();
-      }
-      if (detail.isNotEmpty) {
-        throw Exception(
-          'Falha ao baixar arquivo (HTTP ${error.response?.statusCode}): $detail',
-        );
-      }
-      rethrow;
     } catch (error, stack) {
       logSwallowed(error, stack);
       if (await partial.exists()) await partial.delete();
