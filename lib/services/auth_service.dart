@@ -11,9 +11,11 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import 'identity_service.dart';
+import 'settings_service.dart';
 import '../core/constants.dart';
 import '../core/launch_policy.dart';
 import '../utils/error_logger.dart';
+import '../utils/friendly_error.dart';
 
 /// Login Google multiplataforma.
 ///
@@ -29,6 +31,8 @@ class AuthService {
   static const _desktopRefreshTokenKey = 'google_desktop_refresh_token';
   static const _desktopRefreshOwnerKey = 'google_desktop_refresh_owner';
   static const _desktopRefreshClientKey = 'google_desktop_refresh_client_id';
+  static const _desktopRefreshBackendKey = 'google_desktop_refresh_backend';
+  static const _desktopTokenPath = '/auth/google/desktop/token';
   static const _secureStorage = FlutterSecureStorage();
 
   static const String serverClientId = String.fromEnvironment(
@@ -114,54 +118,145 @@ class AuthService {
     }
   }
 
-  Future<String?> _refreshDesktopIdToken({bool force = false}) async {
-    if (!force &&
-        _idToken != null &&
-        _idTokenExpiry != null &&
-        DateTime.now().isBefore(
-          _idTokenExpiry!.subtract(const Duration(minutes: 2)),
-        )) {
-      return _idToken;
+  Uri _desktopTokenEndpoint() {
+    final base = SettingsService.instance.baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse('$base$_desktopTokenPath');
+    final loopback = uri != null && {'localhost', '127.0.0.1', '::1'}.contains(uri.host);
+    if (uri == null || uri.host.isEmpty || uri.userInfo.isNotEmpty ||
+        uri.hasQuery || uri.hasFragment ||
+        (uri.scheme != 'https' && !(uri.scheme == 'http' && loopback))) {
+      throw const FriendlyActionException('Confira o endereço HTTPS do servidor da Gamma.');
     }
+    return uri;
+  }
+
+  Future<http.Response> _requestDesktopTokens(Uri endpoint, Map<String, String> grant) async {
+    final client = http.Client();
     try {
+      final request = http.Request('POST', endpoint)
+        ..followRedirects = false
+        ..headers.addAll({
+          ...AppConstants.authHeaders,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        })
+        ..body = jsonEncode(grant);
+      return await client.send(request).then(http.Response.fromStream)
+          .timeout(const Duration(seconds: 20));
+    } finally {
+      client.close();
+    }
+  }
+
+  Map<String, dynamic> _desktopTokenBody(http.Response response) {
+    try {
+      final data = jsonDecode(response.body);
+      if (data is Map<String, dynamic>) return data;
+    } on FormatException {
+      // Never include a token response in diagnostics or in the UI.
+    }
+    return const {};
+  }
+
+  String? _desktopErrorCode(Map<String, dynamic> data) {
+    final detail = data['detail'];
+    final code = detail is Map ? detail['code'] : null;
+    return code is String ? code : null;
+  }
+
+  FriendlyActionException _desktopLoginError(http.Response response, Map<String, dynamic> data) {
+    if (response.statusCode == 404) {
+      return const FriendlyActionException(
+        'O servidor da Gamma precisa ser atualizado para o login do Windows.',
+      );
+    }
+    if (response.statusCode == 429) {
+      return const FriendlyActionException('Aguarde um pouco antes de tentar entrar novamente.');
+    }
+    return switch (_desktopErrorCode(data)) {
+      'desktop_oauth_unconfigured' => const FriendlyActionException(
+        'O login do Windows precisa ser configurado no servidor da Gamma.',
+      ),
+      'desktop_oauth_client_mismatch' => const FriendlyActionException(
+        'O ID do Google neste executável difere do ID Desktop configurado no servidor.',
+      ),
+      'desktop_oauth_grant_rejected' => const FriendlyActionException(
+        'A autorização do Google expirou ou foi recusada. Inicie o login novamente.',
+      ),
+      _ => const FriendlyActionException('Não foi possível concluir o login com o Google. Tente de novo.'),
+    };
+  }
+
+  Future<void> _clearDesktopRefreshToken() async {
+    await _secureStorage.delete(key: _desktopRefreshTokenKey);
+    await _secureStorage.delete(key: _desktopRefreshOwnerKey);
+    await _secureStorage.delete(key: _desktopRefreshClientKey);
+    await _secureStorage.delete(key: _desktopRefreshBackendKey);
+  }
+
+  Future<String?>? _desktopRefreshInFlight;
+
+  Future<String?> _refreshDesktopIdToken({bool force = false}) async {
+    if (!force && _hasFreshCachedIdToken()) return _idToken;
+    final current = _desktopRefreshInFlight;
+    if (current != null) return current;
+    final request = _performDesktopRefresh();
+    _desktopRefreshInFlight = request;
+    try {
+      return await request;
+    } finally {
+      _desktopRefreshInFlight = null;
+    }
+  }
+
+  Future<String?> _performDesktopRefresh() async {
+    try {
+      final endpoint = _desktopTokenEndpoint();
       final owner = await _secureStorage.read(key: _desktopRefreshOwnerKey);
       final client = await _secureStorage.read(key: _desktopRefreshClientKey);
+      final backend = await _secureStorage.read(key: _desktopRefreshBackendKey);
       final identity = IdentityService.instance;
-      // Tokens de versões antigas sem proprietário validado não são reutilizados.
-      if (owner == null || owner != identity.googleNumericId ||
-          client != desktopClientId || !identity.isLoggedIn ||
-          identity.provider != 'google') return null;
-      final refreshToken = await _secureStorage.read(key: _desktopRefreshTokenKey);
-      if (refreshToken == null || refreshToken.isEmpty) return null;
-      final body = <String, String>{
-        'client_id': desktopClientId,
+      final clientId = desktopClientId.trim();
+      bool sameOwner() =>
+          owner != null && owner == identity.googleNumericId &&
+          identity.isLoggedIn && identity.provider == 'google';
+      // Legacy sessions without a stored backend can migrate to the official host.
+      if (!sameOwner() || client != clientId ||
+          endpoint.toString() != (backend ?? '${AppConstants.apiBaseUrl}$_desktopTokenPath')) {
+        return null;
+      }
+      final refresh = await _secureStorage.read(key: _desktopRefreshTokenKey);
+      if (refresh == null || refresh.isEmpty || !sameOwner()) return null;
+      final response = await _requestDesktopTokens(endpoint, {
+        'client_id': clientId,
         'grant_type': 'refresh_token',
-        'refresh_token': refreshToken,
-      };
-      final response = await http.post(
-        Uri.parse('https://oauth2.googleapis.com/token'),
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: body,
-      );
+        'refresh_token': refresh,
+      });
+      if (!sameOwner() || endpoint != _desktopTokenEndpoint()) return null;
+      // A simultaneous sign-in can replace the stored token for the same user.
+      if (await _secureStorage.read(key: _desktopRefreshTokenKey) != refresh) return null;
+      final data = _desktopTokenBody(response);
       if (response.statusCode != 200) {
-        if (response.statusCode == 400 || response.statusCode == 401) {
-          await _secureStorage.delete(key: _desktopRefreshTokenKey);
-          await _secureStorage.delete(key: _desktopRefreshOwnerKey);
-          await _secureStorage.delete(key: _desktopRefreshClientKey);
+        if (_desktopErrorCode(data) == 'desktop_oauth_grant_rejected') {
+          await _clearDesktopRefreshToken();
           _idToken = null;
           _idTokenExpiry = null;
         }
         return null;
       }
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
-      final token = json['id_token']?.toString();
-      if (token == null || token.isEmpty) return null;
-      final expiresIn = (json['expires_in'] as num?)?.toInt() ?? 3600;
-      _idToken = token;
-      _idTokenExpiry = DateTime.now().add(Duration(seconds: expiresIn));
+      final token = data['id_token'];
+      if (token is! String || token.isEmpty) return null;
+      final rotated = data['refresh_token'];
+      if (rotated is String && rotated.isNotEmpty && rotated != refresh) {
+        await _secureStorage.write(key: _desktopRefreshTokenKey, value: rotated);
+      }
+      if (backend == null) {
+        await _secureStorage.write(key: _desktopRefreshBackendKey, value: endpoint.toString());
+      }
+      _cacheIdToken(token);
       return token;
-    } catch (e) {
-      debugPrint('refreshBearerToken desktop: $e');
+    } catch (error, stack) {
+      logSwallowed(error, stack, context: 'renovar login Google no Windows');
       return null;
     }
   }
@@ -242,10 +337,12 @@ class AuthService {
     final clientId = desktopClientId.trim();
 
     if (clientId.isEmpty) {
-      throw StateError('Windows: configure GOOGLE_DESKTOP_CLIENT_ID '
-          '(cliente OAuth do tipo Aplicativo para computador).');
+      throw const FriendlyActionException(
+        'Este executável precisa ser gerado com o ID OAuth Desktop do Google.',
+      );
     }
 
+    final endpoint = _desktopTokenEndpoint();
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final redirectUri = 'http://127.0.0.1:${server.port}/';
     final state = _randomString(32);
@@ -284,7 +381,7 @@ class AuthService {
           request.response
             ..statusCode = 400
             ..headers.contentType = ContentType.html
-            ..write('<html><body>Erro: ${q['error']}</body></html>');
+            ..write('<html><body>O Google nao autorizou o login.</body></html>');
           await request.response.close();
           if (!completer.isCompleted) completer.complete(null);
           return;
@@ -304,7 +401,7 @@ class AuthService {
           ..write(
             '<!DOCTYPE html><html><body style="font-family:system-ui;text-align:center;padding:48px">'
             '<h2 style="color:#FF6B00">$kAppName</h2>'
-            '<p>Login concluído. Pode fechar e voltar ao app.</p>'
+            '<p>Autorização recebida. Volte ao app para concluir o login.</p>'
             '</body></html>',
           );
         await request.response.close();
@@ -317,55 +414,39 @@ class AuthService {
       }
     });
 
-    final ok = await launchUrl(authUri, mode: LaunchMode.externalApplication);
-    if (!ok) {
+    final String? code;
+    try {
+      final opened = await launchUrl(authUri, mode: LaunchMode.externalApplication);
+      if (!opened) {
+        throw const FriendlyActionException('Não foi possível abrir o navegador para entrar com o Google.');
+      }
+      code = await completer.future.timeout(const Duration(minutes: 3));
+    } finally {
       await server.close(force: true);
-      throw StateError('Não abriu o navegador');
     }
-
-    final code = await completer.future.timeout(
-      const Duration(minutes: 3),
-      onTimeout: () async {
-        await server.close(force: true);
-        return null;
-      },
-    );
 
     if (code == null || code.isEmpty) return false;
 
-    final body = <String, String>{
+    final tokenRes = await _requestDesktopTokens(endpoint, {
       'code': code,
       'client_id': clientId,
       'redirect_uri': redirectUri,
       'grant_type': 'authorization_code',
       'code_verifier': codeVerifier,
-    };
-
-    final tokenRes = await http.post(
-      Uri.parse('https://oauth2.googleapis.com/token'),
-      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: body,
-    );
-    if (tokenRes.statusCode != 200) {
-      throw StateError('O Google recusou a autenticação '
-          '(HTTP ${tokenRes.statusCode}). Confira o cliente OAuth Desktop.');
+    });
+    final tokens = _desktopTokenBody(tokenRes);
+    if (tokenRes.statusCode != 200) throw _desktopLoginError(tokenRes, tokens);
+    final refreshToken = tokens['refresh_token']?.toString();
+    final idToken = tokens['id_token'];
+    final accessToken = tokens['access_token'];
+    if (idToken is! String || idToken.isEmpty ||
+        accessToken is! String || accessToken.isEmpty) {
+      throw const FriendlyActionException('O servidor não retornou a sessão do Google. Tente de novo.');
     }
-
-    final tokenJson = jsonDecode(tokenRes.body) as Map<String, dynamic>;
-    final refreshToken = tokenJson['refresh_token']?.toString();
-    final idToken = tokenJson['id_token'] as String?;
-    if (idToken == null || idToken.isEmpty) {
-      throw StateError(
-        'O Google não retornou ID token. Confira o escopo openid e o client ID OAuth.',
-      );
-    }
-    final expiresIn = (tokenJson['expires_in'] as num?)?.toInt() ?? 3600;
-    _idToken = idToken;
-    _idTokenExpiry = DateTime.now().add(Duration(seconds: expiresIn));
 
     final userRes = await http.get(
       Uri.parse('https://www.googleapis.com/oauth2/v2/userinfo'),
-      headers: {'Authorization': 'Bearer ${tokenJson['access_token']}'},
+      headers: {'Authorization': 'Bearer $accessToken'},
     );
     if (userRes.statusCode != 200) {
       throw StateError('Não consegui consultar o perfil Google (HTTP ${userRes.statusCode}).');
@@ -381,19 +462,22 @@ class AuthService {
       email: user['email']?.toString(),
       photoUrl: user['picture']?.toString(),
     );
+    _cacheIdToken(idToken);
     // Só vincular o token de renovação após conhecer a identidade que
     // realmente concluiu o login. Troca de Google invalida a sessão anterior.
     try {
       final existingOwner = await _secureStorage.read(key: _desktopRefreshOwnerKey);
       final existingClient = await _secureStorage.read(key: _desktopRefreshClientKey);
-      if (existingOwner != id || existingClient != clientId) {
-        await _secureStorage.delete(key: _desktopRefreshTokenKey);
+      final existingBackend = await _secureStorage.read(key: _desktopRefreshBackendKey);
+      if (existingOwner != id || existingClient != clientId || existingBackend != endpoint.toString()) {
+        await _clearDesktopRefreshToken();
       }
       if (refreshToken != null && refreshToken.isNotEmpty) {
         await _secureStorage.write(key: _desktopRefreshTokenKey, value: refreshToken);
       }
       await _secureStorage.write(key: _desktopRefreshOwnerKey, value: id);
       await _secureStorage.write(key: _desktopRefreshClientKey, value: clientId);
+      await _secureStorage.write(key: _desktopRefreshBackendKey, value: endpoint.toString());
     } catch (e) {
       // A sessão atual funciona mesmo se o Windows não persistir o token.
       debugPrint('Não foi possível persistir a sessão: $e');
@@ -414,9 +498,7 @@ class AuthService {
     _idTokenExpiry = null;
     if (isDesktop) {
       try {
-        await _secureStorage.delete(key: _desktopRefreshTokenKey);
-        await _secureStorage.delete(key: _desktopRefreshOwnerKey);
-        await _secureStorage.delete(key: _desktopRefreshClientKey);
+        await _clearDesktopRefreshToken();
       } catch (e) {
         debugPrint('secure storage delete: $e');
       }

@@ -24,6 +24,7 @@ from .routes.tts import router as tts_router
 from .routes.artifacts import router as artifacts_router
 from .routes.media import router as media_router, public_router as media_public_router
 from .routes.account import router as account_router
+from .routes.desktop_oauth import router as desktop_oauth_router
 from .routes.jobs import router as jobs_router
 from .routes.admin import router as admin_router
 from .routes.billing import router as billing_router
@@ -161,6 +162,7 @@ app.include_router(media_router, dependencies=_guard)
 # Autenticação própria: /account/status e /account/start-new precisam funcionar
 # mesmo quando o titular já excluiu a conta. Não aceitam X-User-Id.
 app.include_router(account_router, dependencies=[Depends(require_api_key), Depends(rate_limit_default)])
+app.include_router(desktop_oauth_router)
 # Referências HMAC de curta duração precisam ser acessíveis ao provedor do modelo; o endpoint valida assinatura antes de servir o arquivo.
 app.include_router(media_public_router)
 
