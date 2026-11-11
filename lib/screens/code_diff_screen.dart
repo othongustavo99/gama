@@ -147,7 +147,7 @@ class CodeDiffScreen extends StatelessWidget {
                                         '${line.oldLine ?? ''}  ${line.newLine ?? ''}',
                                         style: TextStyle(
                                           fontFamily: 'monospace',
-                                          fontSize: 10,
+                                          fontSize: 12,
                                           color: p.textMuted,
                                         ),
                                       ),

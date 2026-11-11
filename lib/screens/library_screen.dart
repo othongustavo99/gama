@@ -527,6 +527,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               ),
                             ),
                           ])
+                        : _category == LibraryCategory.images
+                        ? _imageGrid(filtered)
                         : ListView.separated(
                             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                             itemCount: filtered.length,
@@ -612,6 +614,95 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
       )
       ),
+    );
+  }
+
+  Widget _imageGrid(List<Map<String, dynamic>> entries) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 12.0;
+        const padding = 16.0;
+        final width = constraints.maxWidth - 2 * padding;
+        final columns = (width / 165).floor().clamp(1, 6);
+        final tileWidth = (width - (columns - 1) * gap) / columns;
+        final cacheWidth = (tileWidth * MediaQuery.devicePixelRatioOf(context))
+            .round()
+            .clamp(180, 900);
+        return GridView.builder(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(padding),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: gap,
+            crossAxisSpacing: gap,
+            childAspectRatio: .95,
+          ),
+          itemCount: entries.length,
+          itemBuilder: (context, index) {
+            final entry = entries[index];
+            final name = entry['name']?.toString() ?? 'Imagem';
+            final path = entry['path']?.toString();
+            final file = path == null || path.isEmpty ? null : File(path);
+            final exists = file?.existsSync() ?? false;
+            final palette = context.gama;
+            final unavailable = Icon(
+              Icons.image_not_supported_outlined,
+              color: palette.textMuted,
+              semanticLabel: 'Imagem indisponível',
+            );
+
+            return Material(
+              color: palette.surfaceCard,
+              borderRadius: BorderRadius.circular(14),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: exists ? () => LibraryScreen.openEntry(context, entry) : null,
+                      child: SizedBox.expand(
+                        child: exists
+                            ? Image.file(
+                                file!,
+                                fit: BoxFit.cover,
+                                cacheWidth: cacheWidth,
+                                semanticLabel: name,
+                                errorBuilder: (_, _, _) => Center(child: unavailable),
+                              )
+                            : Center(child: unavailable),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                      PopupMenuButton<String>(
+                        enabled: !_busy,
+                        tooltip: 'Opções de $name',
+                        onSelected: (action) {
+                          if (action == 'download') {
+                            LibraryScreen.downloadEntry(context, entry);
+                          } else {
+                            _removeOne(entry);
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          if (exists)
+                            const PopupMenuItem(value: 'download', child: Text('Baixar')),
+                          const PopupMenuItem(value: 'remove', child: Text('Remover')),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

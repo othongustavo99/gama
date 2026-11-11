@@ -54,6 +54,7 @@ import '../utils/friendly_error.dart';
 import '../utils/speech_recovery_policy.dart';
 import '../utils/generation_session.dart';
 import '../utils/chat_history_window.dart';
+import '../utils/local_calendar.dart';
 import '../utils/chat_scroll_policy.dart';
 import '../utils/chat_generation_clock.dart';
 import '../utils/stream_display_filter.dart';
@@ -96,6 +97,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final MemoryService _memory = MemoryService();
 
   List<Message> _messages = [];
+  String? _selectedMessageId;
   // Paginação de apresentação: mantém todas as mensagens no Hive e na API.
   final ChatHistoryWindow _historyWindow = ChatHistoryWindow();
   String? _newMessageAnimationId;
@@ -1237,6 +1239,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _loadMessages() {
     setState(() {
+      _selectedMessageId = null;
       _messages = _service.getMessages(widget.conversationId);
       _artifactsByMessageId.clear();
       for (final message in _messages) {
@@ -1838,9 +1841,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _copyMessage(Message message) async {
-    await Clipboard.setData(ClipboardData(text: _cleanMessageText(message)));
-    unawaited(HapticFeedback.lightImpact());
-    _snack('Mensagem copiada');
+    try {
+      await Clipboard.setData(ClipboardData(text: _cleanMessageText(message)));
+      _snack('Mensagem copiada');
+    } catch (error, stack) {
+      _showActionError(
+        error,
+        stack,
+        acao: 'copiar a mensagem',
+        retry: () => _copyMessage(message),
+      );
+    }
   }
 
   Future<void> _speakMessage(Message message) async {
@@ -1896,153 +1907,126 @@ class _ChatScreenState extends State<ChatScreen> {
     await _editAndResend(message, index);
   }
 
-  void _showMessageContextMenu(Message message, int index) {
-    showModalBottomSheet<void>(
+  bool _canRegenerateMessage(int index) =>
+      !_isLoading &&
+      index > 0 &&
+      index == _messages.length - 1 &&
+      _messages[index - 1].isUser &&
+      _canReusePrompt(_messages[index - 1]);
+
+  Future<void> _showMessageContextMenu(Message message, int index) async {
+    final canEdit = message.isUser && !_isLoading && _canReusePrompt(message);
+    final actions = <(IconData, String, VoidCallback)>[
+      (Icons.copy_rounded, 'Copiar', () => _copyMessage(message)),
+      if (canEdit) ...[
+        (Icons.edit_outlined, 'Editar e reenviar', () => _editAndResend(message, index)),
+        (Icons.refresh_rounded, 'Tentar novamente', () => _retryUserMessage(message, index)),
+      ],
+      if (!message.isUser) ...[
+        (Icons.volume_up_outlined, 'Ouvir resposta', () => _speakMessage(message)),
+        (Icons.share_outlined, 'Compartilhar', () => _shareMessage(message, context)),
+        if (_canRegenerateMessage(index))
+          (Icons.refresh_rounded, 'Regenerar resposta', () => _regenerateResponse(index)),
+      ],
+      (Icons.download_outlined, 'Baixar', () => _downloadMessage(message)),
+    ];
+    final action = await showModalBottomSheet<VoidCallback>(
       context: context,
+      showDragHandle: true,
       builder: (sheetContext) => SafeArea(
-        child: Wrap(
+        child: ListView(
+          shrinkWrap: true,
           children: [
-            ListTile(
-              leading: const Icon(Icons.copy_rounded),
-              title: const Text('Copiar'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _copyMessage(message);
-              },
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                TimeOfDay.fromDateTime(message.timestamp.toLocal()).format(sheetContext),
+                style: TextStyle(color: sheetContext.gama.textSecondary, fontSize: 12),
+              ),
             ),
-            if (!message.isUser) ...[
+            for (final (icon, label, perform) in actions)
               ListTile(
-                leading: const Icon(Icons.volume_up_rounded),
-                title: const Text('Ouvir resposta'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  unawaited(_speakMessage(message));
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.share_rounded),
-                title: const Text('Compartilhar'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  unawaited(_shareMessage(message, context));
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.download_rounded),
-                title: const Text('Baixar'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  unawaited(_downloadMessage(message));
-                },
-              ),
-              if (!_isLoading &&
-                  index == _messages.length - 1 &&
-                  index > 0 &&
-                  _messages[index - 1].isUser &&
-                  _canReusePrompt(_messages[index - 1]))
-                ListTile(
-                  leading: const Icon(Icons.refresh_rounded),
-                  title: const Text('Regenerar resposta'),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    unawaited(_regenerateResponse(index));
-                  },
-                ),
-            ],
-            if (message.isUser && !_isLoading && _canReusePrompt(message))
-              ListTile(
-                leading: const Icon(Icons.edit_rounded),
-                title: const Text('Editar e reenviar'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _editAndResend(message, index);
-                },
+                leading: Icon(icon),
+                title: Text(label),
+                onTap: () => Navigator.pop(sheetContext, perform),
               ),
           ],
         ),
       ),
     );
+    if (!mounted || index >= _messages.length || _messages[index].id != message.id) return;
+    action?.call();
   }
 
-  Widget _messageActions(Message message, int index, bool isLastAssistant) {
-    final isUser = message.isUser;
-    final canRegenerate =
-        isLastAssistant &&
-        index > 0 &&
-        _messages[index - 1].isUser &&
-        _canReusePrompt(_messages[index - 1]);
+  Widget _messageInteraction(Message message, int index, {required Widget child}) {
+    return SelectionArea(
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => setState(() {
+          _selectedMessageId = _selectedMessageId == message.id ? null : message.id;
+        }),
+        onLongPress: () => _showMessageContextMenu(message, index),
+        child: child,
+      ),
+    );
+  }
 
-    Future<void> handleMore(String action) async {
-      switch (action) {
-        case 'copy':
-          await _copyMessage(message);
-          break;
-        case 'retry':
-          await _retryUserMessage(message, index);
-          break;
-        case 'download':
-          await _downloadMessage(message);
-          break;
-        case 'share':
-          await _shareMessage(message, context);
-          break;
-      }
-    }
-
-    final moreButton = PopupMenuButton<String>(
-      tooltip: 'Mais ações',
-      icon: const Icon(Icons.more_horiz_rounded),
-      onSelected: (action) => unawaited(handleMore(action)),
-      itemBuilder: (context) => [
-        const PopupMenuItem(value: 'copy', child: Text('Copiar')),
-        if (isUser && !_isLoading && _canReusePrompt(message))
-          const PopupMenuItem(value: 'retry', child: Text('Tentar novamente')),
-        if (isUser)
-          const PopupMenuItem(value: 'download', child: Text('Baixar')),
-        if (!isUser) ...[
-          const PopupMenuItem(value: 'download', child: Text('Baixar')),
-          const PopupMenuItem(value: 'share', child: Text('Compartilhar')),
+  Widget _messageActions(Message message, int index, {required bool selected}) {
+    return Wrap(
+      spacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      alignment: message.isUser ? WrapAlignment.end : WrapAlignment.start,
+      children: [
+        if (selected)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              TimeOfDay.fromDateTime(message.timestamp.toLocal()).format(context),
+              style: TextStyle(color: context.gama.textSecondary, fontSize: 12),
+            ),
+          ),
+        _messageAction(Icons.copy_rounded, 'Copiar', () => _copyMessage(message)),
+        if (message.isUser && !_isLoading && _canReusePrompt(message))
+          _messageAction(Icons.edit_outlined, 'Editar e reenviar', () => _editAndResend(message, index)),
+        if (!message.isUser) ...[
+          _messageAction(Icons.volume_up_outlined, 'Ouvir resposta', () => _speakMessage(message)),
+          if (_canRegenerateMessage(index))
+            _messageAction(Icons.refresh_rounded, 'Regenerar resposta', () => _regenerateResponse(index)),
         ],
+        _messageAction(Icons.more_horiz_rounded, 'Mais ações', () => _showMessageContextMenu(message, index)),
       ],
     );
+  }
 
-    if (isUser) {
-      return Align(
-        alignment: Alignment.centerRight,
-        child: SizedBox(height: 38, child: moreButton),
-      );
-    }
+  Widget _messageAction(IconData icon, String label, VoidCallback onPressed) {
+    return IconButton(
+      tooltip: label,
+      icon: Icon(icon, size: 18),
+      color: context.gama.textMuted,
+      onPressed: onPressed,
+    );
+  }
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Wrap(
-        spacing: 2,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          IconButton(
-            tooltip: 'Copiar',
-            onPressed: () => _copyMessage(message),
-            icon: const Icon(Icons.copy_rounded),
-            color: context.gama.textMuted,
-            iconSize: 17,
-          ),
-          IconButton(
-            tooltip: 'Ouvir mensagem',
-            onPressed: () => unawaited(_speakMessage(message)),
-            icon: const Icon(Icons.volume_up_rounded),
-            color: context.gama.textMuted,
-            iconSize: 18,
-          ),
-          if (canRegenerate)
-            IconButton(
-              tooltip: 'Regenerar resposta',
-              onPressed: () => _regenerateResponse(index),
-              icon: const Icon(Icons.refresh_rounded),
-              color: context.gama.textMuted,
-              iconSize: 18,
-            ),
-          moreButton,
-        ],
+  Widget _messageDate(DateTime timestamp, DateTime now) {
+    final local = timestamp.toLocal();
+    final daysAgo = localDaysAgo(local, now);
+    final dateFormat = MaterialLocalizations.of(context);
+    final label = switch (daysAgo) {
+      0 => 'Hoje',
+      1 => 'Ontem',
+      _ => local.year == now.year
+          ? dateFormat.formatShortMonthDay(local)
+          : dateFormat.formatCompactDate(local),
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Semantics(
+        header: true,
+        child: Text(label, style: TextStyle(
+          color: context.gama.textSecondary,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        )),
       ),
     );
   }
@@ -4056,6 +4040,8 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final isWideDesktop = widget.persistentSidebar;
+    final today = DateTime.now();
+    final lastAssistantIndex = _messages.lastIndexWhere((message) => message.isAssistant);
     final topInset =
         MediaQuery.paddingOf(context).top +
         _headerControlHeight +
@@ -4212,7 +4198,12 @@ class _ChatScreenState extends State<ChatScreen> {
                                           !isUser &&
                                           index == _messages.length - 1;
 
-                                      return TweenAnimationBuilder<double>(
+                                      final isSelected = _selectedMessageId == msg.id;
+                                      final startsDay =
+                                          index == _historyWindow.start(_messages.length) ||
+                                          localDaysAgo(msg.timestamp, _messages[index - 1].timestamp) != 0;
+
+                                      final bubble = TweenAnimationBuilder<double>(
                                         key: ValueKey(
                                           'message-enter-${msg.id}',
                                         ),
@@ -4247,14 +4238,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                           label: isUser
                                               ? 'Você disse'
                                               : '$kAppName respondeu',
-                                          child: GestureDetector(
-                                            behavior:
-                                                HitTestBehavior.translucent,
-                                            onLongPress: () =>
-                                                _showMessageContextMenu(
-                                                  msg,
-                                                  index,
-                                                ),
+                                          child: _messageInteraction(
+                                            msg,
+                                            index,
                                             child: RepaintBoundary(
                                               key: _messageKeyFor(msg.id),
                                               child: Center(
@@ -4361,6 +4347,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                     .trim()
                                                                     .isNotEmpty)
                                                                   MessageContentView(
+                                                                    standaloneSelection: false,
                                                                     content: msg
                                                                         .content,
                                                                     isUser:
@@ -4557,6 +4544,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                                 )
                                                               else
                                                                 MemoizedMessageContentView(
+                                                                  standaloneSelection: false,
                                                                   referenceCode:
                                                                       !isUser &&
                                                                           widget.oficinaKind ==
@@ -4880,14 +4868,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                                             ],
                                                           ),
                                                         ),
-                                                        if (msg.content
-                                                            .trim()
-                                                            .isNotEmpty)
-                                                          _messageActions(
-                                                            msg,
-                                                            index,
-                                                            isLastAssistant,
-                                                          ),
+                                                        if ((isSelected || index == lastAssistantIndex) &&
+                                                            msg.content.trim().isNotEmpty)
+                                                          _messageActions(msg, index, selected: isSelected),
                                                         if (!isUser)
                                                           const SizedBox(
                                                             height: 12,
@@ -4911,6 +4894,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                                 child: child,
                                               ),
                                             ),
+                                      );
+                                      if (!startsDay) return bubble;
+                                      return Column(
+                                        key: ValueKey('message-day-${msg.id}'),
+                                        children: [_messageDate(msg.timestamp, today), bubble],
                                       );
                                     },
                                   ),
@@ -5324,7 +5312,7 @@ class _VideoGenerationProgress extends StatelessWidget {
                 color: i == current
                     ? context.gama.textSecondary
                     : context.gama.textMuted,
-                fontSize: 10,
+                fontSize: 12,
               ),
             ),
             if (i < labels.length - 1)
@@ -5685,7 +5673,7 @@ class _ImageGenerationPlaceholder extends StatelessWidget {
                 ),
                 Text(
                   aspectRatio,
-                  style: TextStyle(color: context.gama.textMuted, fontSize: 11),
+                  style: TextStyle(color: context.gama.textMuted, fontSize: 12),
                 ),
               ],
             ),

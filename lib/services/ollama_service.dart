@@ -263,9 +263,15 @@ class OllamaService {
     }
   }
 
-  Future<bool> ping() async {
+  Future<bool> ping({String? baseUrl}) async {
+    final probe = baseUrl == null
+        ? null
+        : Dio(BaseOptions(
+            baseUrl: baseUrl.replaceFirst(RegExp(r'/+$'), ''),
+            connectTimeout: const Duration(seconds: 5),
+          ));
     try {
-      final dio = _client();
+      final dio = probe ?? _client();
       final response = await dio.get(
         '/health',
         options: Options(
@@ -283,6 +289,8 @@ class OllamaService {
     } catch (error, stack) {
       logSwallowed(error, stack);
       return false;
+    } finally {
+      probe?.close();
     }
   }
 

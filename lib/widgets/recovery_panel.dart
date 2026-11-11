@@ -174,13 +174,13 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
                   Expanded(child: Text(_status(job['status']?.toString() ?? ''),
                       style: TextStyle(color: g.textPrimary, fontSize: 12))),
                   if (job['status'] == 'completed')
-                    Text('No histórico', style: TextStyle(color: g.textMuted, fontSize: 11)),
+                    Text('No histórico', style: TextStyle(color: g.textMuted, fontSize: 12)),
                 ]),
               ),
               Padding(
                 padding: const EdgeInsets.only(top: 3, bottom: 7),
                 child: Text('Respostas concluídas aparecem nas respectivas conversas.',
-                    style: TextStyle(color: g.textMuted, fontSize: 11)),
+                    style: TextStyle(color: g.textMuted, fontSize: 12)),
               ),
             ],
             if (artifacts.isNotEmpty) ...[
@@ -219,7 +219,7 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
               ),
             ],
             Text('Arquivos no servidor são temporários; salve uma cópia no dispositivo.',
-                style: TextStyle(color: g.textMuted, fontSize: 11)),
+                style: TextStyle(color: g.textMuted, fontSize: 12)),
           ],
         ],
       ),

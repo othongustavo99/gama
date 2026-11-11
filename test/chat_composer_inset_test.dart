@@ -13,6 +13,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   late Directory fixtureDirectory;
   late String conversationId;
+  late String datedConversationId;
+  late DateTime lastTimestamp;
 
   setUpAll(() async {
     SharedPreferences.setMockInitialValues({});
@@ -34,6 +36,38 @@ void main() {
           role: 'user',
           content: 'Mensagem $index',
           conversationId: conversationId,
+        ),
+        sync: false,
+      );
+    }
+    final dated = await service.createDetachedConversation();
+    datedConversationId = dated.id;
+    final now = DateTime.now();
+    final yesterday = DateTime(now.year, now.month, now.day - 1, 14, 23);
+    lastTimestamp = DateTime(now.year, now.month, now.day, 15, 47);
+    final entries = [
+      ('user', 'Pedido antigo', yesterday),
+      (
+        'assistant',
+        'Resposta antiga',
+        yesterday.add(const Duration(minutes: 1)),
+      ),
+      ('user', 'Pedido novo', lastTimestamp),
+      (
+        'assistant',
+        'Resposta nova',
+        lastTimestamp.add(const Duration(minutes: 1)),
+      ),
+    ];
+    for (final (index, entry) in entries.indexed) {
+      final (role, content, timestamp) = entry;
+      await service.addMessage(
+        Message(
+          id: 'dated-$index',
+          role: role,
+          content: content,
+          timestamp: timestamp,
+          conversationId: datedConversationId,
         ),
         sync: false,
       );
@@ -94,4 +128,52 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('Exibe datas e ações no último turno ou na mensagem tocada', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatScreen(
+            conversationId: datedConversationId,
+            persistentSidebar: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ontem'), findsOneWidget);
+    expect(find.text('Hoje'), findsOneWidget);
+    expect(find.byTooltip('Ouvir resposta'), findsOneWidget);
+    expect(find.byTooltip('Editar e reenviar'), findsNothing);
+
+    await tester.tap(find.text('Resposta antiga', findRichText: true));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Ouvir resposta'), findsNWidgets(2));
+
+    final user = find.text('Pedido novo', findRichText: true);
+    await tester.tap(user);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Ouvir resposta'), findsOneWidget);
+    expect(find.byTooltip('Editar e reenviar'), findsOneWidget);
+    final time = TimeOfDay.fromDateTime(lastTimestamp)
+        .format(tester.element(user));
+    expect(find.text(time), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Mais ações').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Editar e reenviar'), findsOneWidget);
+    expect(find.text('Tentar novamente'), findsOneWidget);
+    expect(find.text('Baixar'), findsOneWidget);
+    Navigator.of(tester.element(find.text('Baixar'))).pop();
+    await tester.pumpAndSettle();
+
+    await tester.longPress(user);
+    await tester.pumpAndSettle();
+    expect(find.text('Editar e reenviar'), findsOneWidget);
+    expect(find.text('Tentar novamente'), findsOneWidget);
+    expect(find.text('Baixar'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

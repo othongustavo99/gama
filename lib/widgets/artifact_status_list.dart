@@ -57,7 +57,7 @@ class _VideoArtifactPoster extends StatelessWidget {
                       duration == null ? 'Vídeo' : '$duration s',
                       style: TextStyle(
                         color: context.gama.textPrimary,
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -66,7 +66,7 @@ class _VideoArtifactPoster extends StatelessWidget {
                       resolution ?? '',
                       style: TextStyle(
                         color: context.gama.textPrimary,
-                        fontSize: 11,
+                        fontSize: 12,
                       ),
                     ),
                   ],

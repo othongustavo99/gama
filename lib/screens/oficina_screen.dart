@@ -17,7 +17,6 @@ import '../models/oficina_kind.dart';
 import '../services/conversation_service.dart';
 import 'chat_screen.dart';
 import '../widgets/app_drawer.dart';
-import 'images_screen.dart';
 import 'library_screen.dart';
 import 'plugins_screen.dart';
 import 'projects_screen.dart';
@@ -340,7 +339,6 @@ class _OficinaScaffold extends StatelessWidget {
         await service.selectConversation(id);
         if (context.mounted) _returnToHome(context, desktop);
       },
-      onOpenImages: () => _open(context, const ImagesScreen(), desktop),
       onOpenLibrary: () => _open(context, const LibraryScreen(), desktop),
       onOpenProjects: () => _open(context, const ProjectsScreen(), desktop),
       onOpenScheduled: () => _open(context, const ScheduledScreen(), desktop),
@@ -685,7 +683,7 @@ class _RecentCreation extends StatelessWidget {
                         kind.label.toUpperCase(),
                         style: TextStyle(
                           color: color,
-                          fontSize: 9,
+                          fontSize: 12,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.8,
                         ),
@@ -708,7 +706,7 @@ class _RecentCreation extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: g.textMuted,
-                          fontSize: 10.5,
+                          fontSize: 12,
                           height: 1.3,
                         ),
                       ),

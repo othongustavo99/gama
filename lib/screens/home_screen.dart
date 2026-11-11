@@ -15,7 +15,6 @@ import '../services/conversation_sync_service.dart';
 import '../models/oficina_kind.dart';
 import '../widgets/app_drawer.dart';
 import 'chat_screen.dart';
-import 'images_screen.dart';
 import 'library_screen.dart';
 import 'plugins_screen.dart';
 import 'projects_screen.dart';
@@ -164,10 +163,6 @@ class _HomeScreenState extends State<HomeScreen> {
             onSelectConversation: (id) async {
               await _service.selectConversation(id);
               if (mounted && !desktopSidebar) Navigator.pop(context);
-            },
-            onOpenImages: () {
-              if (!desktopSidebar) Navigator.pop(context);
-              _push(const ImagesScreen());
             },
             onOpenLibrary: () {
               if (!desktopSidebar) Navigator.pop(context);

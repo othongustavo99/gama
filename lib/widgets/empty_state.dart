@@ -363,7 +363,7 @@ class EmptyState extends StatelessWidget {
                 textAlign: wide ? TextAlign.left : TextAlign.center,
                 style: TextStyle(
                   color: g.textMuted,
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.0,
                 ),
@@ -410,7 +410,7 @@ class EmptyState extends StatelessWidget {
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
                                         color: g.textSecondary,
-                                        fontSize: 11,
+                                        fontSize: 12,
                                         height: 1.4,
                                       ),
                                     ),

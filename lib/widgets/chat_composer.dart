@@ -1,8 +1,10 @@
+import 'dart:collection';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../core/gama_colors.dart';
 import '../core/gama_page_route.dart';
@@ -95,9 +97,100 @@ class ChatComposer extends StatelessWidget {
           defaultTargetPlatform == TargetPlatform.linux);
 
   void _submitIfPossible() {
-    if (!isLoading && attachmentsReady &&
+    if (!isLoading &&
+        attachmentsReady &&
         (controller.text.trim().isNotEmpty || hasAttachments)) {
       onSend();
+    }
+  }
+
+  Future<void> _showMediaSettings(BuildContext context) async {
+    final isVideo = oficinaKind == OficinaKind.video;
+    var ratio = isVideo ? videoAspectRatio : imageAspectRatio;
+    var style = imageStyle;
+    var duration = videoDuration;
+    var resolution = videoResolution;
+    var audio = videoGenerateAudio;
+
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * .82,
+            ),
+            child: ListView(
+              primary: false,
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              children: [
+                Text(
+                  isVideo ? 'Ajustes de vídeo' : 'Ajustes de imagem',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                _MediaOptions(
+                  title: 'Proporção',
+                  options: const ['1:1', '16:9', '9:16'],
+                  selected: ratio,
+                  label: (value) => value,
+                  onSelected: (value) => setSheetState(() => ratio = value),
+                ),
+                if (isVideo) ...[
+                  _MediaOptions(
+                    title: 'Duração',
+                    options: const [5, 10, 15],
+                    selected: duration,
+                    label: (value) => '${value}s',
+                    onSelected: (value) =>
+                        setSheetState(() => duration = value),
+                  ),
+                  _MediaOptions(
+                    title: 'Resolução',
+                    options: const ['480p', '720p'],
+                    selected: resolution,
+                    label: (value) => value,
+                    onSelected: (value) =>
+                        setSheetState(() => resolution = value),
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Áudio'),
+                    value: audio,
+                    onChanged: (value) => setSheetState(() => audio = value),
+                  ),
+                ] else
+                  _MediaOptions(
+                    title: 'Estilo',
+                    options: const ['Automático', 'Foto', 'Ilustração', '3D'],
+                    selected: style,
+                    label: (value) => value,
+                    onSelected: (value) => setSheetState(() => style = value),
+                  ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Aplicar ajustes'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (applied != true || !context.mounted) return;
+    if (isVideo) {
+      if (ratio != videoAspectRatio) onVideoAspectRatioChanged?.call(ratio);
+      if (duration != videoDuration) onVideoDurationChanged?.call(duration);
+      if (resolution != videoResolution)
+        onVideoResolutionChanged?.call(resolution);
+      if (audio != videoGenerateAudio) onVideoGenerateAudioChanged?.call(audio);
+    } else {
+      if (ratio != imageAspectRatio) onImageAspectRatioChanged?.call(ratio);
+      if (style != imageStyle) onImageStyleChanged?.call(style);
     }
   }
 
@@ -143,515 +236,528 @@ class ChatComposer extends StatelessWidget {
           top: false,
           child: Padding(
             padding: EdgeInsets.fromLTRB(12, 10, 12, bottomGap),
-            child: Container(
-                padding: const EdgeInsets.all(1),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      palette.accent.withValues(alpha: focused ? 0.75 : 0.35),
-                      palette.border,
-                      palette.accentCool.withValues(
-                        alpha: focused ? 0.44 : 0.28,
-                      ),
-                    ],
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: palette.accentGlow.withValues(
-                        alpha: focused ? 0.50 : 0.22,
-                      ),
-                      blurRadius: focused ? 28 : 16,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(23),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 13, sigmaY: 13),
-                    child: AnimatedContainer(
-                      duration: reducedMotion
-                          ? Duration.zero
-                          : const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      decoration: BoxDecoration(
-                        color: palette.surfaceCard.withValues(alpha: 0.72),
-                        borderRadius: BorderRadius.circular(22),
-                        border: Border.all(
-                          color: isListening || focused
-                              ? palette.accent.withValues(alpha: 0.54)
-                              : Colors.transparent,
-                          width: 1,
+            child: _ComposerSurface(
+              highlighted: focused || isListening,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 8, 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (oficinaShortcuts.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Wrap(
+                          spacing: 7,
+                          runSpacing: 5,
+                          children: oficinaShortcuts,
                         ),
-                        boxShadow: isListening
-                            ? [
-                                BoxShadow(
-                                  color: context.gama.accentGlow,
-                                  blurRadius: 16,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ]
-                            : const [],
                       ),
-                      padding: const EdgeInsets.fromLTRB(14, 12, 8, 8),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                    if (oficinaKind == OficinaKind.imagem ||
+                        oficinaKind == OficinaKind.video)
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8,
                         children: [
-                          if (oficinaShortcuts.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Wrap(
-                                spacing: 7,
-                                runSpacing: 5,
-                                children: oficinaShortcuts,
-                              ),
+                          TextButton.icon(
+                            onPressed: isLoading
+                                ? null
+                                : () => _showMediaSettings(context),
+                            icon: const Icon(Icons.tune_rounded, size: 18),
+                            label: const Text('Ajustes'),
+                          ),
+                          Text(
+                            oficinaKind == OficinaKind.video
+                                ? '$videoAspectRatio · ${videoDuration}s · $videoResolution'
+                                : '$imageAspectRatio · $imageStyle',
+                            style: TextStyle(
+                              color: palette.textSecondary,
+                              fontSize: 12,
                             ),
-                          if (oficinaKind == OficinaKind.imagem)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Wrap(
-                                spacing: 7,
-                                runSpacing: 6,
-                                children: [
-                                  for (final ratio in const [
-                                    '1:1',
-                                    '16:9',
-                                    '9:16',
-                                  ])
-                                    ChoiceChip(
-                                      label: Text(ratio),
-                                      selected: imageAspectRatio == ratio,
-                                      onSelected: (_) =>
-                                          onImageAspectRatioChanged?.call(
-                                            ratio,
-                                          ),
-                                      visualDensity: VisualDensity.compact,
-                                      labelStyle: TextStyle(
-                                        color: context.gama.textSecondary,
-                                        fontSize: 11,
-                                      ),
+                          ),
+                        ],
+                      ),
+                    if (showSlashMenu && slashCommands.isNotEmpty)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        constraints: const BoxConstraints(maxHeight: 190),
+                        child: Material(
+                          color: context.gama.surfaceCard,
+                          shape: RoundedRectangleBorder(
+                            side: BorderSide(color: context.gama.border),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: ListView(
+                            primary: false,
+                            shrinkWrap: true,
+                            children: [
+                              for (final command in slashCommands)
+                                ListTile(
+                                  dense: true,
+                                  title: Text(
+                                    command.$1,
+                                    style: TextStyle(
+                                      color: context.gama.textPrimary,
                                     ),
-                                  for (final style in const [
-                                    'Automático',
-                                    'Foto',
-                                    'Ilustração',
-                                    '3D',
-                                  ])
-                                    ChoiceChip(
-                                      label: Text(style),
-                                      selected: imageStyle == style,
-                                      onSelected: (_) =>
-                                          onImageStyleChanged?.call(style),
-                                      visualDensity: VisualDensity.compact,
-                                      labelStyle: TextStyle(
-                                        color: context.gama.textSecondary,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          if (oficinaKind == OficinaKind.video)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Wrap(
-                                spacing: 7,
-                                runSpacing: 6,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  for (final seconds in const [5, 10, 15])
-                                    ChoiceChip(
-                                      label: Text('${seconds}s'),
-                                      selected: videoDuration == seconds,
-                                      onSelected: (_) => onVideoDurationChanged?.call(seconds),
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                  for (final res in const ['480p', '720p'])
-                                    ChoiceChip(
-                                      label: Text(res),
-                                      selected: videoResolution == res,
-                                      onSelected: (_) => onVideoResolutionChanged?.call(res),
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                  for (final ratio in const ['16:9', '9:16', '1:1'])
-                                    ChoiceChip(
-                                      label: Text(ratio),
-                                      selected: videoAspectRatio == ratio,
-                                      onSelected: (_) => onVideoAspectRatioChanged?.call(ratio),
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                  FilterChip(
-                                    label: const Text('Áudio'),
-                                    selected: videoGenerateAudio,
-                                    onSelected: onVideoGenerateAudioChanged,
-                                    visualDensity: VisualDensity.compact,
                                   ),
-                                ],
-                              ),
-                            ),
-                          if (showSlashMenu && slashCommands.isNotEmpty)
-                            Container(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              constraints: const BoxConstraints(maxHeight: 190),
-                              child: Material(
-                                color: context.gama.surfaceCard,
-                                shape: RoundedRectangleBorder(
-                                  side: BorderSide(color: context.gama.border),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                clipBehavior: Clip.antiAlias,
-                                child: ListView(
-                                  primary: false,
-                                  shrinkWrap: true,
-                                  children: [
-                                    for (final command in slashCommands)
-                                      ListTile(
-                                        dense: true,
-                                        title: Text(
-                                          command.$1,
-                                          style: TextStyle(
-                                            color: context.gama.textPrimary,
-                                          ),
-                                        ),
-                                        subtitle: Text(
-                                          command.$2,
-                                          style: TextStyle(
-                                            color: context.gama.textMuted,
-                                          ),
-                                        ),
-                                        onTap: () => onSlashCommandSelected?.call(
-                                          command.$1,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          // Campo de texto — SEM caixa de fundo por trás do placeholder.
-                          // No desktop, Enter envia e Shift+Enter continua inserindo
-                          // uma quebra de linha (o atalho não é registrado com Shift).
-                          CallbackShortcuts(
-                            bindings: <ShortcutActivator, VoidCallback>{
-                              if (_usesDesktopEnterShortcut &&
-                                  onPasteImage != null)
-                                const SingleActivator(
-                                  LogicalKeyboardKey.keyV,
-                                  control: true,
-                                ): onPasteImage!,
-                            },
-                            child: Shortcuts(
-                              shortcuts: shortcuts,
-                              child: Actions(
-                                actions: <Type, Action<Intent>>{
-                                  _SendMessageIntent:
-                                      CallbackAction<_SendMessageIntent>(
-                                        onInvoke: (_) {
-                                          _submitIfPossible();
-                                          return null;
-                                        },
-                                      ),
-                                },
-                                child: TextField(
-                                  controller: controller,
-                                  focusNode: focusNode,
-                                  style: TextStyle(
-                                    color: context.gama.textPrimary,
-                                    fontSize: 15.5,
-                                    height: 1.35,
-                                    letterSpacing: 0.1,
-                                  ),
-                                  maxLines: 5,
-                                  minLines: 1,
-                                  textCapitalization:
-                                      TextCapitalization.sentences,
-                                  decoration: InputDecoration(
-                                    hintText: isListening
-                                        ? 'Ouvindo… o texto aparece aqui'
-                                        : placeholder ??
-                                              'Escreva sua mensagem...',
-                                    hintStyle: TextStyle(
+                                  subtitle: Text(
+                                    command.$2,
+                                    style: TextStyle(
                                       color: context.gama.textMuted,
-                                      fontSize: 14.5,
-                                    ),
-                                    // Remove qualquer fundo/caixa do tema global.
-                                    filled: false,
-                                    fillColor: Colors.transparent,
-                                    border: InputBorder.none,
-                                    enabledBorder: InputBorder.none,
-                                    focusedBorder: InputBorder.none,
-                                    disabledBorder: InputBorder.none,
-                                    errorBorder: InputBorder.none,
-                                    focusedErrorBorder: InputBorder.none,
-                                    isDense: true,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 2,
-                                      vertical: 6,
                                     ),
                                   ),
-                                  onSubmitted: (_) => _submitIfPossible(),
-                                  onChanged: onChanged,
+                                  onTap: () =>
+                                      onSlashCommandSelected?.call(command.$1),
                                 ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    // Campo de texto — SEM caixa de fundo por trás do placeholder.
+                    // No desktop, Enter envia e Shift+Enter continua inserindo
+                    // uma quebra de linha (o atalho não é registrado com Shift).
+                    CallbackShortcuts(
+                      bindings: <ShortcutActivator, VoidCallback>{
+                        if (_usesDesktopEnterShortcut && onPasteImage != null)
+                          const SingleActivator(
+                            LogicalKeyboardKey.keyV,
+                            control: true,
+                          ): onPasteImage!,
+                      },
+                      child: Shortcuts(
+                        shortcuts: shortcuts,
+                        child: Actions(
+                          actions: <Type, Action<Intent>>{
+                            _SendMessageIntent:
+                                CallbackAction<_SendMessageIntent>(
+                                  onInvoke: (_) {
+                                    _submitIfPossible();
+                                    return null;
+                                  },
+                                ),
+                          },
+                          child: TextField(
+                            controller: controller,
+                            focusNode: focusNode,
+                            style: TextStyle(
+                              color: context.gama.textPrimary,
+                              fontSize: 15.5,
+                              height: 1.35,
+                              letterSpacing: 0.1,
+                            ),
+                            maxLines: 5,
+                            minLines: 1,
+                            textCapitalization: TextCapitalization.sentences,
+                            decoration: InputDecoration(
+                              hintText: isListening
+                                  ? 'Ouvindo… o texto aparece aqui'
+                                  : placeholder ?? 'Escreva sua mensagem...',
+                              hintStyle: TextStyle(
+                                color: context.gama.textMuted,
+                                fontSize: 14.5,
+                              ),
+                              // Remove qualquer fundo/caixa do tema global.
+                              filled: false,
+                              fillColor: Colors.transparent,
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              disabledBorder: InputBorder.none,
+                              errorBorder: InputBorder.none,
+                              focusedErrorBorder: InputBorder.none,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                                vertical: 6,
+                              ),
+                            ),
+                            onSubmitted: (_) => _submitIfPossible(),
+                            onChanged: onChanged,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    // Ferramentas responsivas: no celular estreito os
+                    // controles ficam em duas linhas, sem reduzir a area
+                    // de toque ou ocultar a conversa por voz.
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final scaledLabel = MediaQuery.textScalerOf(context)
+                            .scale(14);
+                        final compact =
+                            constraints.maxWidth <
+                                (oficinaKind == null ? 356 : 402) ||
+                            scaledLabel > 17;
+                        final actions = <Widget>[
+                          IconButton(
+                            onPressed: isLoading
+                                ? null
+                                : () {
+                                    HapticFeedback.selectionClick();
+                                    onAttach();
+                                  },
+                            tooltip: 'Anexar arquivo ou imagem',
+                            constraints: const BoxConstraints(
+                              minWidth: 44,
+                              minHeight: 44,
+                            ),
+                            padding: EdgeInsets.zero,
+                            color: context.gama.textSecondary,
+                            icon: const Icon(
+                              Icons.add_circle_outline_rounded,
+                              size: 22,
+                            ),
+                          ),
+                          GestureDetector(
+                            onLongPress: onOpenVoice == null || isLoading
+                                ? null
+                                : () {
+                                    HapticFeedback.mediumImpact();
+                                    onOpenVoice!();
+                                  },
+                            child: IconButton(
+                              onPressed: isLoading
+                                  ? null
+                                  : () {
+                                      HapticFeedback.selectionClick();
+                                      onToggleListen();
+                                    },
+                              tooltip: isListening
+                                  ? 'Parar ditado'
+                                  : 'Ditar mensagem',
+                              constraints: const BoxConstraints(
+                                minWidth: 44,
+                                minHeight: 44,
+                              ),
+                              padding: EdgeInsets.zero,
+                              color: isListening
+                                  ? context.gama.accent
+                                  : context.gama.textSecondary,
+                              icon: Icon(
+                                isListening
+                                    ? Icons.mic
+                                    : Icons.mic_none_rounded,
+                                size: 22,
                               ),
                             ),
                           ),
-                          const SizedBox(height: 6),
-                          // Ferramentas responsivas: no celular estreito os
-                          // controles ficam em duas linhas, sem reduzir a area
-                          // de toque ou ocultar a conversa por voz.
-                          LayoutBuilder(
-                            builder: (context, constraints) {
-                              final scaledLabel = MediaQuery.textScalerOf(
-                                context,
-                              ).scale(14);
-                              final compact = constraints.maxWidth <
-                                      (oficinaKind == null ? 356 : 402) ||
-                                  scaledLabel > 17;
-                              final actions = <Widget>[
-                                IconButton(
-                                  onPressed: isLoading
+                          // A conversa por voz deve estar disponível
+                          // também por teclado, toque e leitor de tela;
+                          // nao apenas por long press no microfone.
+                          if (onOpenVoice != null)
+                            IconButton(
+                              onPressed: isLoading
+                                  ? null
+                                  : () {
+                                      HapticFeedback.selectionClick();
+                                      onOpenVoice!();
+                                    },
+                              tooltip: 'Abrir conversa por voz',
+                              constraints: const BoxConstraints(
+                                minWidth: 44,
+                                minHeight: 44,
+                              ),
+                              padding: EdgeInsets.zero,
+                              color: context.gama.textSecondary,
+                              icon: const Icon(
+                                Icons.record_voice_over_outlined,
+                                size: 22,
+                              ),
+                            ),
+                          if (oficinaKind == null)
+                            ValueListenableBuilder<TextEditingValue>(
+                              valueListenable: controller,
+                              builder: (context, value, _) {
+                                final canSpeakSend =
+                                    !isLoading &&
+                                    attachmentsReady &&
+                                    (value.text.trim().isNotEmpty ||
+                                        hasAttachments);
+                                return IconButton(
+                                  onPressed: !canSpeakSend
                                       ? null
                                       : () {
-                                          HapticFeedback.selectionClick();
-                                          onAttach();
+                                          HapticFeedback.lightImpact();
+                                          onSpeakSend();
                                         },
-                                  tooltip: 'Anexar arquivo ou imagem',
+                                  tooltip: 'Enviar e ouvir resposta',
                                   constraints: const BoxConstraints(
-                                    minWidth: 44, minHeight: 44,
+                                    minWidth: 44,
+                                    minHeight: 44,
                                   ),
                                   padding: EdgeInsets.zero,
-                                  color: context.gama.textSecondary,
+                                  color: context.gama.accent,
                                   icon: const Icon(
-                                    Icons.add_circle_outline_rounded, size: 22,
+                                    Icons.graphic_eq_rounded,
+                                    size: 22,
                                   ),
-                                ),
-                                GestureDetector(
-                                  onLongPress: onOpenVoice == null || isLoading
-                                      ? null
-                                      : () {
-                                          HapticFeedback.mediumImpact();
-                                          onOpenVoice!();
-                                        },
-                                  child: IconButton(
-                                    onPressed: isLoading
-                                        ? null
-                                        : () {
-                                            HapticFeedback.selectionClick();
-                                            onToggleListen();
-                                          },
-                                    tooltip: isListening
-                                        ? 'Parar ditado'
-                                        : 'Ditar mensagem',
-                                    constraints: const BoxConstraints(
-                                      minWidth: 44, minHeight: 44,
-                                    ),
-                                    padding: EdgeInsets.zero,
-                                    color: isListening
-                                        ? context.gama.accent
-                                        : context.gama.textSecondary,
-                                    icon: Icon(
-                                      isListening
-                                          ? Icons.mic
-                                          : Icons.mic_none_rounded,
-                                      size: 22,
-                                    ),
-                                  ),
-                                ),
-                                // A conversa por voz deve estar disponível
-                                // também por teclado, toque e leitor de tela;
-                                // nao apenas por long press no microfone.
-                                if (onOpenVoice != null)
-                                  IconButton(
-                                    onPressed: isLoading
-                                        ? null
-                                        : () {
-                                            HapticFeedback.selectionClick();
-                                            onOpenVoice!();
-                                          },
-                                    tooltip: 'Abrir conversa por voz',
-                                    constraints: const BoxConstraints(
-                                      minWidth: 44, minHeight: 44,
-                                    ),
-                                    padding: EdgeInsets.zero,
-                                    color: context.gama.textSecondary,
-                                    icon: const Icon(
-                                      Icons.record_voice_over_outlined,
-                                      size: 22,
-                                    ),
-                                  ),
-                                if (oficinaKind == null)
-                                  ValueListenableBuilder<TextEditingValue>(
-                                    valueListenable: controller,
-                                    builder: (context, value, _) {
-                                      final canSpeakSend = !isLoading &&
-                                          attachmentsReady &&
-                                          (value.text.trim().isNotEmpty ||
-                                              hasAttachments);
-                                      return IconButton(
-                                        onPressed: !canSpeakSend
-                                            ? null
-                                            : () {
-                                                HapticFeedback.lightImpact();
-                                                onSpeakSend();
-                                              },
-                                        tooltip: 'Enviar e ouvir resposta',
-                                        constraints: const BoxConstraints(
-                                          minWidth: 44, minHeight: 44,
-                                        ),
-                                        padding: EdgeInsets.zero,
-                                        color: context.gama.accent,
-                                        icon: const Icon(
-                                          Icons.graphic_eq_rounded, size: 22,
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ValueListenableBuilder<TextEditingValue>(
-                                  valueListenable: controller,
-                                  builder: (context, value, _) {
-                                    final canSend = attachmentsReady &&
-                                        (value.text.trim().isNotEmpty ||
-                                            hasAttachments);
-                                    final actionEnabled = isLoading
-                                        ? onStop != null
-                                        : canSend;
-                                    return Tooltip(
-                                      message: isLoading
-                                          ? 'Parar geração'
+                                );
+                              },
+                            ),
+                          ValueListenableBuilder<TextEditingValue>(
+                            valueListenable: controller,
+                            builder: (context, value, _) {
+                              final canSend =
+                                  attachmentsReady &&
+                                  (value.text.trim().isNotEmpty ||
+                                      hasAttachments);
+                              final actionEnabled = isLoading
+                                  ? onStop != null
+                                  : canSend;
+                              return Tooltip(
+                                message: isLoading
+                                    ? 'Parar geração'
+                                    : canSend
+                                    ? 'Enviar mensagem'
+                                    : attachmentsReady
+                                    ? 'Digite uma mensagem para enviar'
+                                    : 'Aguarde os anexos',
+                                child: Semantics(
+                                  button: true,
+                                  enabled: actionEnabled,
+                                  label: isLoading
+                                      ? 'Parar geração'
+                                      : 'Enviar mensagem',
+                                  child: AnimatedScale(
+                                    duration: reducedMotion
+                                        ? Duration.zero
+                                        : const Duration(milliseconds: 210),
+                                    curve: Curves.easeOutBack,
+                                    scale: (canSend || isLoading) ? 1 : 0.92,
+                                    child: Material(
+                                      color: isLoading
+                                          ? palette.accent.withValues(
+                                              alpha: 0.55,
+                                            )
                                           : canSend
-                                              ? 'Enviar mensagem'
-                                              : attachmentsReady
-                                                  ? 'Digite uma mensagem para enviar'
-                                                  : 'Aguarde os anexos',
-                                      child: Semantics(
-                                        button: true,
-                                        enabled: actionEnabled,
-                                        label: isLoading
-                                            ? 'Parar geração'
-                                            : 'Enviar mensagem',
-                                        child: AnimatedScale(
-                                          duration: reducedMotion
-                                              ? Duration.zero
-                                              : const Duration(
-                                                  milliseconds: 210),
-                                          curve: Curves.easeOutBack,
-                                          scale: (canSend || isLoading)
-                                              ? 1 : 0.92,
-                                          child: Material(
-                                            color: isLoading
-                                                ? palette.accent.withValues(
-                                                    alpha: 0.55,
-                                                  )
-                                                : canSend
-                                                    ? palette.accent
-                                                    : palette.surfaceHover,
-                                            borderRadius:
-                                                BorderRadius.circular(14),
-                                            elevation: canSend && !isLoading
-                                                ? 3 : 0,
-                                            shadowColor: palette.accentGlow,
-                                            child: InkWell(
-                                              borderRadius:
-                                                  BorderRadius.circular(14),
-                                              canRequestFocus: actionEnabled,
-                                              onTap: isLoading
-                                                  ? onStop == null
-                                                      ? null
-                                                      : () {
-                                                          HapticFeedback
-                                                              .lightImpact();
-                                                          onStop!();
-                                                        }
-                                                  : canSend
-                                                      ? () {
-                                                          HapticFeedback
-                                                              .lightImpact();
-                                                          _submitIfPossible();
-                                                        }
-                                                      : null,
-                                              child: SizedBox(
-                                                width: 44,
-                                                height: 44,
-                                                child: AnimatedSwitcher(
-                                                  duration: reducedMotion
-                                                      ? Duration.zero
-                                                      : const Duration(
-                                                          milliseconds: 160),
-                                                  child: Icon(
-                                                    key: ValueKey(isLoading),
-                                                    isLoading
-                                                        ? Icons.stop_rounded
-                                                        : Icons.arrow_upward_rounded,
-                                                    color: Colors.white,
-                                                    size: isLoading ? 22 : 20,
+                                          ? palette.accent
+                                          : palette.surfaceHover,
+                                      borderRadius: BorderRadius.circular(14),
+                                      elevation: canSend && !isLoading ? 3 : 0,
+                                      shadowColor: palette.accentGlow,
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(14),
+                                        canRequestFocus: actionEnabled,
+                                        onTap: isLoading
+                                            ? onStop == null
+                                                  ? null
+                                                  : () {
+                                                      HapticFeedback.lightImpact();
+                                                      onStop!();
+                                                    }
+                                            : canSend
+                                            ? () {
+                                                HapticFeedback.lightImpact();
+                                                _submitIfPossible();
+                                              }
+                                            : null,
+                                        child: SizedBox(
+                                          width: 44,
+                                          height: 44,
+                                          child: AnimatedSwitcher(
+                                            duration: reducedMotion
+                                                ? Duration.zero
+                                                : const Duration(
+                                                    milliseconds: 160,
                                                   ),
-                                                ),
-                                              ),
+                                            child: Icon(
+                                              key: ValueKey(isLoading),
+                                              isLoading
+                                                  ? Icons.stop_rounded
+                                                  : Icons.arrow_upward_rounded,
+                                              color: Colors.white,
+                                              size: isLoading ? 22 : 20,
                                             ),
                                           ),
                                         ),
                                       ),
-                                    );
-                                  },
-                                ),
-                              ];
-                              final modeChip = _ModeChip(
-                                label: oficinaKind == null
-                                    ? 'Oficina'
-                                    : '${oficinaKind!.label}  ×',
-                                icon: oficinaKind?.icon ??
-                                    Icons.handyman_rounded,
-                                selected: true,
-                                onTap: oficinaKind == null
-                                    ? () => Navigator.of(context).push(
-                                          GamaPageRoute<void>(
-                                            builder: (_) =>
-                                                const OficinaScreen(),
-                                          ),
-                                        )
-                                    : (onExitOficina ?? () {}),
-                              );
-                              if (compact) {
-                                return Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    modeChip,
-                                    const SizedBox(height: 4),
-                                    Align(
-                                      alignment: Alignment.centerRight,
-                                      child: Wrap(
-                                        alignment: WrapAlignment.end,
-                                        crossAxisAlignment:
-                                            WrapCrossAlignment.center,
-                                        spacing: 2,
-                                        runSpacing: 2,
-                                        children: actions,
-                                      ),
                                     ),
-                                  ],
-                                );
-                              }
-                              return Row(
-                                children: [
-                                  modeChip,
-                                  const Spacer(),
-                                  ...actions,
-                                ],
+                                  ),
+                                ),
                               );
                             },
                           ),
-                        ],
-                      ),
+                        ];
+                        final modeChip = _ModeChip(
+                          label: oficinaKind == null
+                              ? 'Oficina'
+                              : '${oficinaKind!.label}  ×',
+                          icon: oficinaKind?.icon ?? Icons.handyman_rounded,
+                          selected: true,
+                          onTap: oficinaKind == null
+                              ? () => Navigator.of(context).push(
+                                  GamaPageRoute<void>(
+                                    builder: (_) => const OficinaScreen(),
+                                  ),
+                                )
+                              : (onExitOficina ?? () {}),
+                        );
+                        if (compact) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              modeChip,
+                              const SizedBox(height: 4),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: Wrap(
+                                  alignment: WrapAlignment.end,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  spacing: 2,
+                                  runSpacing: 2,
+                                  children: actions,
+                                ),
+                              ),
+                            ],
+                          );
+                        }
+                        return Row(
+                          children: [modeChip, const Spacer(), ...actions],
+                        );
+                      },
                     ),
-                  ),
+                  ],
                 ),
               ),
             ),
+          ),
         );
       },
+    );
+  }
+}
+
+class _MediaOptions<T> extends StatelessWidget {
+  const _MediaOptions({
+    required this.title,
+    required this.options,
+    required this.selected,
+    required this.label,
+    required this.onSelected,
+  });
+
+  final String title;
+  final List<T> options;
+  final T selected;
+  final String Function(T) label;
+  final ValueChanged<T> onSelected;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final option in options)
+              ChoiceChip(
+                label: Text(label(option)),
+                selected: option == selected,
+                onSelected: (_) => onSelected(option),
+              ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _ComposerSurface extends StatefulWidget {
+  const _ComposerSurface({required this.highlighted, required this.child});
+
+  final bool highlighted;
+  final Widget child;
+
+  @override
+  State<_ComposerSurface> createState() => _ComposerSurfaceState();
+}
+
+class _ComposerSurfaceState extends State<_ComposerSurface> {
+  final Queue<bool> _slowFrames = Queue<bool>();
+  bool _monitoring = false;
+  bool _solidForPerformance = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _monitorFrames(
+      !kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.android &&
+          !MediaQuery.disableAnimationsOf(context) &&
+          !_solidForPerformance,
+    );
+  }
+
+  void _monitorFrames(bool enabled) {
+    if (_monitoring == enabled) return;
+    _monitoring = enabled;
+    final scheduler = SchedulerBinding.instance;
+    if (enabled) {
+      scheduler.addTimingsCallback(_onFrameTimings);
+    } else {
+      scheduler.removeTimingsCallback(_onFrameTimings);
+      _slowFrames.clear();
+    }
+  }
+
+  void _onFrameTimings(List<FrameTiming> timings) {
+    if (!mounted) return;
+    final refreshRate = View.of(context).display.refreshRate;
+    final budget = Duration(
+      microseconds: (1000000 / (refreshRate > 0 ? refreshRate : 60)).round(),
+    );
+    for (final timing in timings) {
+      if (_slowFrames.length == 8) _slowFrames.removeFirst();
+      _slowFrames.add(
+        timing.buildDuration > budget || timing.rasterDuration > budget,
+      );
+      if (_slowFrames.length == 8 &&
+          _slowFrames.where((slow) => slow).length >= 3) {
+        setState(() => _solidForPerformance = true);
+        _monitorFrames(false);
+        return;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _monitorFrames(false);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.gama;
+    final solid =
+        _solidForPerformance || MediaQuery.disableAnimationsOf(context);
+    final surface = DecoratedBox(
+      decoration: BoxDecoration(
+        color: solid
+            ? palette.surfaceCard
+            : palette.surfaceCard.withValues(alpha: .88),
+        borderRadius: BorderRadius.circular(23),
+        border: Border.all(
+          color: widget.highlighted ? palette.accent : palette.border,
+        ),
+      ),
+      child: widget.child,
+    );
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(23),
+      child: solid
+          ? surface
+          : BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 7, sigmaY: 7),
+              child: surface,
+            ),
     );
   }
 }

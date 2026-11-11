@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/constants.dart';
+import '../utils/local_calendar.dart';
 import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
 import 'gama_floating_page.dart';
@@ -18,7 +19,6 @@ import '../utils/error_logger.dart';
 class AppDrawer extends StatefulWidget {
   final VoidCallback onNewChat;
   final Function(String conversationId) onSelectConversation;
-  final VoidCallback? onOpenImages;
   final VoidCallback? onOpenLibrary;
   final VoidCallback? onOpenProjects;
   final VoidCallback? onOpenScheduled;
@@ -31,7 +31,6 @@ class AppDrawer extends StatefulWidget {
     super.key,
     required this.onNewChat,
     required this.onSelectConversation,
-    this.onOpenImages,
     this.onOpenLibrary,
     this.onOpenProjects,
     this.onOpenScheduled,
@@ -51,7 +50,6 @@ class _AppDrawerState extends State<AppDrawer> {
 
   VoidCallback get onNewChat => widget.onNewChat;
   Function(String) get onSelectConversation => widget.onSelectConversation;
-  VoidCallback? get onOpenImages => widget.onOpenImages;
   VoidCallback? get onOpenLibrary => widget.onOpenLibrary;
   VoidCallback? get onOpenProjects => widget.onOpenProjects;
   VoidCallback? get onOpenScheduled => widget.onOpenScheduled;
@@ -260,11 +258,6 @@ class _AppDrawerState extends State<AppDrawer> {
               icon: Icons.menu_book_outlined,
               label: 'Biblioteca',
               onTap: onOpenLibrary ?? () => _comingSoon(context),
-            ),
-            _DrawerItem(
-              icon: Icons.image_outlined,
-              label: 'Imagens',
-              onTap: onOpenImages ?? () => _comingSoon(context),
             ),
             _DrawerItem(
               icon: Icons.folder_outlined,
@@ -701,11 +694,8 @@ Map<String, List<Conversation>> _groupRecentConversations(
     'Mais antigas': [],
   };
   final now = DateTime.now();
-  final today = DateTime(now.year, now.month, now.day);
   for (final conversation in conversations) {
-    final updated = conversation.updatedAt.toLocal();
-    final day = DateTime(updated.year, updated.month, updated.day);
-    final daysAgo = today.difference(day).inDays;
+    final daysAgo = localDaysAgo(conversation.updatedAt, now);
     final group = daysAgo <= 0
         ? 'Hoje'
         : daysAgo == 1
@@ -845,7 +835,7 @@ class _ConversationTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: context.gama.textMuted,
-                        fontSize: 11,
+                        fontSize: 12,
                       ),
                     ),
               dense: true,

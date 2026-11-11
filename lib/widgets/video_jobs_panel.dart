@@ -179,7 +179,7 @@ class _VideoJobsPanelState extends State<VideoJobsPanel> {
                       job['filename']?.toString() ?? 'Vídeo gerado',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: g.textMuted, fontSize: 11),
+                      style: TextStyle(color: g.textMuted, fontSize: 12),
                     ),
                   ],
                 ),

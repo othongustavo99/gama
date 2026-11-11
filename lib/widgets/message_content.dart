@@ -378,6 +378,7 @@ class _FullscreenImageDialog extends StatelessWidget {
 class MessageContentView extends StatelessWidget {
   final String content;
   final bool isUser;
+  final bool standaloneSelection;
   final bool streaming;
   final void Function(String? href)? onTapLink;
   final List<GeneratedImageData> additionalImages;
@@ -388,6 +389,7 @@ class MessageContentView extends StatelessWidget {
     super.key,
     required this.content,
     required this.isUser,
+    this.standaloneSelection = true,
     this.streaming = false,
     this.onTapLink,
     this.additionalImages = const [],
@@ -561,8 +563,7 @@ class MessageContentView extends StatelessWidget {
       }
     }
 
-    return SelectionArea(
-      child: Column(
+    final body = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (images.isNotEmpty) ...[
@@ -607,8 +608,8 @@ class MessageContentView extends StatelessWidget {
             ),
           ],
         ],
-      ),
     );
+    return standaloneSelection ? SelectionArea(child: body) : body;
   }
 
   static String _linkifyBareUrls(String text) {
@@ -629,6 +630,7 @@ class MessageContentView extends StatelessWidget {
 class MemoizedMessageContentView extends StatefulWidget {
   final String content;
   final bool isUser;
+  final bool standaloneSelection;
   final String? referenceCode;
   final String? referenceLanguage;
   final void Function(String? href)? onTapLink;
@@ -638,6 +640,7 @@ class MemoizedMessageContentView extends StatefulWidget {
     super.key,
     required this.content,
     required this.isUser,
+    this.standaloneSelection = true,
     this.referenceCode,
     this.referenceLanguage,
     this.onTapLink,
@@ -672,6 +675,7 @@ class _MemoizedMessageContentViewState
   Widget _createContent() => MessageContentView(
     content: widget.content,
     isUser: widget.isUser,
+    standaloneSelection: widget.standaloneSelection,
     onTapLink: widget.onTapLink,
     additionalImages: widget.additionalImages,
     referenceCode: widget.referenceCode,
@@ -683,6 +687,7 @@ class _MemoizedMessageContentViewState
     super.didUpdateWidget(oldWidget);
     if (oldWidget.content != widget.content ||
         oldWidget.isUser != widget.isUser ||
+        oldWidget.standaloneSelection != widget.standaloneSelection ||
         oldWidget.referenceCode != widget.referenceCode ||
         oldWidget.referenceLanguage != widget.referenceLanguage ||
         !_sameGeneratedImages(oldWidget.additionalImages, widget.additionalImages)) {
@@ -916,7 +921,6 @@ class _MarkdownPartViewState extends State<_MarkdownPartView> {
             referenceCode: widget.referenceCode,
             referenceLanguage: widget.referenceLanguage,
             isUser: widget.isUser,
-            textStyle: widget.textStyle,
           ),
         ),
       );
@@ -1196,7 +1200,7 @@ class _CopyableCodeBlock extends StatefulWidget {
   final String? referenceCode;
   final String? referenceLanguage;
   final bool isUser;
-  final TextStyle textStyle;
+  final bool fullscreen;
 
   const _CopyableCodeBlock({
     super.key,
@@ -1205,7 +1209,7 @@ class _CopyableCodeBlock extends StatefulWidget {
     this.referenceCode,
     this.referenceLanguage,
     required this.isUser,
-    required this.textStyle,
+    this.fullscreen = false,
   });
 
   @override
@@ -1215,15 +1219,8 @@ class _CopyableCodeBlock extends StatefulWidget {
 final _highlightedCodeCache = <(String, String, GamaPalette), TextSpan>{};
 
 class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
-  final ScrollController _codeScrollController = ScrollController();
   bool _copied = false;
-  bool _saved = false;
   bool _wrapLines = true;
-  bool _expanded = false;
-
-  bool get _isLong =>
-      widget.code.length > 2800 || '\n'.allMatches(widget.code).length > 36;
-
   String get _extension {
     switch (_normalizeCodeLanguage(widget.language)) {
       case 'dart':
@@ -1265,12 +1262,6 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
     }
   }
 
-  @override
-  void dispose() {
-    _codeScrollController.dispose();
-    super.dispose();
-  }
-
   Future<void> _copy() async {
     try {
       await Clipboard.setData(ClipboardData(text: widget.code));
@@ -1301,9 +1292,9 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
         filename: 'gama_codigo_$stamp.$_extension',
       );
       if (!mounted) return;
-      setState(() => _saved = true);
-      await Future<void>.delayed(const Duration(milliseconds: 1400));
-      if (mounted) setState(() => _saved = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Código salvo')),
+      );
     } catch (error, stack) {
       showFriendlyError(
         mounted ? context : null,
@@ -1392,6 +1383,31 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
     );
   }
 
+  bool get _canCompare {
+    final original = widget.referenceCode;
+    final referenceLanguage = widget.referenceLanguage?.trim() ?? '';
+    return !widget.isUser &&
+        original != null &&
+        original.trim().isNotEmpty &&
+        (referenceLanguage.isEmpty ||
+            widget.language.trim().isEmpty ||
+            _normalizeCodeLanguage(referenceLanguage) ==
+                _normalizeCodeLanguage(widget.language));
+  }
+
+  void _openFullscreen() {
+    Navigator.of(context).push(GamaPageRoute<void>(
+      builder: (_) => _CopyableCodeBlock(
+        code: widget.code,
+        language: widget.language,
+        referenceCode: widget.referenceCode,
+        referenceLanguage: widget.referenceLanguage,
+        isUser: widget.isUser,
+        fullscreen: true,
+      ),
+    ));
+  }
+
   void _moreAction(String value) {
     switch (value) {
       case 'wrap':
@@ -1403,198 +1419,126 @@ class _CopyableCodeBlockState extends State<_CopyableCodeBlock> {
       case 'workshop':
         _openInOficina();
         return;
+      case 'compare':
+        Navigator.of(context).push(GamaPageRoute<void>(
+          builder: (_) => CodeDiffScreen(
+            original: widget.referenceCode!,
+            proposed: widget.code,
+            language: widget.language,
+          ),
+        ));
+        return;
     }
   }
+
+  Widget _copyButton(GamaPalette palette) => IconButton(
+    tooltip: _copied ? 'Código copiado' : 'Copiar código',
+    onPressed: _copy,
+    color: _copied ? palette.success : palette.textSecondary,
+    icon: Icon(_copied ? Icons.check_rounded : Icons.copy_rounded, size: 17),
+  );
+
+  Widget _menu(GamaPalette palette) => PopupMenuButton<String>(
+    tooltip: 'Mais opções do código',
+    icon: Icon(Icons.more_vert_rounded, color: palette.textSecondary, size: 19),
+    onSelected: _moreAction,
+    itemBuilder: (_) => [
+      if (widget.fullscreen)
+        PopupMenuItem(
+          value: 'wrap',
+          child: Text(_wrapLines ? 'Desativar quebra de linha' : 'Ativar quebra de linha'),
+        ),
+      const PopupMenuItem(value: 'save', child: Text('Baixar como arquivo')),
+      if (!widget.isUser)
+        const PopupMenuItem(value: 'workshop', child: Text('Abrir código na Oficina')),
+      if (_canCompare)
+        const PopupMenuItem(value: 'compare', child: Text('Comparar com original')),
+    ],
+  );
 
   @override
   Widget build(BuildContext context) {
     final palette = context.gama;
-    final background = palette.surfaceInput;
-    final border = palette.border;
-    final muted = palette.textSecondary;
-    final highlighted = _highlightedText(palette);
+    final title = widget.language.isEmpty ? 'Código' : widget.language;
     final content = SelectionArea(
       child: RichText(
-        text: highlighted,
-        maxLines: _isLong && !_expanded ? 24 : null,
-        overflow: _isLong && !_expanded ? TextOverflow.fade : TextOverflow.clip,
-        softWrap: _wrapLines,
-        textWidthBasis: TextWidthBasis.parent,
+        text: _highlightedText(palette),
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: widget.fullscreen ? null : 12,
+        overflow: widget.fullscreen ? TextOverflow.clip : TextOverflow.fade,
+        softWrap: !widget.fullscreen || _wrapLines,
       ),
     );
+
+    if (widget.fullscreen) {
+      return Scaffold(
+        backgroundColor: palette.surfaceInput,
+        appBar: AppBar(
+          title: Text(title),
+          actions: [_copyButton(palette), _menu(palette)],
+        ),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: _wrapLines
+                ? content
+                : SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: content,
+                  ),
+          ),
+        ),
+      );
+    }
 
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: background,
+        color: palette.surfaceInput,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: border),
+        border: Border.all(color: palette.border),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxWidth < 430;
-              return Container(
-                height: 48,
-                padding: const EdgeInsets.only(left: 12, right: 6),
-                decoration: BoxDecoration(
-                  color: palette.surfaceElevated,
-                  border: Border(bottom: BorderSide(color: border)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.code_rounded, size: 16, color: muted),
-                    const SizedBox(width: 7),
-                    Expanded(
-                      child: Text(
-                        widget.language.isEmpty ? 'Código' : widget.language,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: muted, fontSize: 12,
-                          fontWeight: FontWeight.w600),
-                      ),
+          Container(
+            height: 40,
+            padding: const EdgeInsets.only(left: 12, right: 4),
+            color: palette.surfaceElevated,
+            child: Row(
+              children: [
+                Icon(Icons.code_rounded, size: 16, color: palette.textSecondary),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                     ),
-                    if (compact)
-                      PopupMenuButton<String>(
-                        tooltip: 'Mais opções do código',
-                        icon: Icon(Icons.more_vert_rounded, color: muted),
-                        onSelected: _moreAction,
-                        itemBuilder: (_) => [
-                          PopupMenuItem<String>(
-                            value: 'wrap',
-                            child: Text(_wrapLines
-                                ? 'Desativar quebra de linha'
-                                : 'Ativar quebra de linha'),
-                          ),
-                          const PopupMenuItem<String>(
-                            value: 'save',
-                            child: Text('Baixar como arquivo'),
-                          ),
-                          if (!widget.isUser)
-                            const PopupMenuItem<String>(
-                              value: 'workshop',
-                              child: Text('Abrir código na Oficina'),
-                            ),
-                        ],
-                      )
-                    else ...[
-                      IconButton(
-                        tooltip: _wrapLines
-                            ? 'Desativar quebra de linha'
-                            : 'Ativar quebra de linha',
-                        constraints: const BoxConstraints.tightFor(
-                          width: 48, height: 48),
-                        onPressed: () => setState(() => _wrapLines = !_wrapLines),
-                        icon: Icon(_wrapLines
-                            ? Icons.wrap_text_rounded : Icons.notes_rounded,
-                          size: 17),
-                        color: muted,
-                      ),
-                      IconButton(
-                        tooltip: 'Baixar como arquivo',
-                        constraints: const BoxConstraints.tightFor(
-                          width: 48, height: 48),
-                        onPressed: _save,
-                        icon: Icon(_saved
-                            ? Icons.check_rounded : Icons.download_outlined,
-                          size: 18),
-                        color: _saved ? palette.success : muted,
-                      ),
-                      if (!widget.isUser)
-                        IconButton(
-                          tooltip: 'Abrir código na Oficina',
-                          constraints: const BoxConstraints.tightFor(
-                            width: 44, height: 48),
-                          onPressed: _openInOficina,
-                          icon: const Icon(Icons.handyman_outlined, size: 18),
-                          color: context.gama.accentBright,
-                        ),
-                    ],
-                    IconButton(
-                      tooltip: _copied ? 'Código copiado' : 'Copiar código',
-                      constraints: const BoxConstraints.tightFor(
-                        width: 48, height: 48),
-                      onPressed: _copy,
-                      icon: Icon(_copied
-                          ? Icons.check_rounded : Icons.copy_rounded,
-                        size: 17),
-                      color: _copied ? palette.success : muted,
-                    ),
-                  ],
+                  ),
                 ),
-              );
-            },
-          ),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 420),
-            child: Scrollbar(
-              controller: _codeScrollController,
-              thumbVisibility: true,
-              child: SingleChildScrollView(
-                controller: _codeScrollController,
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-                child: _wrapLines
-                    ? content
-                    : SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: content,
-                      ),
-              ),
+                _copyButton(palette),
+                _menu(palette),
+              ],
             ),
           ),
-          if (!widget.isUser &&
-              widget.referenceCode != null &&
-              widget.referenceCode!.trim().isNotEmpty &&
-              (widget.referenceLanguage == null ||
-                  widget.referenceLanguage!.trim().isEmpty ||
-                  widget.language.trim().isEmpty ||
-                  _normalizeCodeLanguage(widget.referenceLanguage!) ==
-                      _normalizeCodeLanguage(widget.language)))
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () async {
-                  await HapticFeedback.selectionClick();
-                  if (!context.mounted) return;
-                  await Navigator.of(context).push(
-                    GamaPageRoute<void>(
-                      builder: (_) => CodeDiffScreen(
-                        original: widget.referenceCode!,
-                        proposed: widget.code,
-                        language: widget.language,
-                      ),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.difference_outlined, size: 16),
-                label: const Text('Comparar com original'),
-                style: TextButton.styleFrom(
-                  foregroundColor: context.gama.accent,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                ),
-              ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 2),
+            child: content,
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _openFullscreen,
+              icon: const Icon(Icons.open_in_full_rounded, size: 16),
+              label: const Text('Expandir'),
             ),
-          if (_isLong && !_expanded)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () => setState(() => _expanded = true),
-                icon: const Icon(Icons.expand_more_rounded, size: 18),
-                label: const Text('Mostrar código completo'),
-              ),
-            )
-          else if (_isLong)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () => setState(() => _expanded = false),
-                icon: const Icon(Icons.expand_less_rounded, size: 18),
-                label: const Text('Recolher código'),
-              ),
-            ),
+          ),
         ],
       ),
     );

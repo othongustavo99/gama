@@ -180,7 +180,7 @@ class _AccountBody extends StatelessWidget {
               Text('PLANO ATUAL', style: TextStyle(
                 color: context.gama.textMuted,
                 fontWeight: FontWeight.w700,
-                fontSize: 11,
+                fontSize: 12,
                 letterSpacing: 1,
               )),
               const SizedBox(height: 8),
