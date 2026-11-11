@@ -9,12 +9,9 @@ import '../models/conversation.dart';
 import '../models/oficina_kind.dart';
 import '../services/conversation_service.dart';
 import '../services/identity_service.dart';
-import '../services/auth_service.dart';
-import '../screens/login_screen.dart';
 import '../screens/settings_screen.dart';
+import '../screens/account_screen.dart';
 import '../screens/commercial_screen.dart';
-import '../screens/memory_screen.dart';
-import '../utils/error_logger.dart';
 
 class AppDrawer extends StatefulWidget {
   final VoidCallback onNewChat;
@@ -50,6 +47,11 @@ class _AppDrawerState extends State<AppDrawer> {
   final TextEditingController _conversationSearchController = TextEditingController();
   String conversationQuery = '';
 
+  void _updateSearch(String value) {
+    if (value == conversationQuery) return;
+    setState(() => conversationQuery = value);
+  }
+
   VoidCallback get onNewChat => widget.onNewChat;
   Function(String) get onSelectConversation => widget.onSelectConversation;
   VoidCallback? get onOpenLibrary => widget.onOpenLibrary;
@@ -70,6 +72,12 @@ class _AppDrawerState extends State<AppDrawer> {
     if (!persistent) Navigator.pop(context);
   }
 
+  void _openPage(BuildContext context, Widget page) {
+    final navigator = Navigator.of(context);
+    _close(context);
+    navigator.push(GamaPageRoute<void>(builder: (_) => page));
+  }
+
   @override
   Widget build(BuildContext context) {
     final service = ConversationService.instance;
@@ -88,69 +96,65 @@ class _AppDrawerState extends State<AppDrawer> {
             child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ===== MINI PERFIL =====
+            // PERFIL — área única, sem uma segunda ação de criar conversa.
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(12, 14, 8, 14),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      context.gama.surfaceCard,
-                      context.gama.surfaceElevated,
-                    ],
+              child: Material(
+                color: context.gama.surfaceCard,
+                borderRadius: BorderRadius.circular(16),
+                child: InkWell(
+                  key: const Key('drawer-account-entry'),
+                  onTap: () => _openPage(context, const AccountScreen()),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: context.gama.borderSoft),
+                    ),
+                    child: Row(
+                      children: [
+                        const _ProfileAvatar(size: 40),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                IdentityService.instance.displayName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: context.gama.textPrimary,
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                'Conta e privacidade',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: context.gama.textMuted,
+                                  fontSize: 11.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (onOpenWelcome != null)
+                          IconButton(
+                            icon: const Icon(Icons.help_outline_rounded, size: 19),
+                            tooltip: 'Conheça a $kAppName',
+                            onPressed: onOpenWelcome,
+                          ),
+                        Icon(Icons.chevron_right_rounded,
+                            size: 18, color: context.gama.textMuted),
+                        const SizedBox(width: 3),
+                      ],
+                    ),
                   ),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: context.gama.borderSoft),
-                ),
-                child: Row(
-                  children: [
-                    const _ProfileAvatar(size: 44),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            IdentityService.instance.displayName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: context.gama.textPrimary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            IdentityService.instance.email ??
-                                (IdentityService.instance.provider == 'google'
-                                    ? 'Conta Google'
-                                    : 'Conta de convidado'),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: context.gama.textMuted,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (onOpenWelcome != null)
-                      IconButton(
-                        icon: const Icon(Icons.help_outline_rounded, size: 20),
-                        tooltip: 'Conheça a $kAppName',
-                        onPressed: onOpenWelcome,
-                      ),
-                    IconButton(
-                      icon: const Icon(Icons.edit_square, size: 20),
-                      tooltip: 'Nova conversa',
-                      onPressed: onNewChat,
-                    ),
-                  ],
                 ),
               ),
             ),
@@ -206,98 +210,82 @@ class _AppDrawerState extends State<AppDrawer> {
               ),
             ),
 
-            const SizedBox(height: 4),
-
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Material(
-                color: context.gama.surfaceCard,
-                borderRadius: BorderRadius.circular(16),
-                child: InkWell(
-                  onTap: onOpenOficina ?? () => _comingSoon(context),
-                  borderRadius: BorderRadius.circular(16),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: context.gama.surfaceCard,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: context.gama.border,
-                        width: 1,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.handyman_rounded,
-                          color: context.gama.accent, size: 20),
-                        const SizedBox(width: 10),
-                        Text('Oficina', style: TextStyle(
-                          color: context.gama.textPrimary,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        )),
-                        const Spacer(),
-                        Icon(Icons.arrow_forward_ios_rounded,
-                          color: context.gama.textMuted, size: 13),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+            const SizedBox(height: 8),
+            const _SectionLabel('Ferramentas'),
+            _DrawerItem(
+              icon: Icons.handyman_outlined,
+              label: 'Oficina',
+              onTap: onOpenOficina ?? () => _comingSoon(context),
+              emphasized: true,
             ),
-
-            // ===== MENU PRINCIPAL =====
             _DrawerItem(
               icon: Icons.menu_book_outlined,
               label: 'Biblioteca',
               onTap: onOpenLibrary ?? () => _comingSoon(context),
             ),
             _DrawerItem(
-              icon: Icons.folder_outlined,
-              label: 'Conversas fixadas',
-              onTap: onOpenProjects ?? () => _comingSoon(context),
-            ),
-            _DrawerItem(
               icon: Icons.schedule_outlined,
-              label: 'Agendado',
+              label: 'Agendamentos',
               onTap: onOpenScheduled ?? () => _comingSoon(context),
             ),
             _DrawerItem(
               icon: Icons.extension_outlined,
-              label: 'Preferências',
+              label: 'Recursos e integrações',
               onTap: onOpenPlugins ?? () => _comingSoon(context),
             ),
-            _DrawerItem(
-              icon: Icons.psychology_outlined,
-              label: 'Memória',
-              onTap: () {
-                _close(context);
-                Navigator.of(context)
-                    .push(GamaPageRoute(builder: (_) => const MemoryScreen()));
-              },
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+              child: Divider(color: context.gama.divider, height: 1),
             ),
 
+            // HISTÓRICO: conversas fixadas permanecem aqui, e a página
+            // completa continua disponível sem ocupar um item principal.
             Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Divider(color: context.gama.divider, height: 1),
+              padding: const EdgeInsets.fromLTRB(16, 0, 10, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text('Histórico', style: TextStyle(
+                      color: context.gama.textMuted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    )),
+                  ),
+                  if (onOpenProjects != null)
+                    TextButton.icon(
+                      key: const Key('drawer-pinned-shortcut'),
+                      onPressed: onOpenProjects,
+                      style: TextButton.styleFrom(
+                        foregroundColor: context.gama.textSecondary,
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                      ),
+                      icon: const Icon(Icons.push_pin_outlined, size: 15),
+                      label: const Text('Fixadas', style: TextStyle(fontSize: 12)),
+                    ),
+                ],
+              ),
             ),
 
             // ===== CONVERSAS =====
             Expanded(
               child: ListenableBuilder(
                 listenable: service,
-                builder: (context, _) => StatefulBuilder(
-                  builder: (context, setLocalState) {
+                builder: (context, _) {
+
                     final query = conversationQuery.trim().toLowerCase();
-                    final pinned = service.pinnedConversations
-                        .where((c) => _matchesConversation(service, c, query))
-                        .toList();
-                    final recent = service.recentConversations
-                        .where((c) => _matchesConversation(service, c, query))
-                        .toList();
+                    // Uma única busca calcula tanto o filtro quanto o trecho
+                    // exibido; evita reler as mesmas mensagens duas vezes.
+                    final snippets = <String, String?>{};
+                    bool matches(Conversation c) {
+                      if (query.isEmpty) return true;
+                      final snippet = _conversationSnippet(service, c, query);
+                      if (snippet == null) return false;
+                      snippets[c.id] = snippet;
+                      return true;
+                    }
+                    final pinned = service.pinnedConversations.where(matches).toList();
+                    final recent = service.recentConversations.where(matches).toList();
                     final groupedRecent = _groupRecentConversations(recent);
                     final hasAny = pinned.isNotEmpty || recent.isNotEmpty;
 
@@ -310,7 +298,7 @@ class _AppDrawerState extends State<AppDrawer> {
                             focusNode: widget.searchFocusNode,
                             textInputAction: TextInputAction.search,
                             decoration: InputDecoration(
-                              hintText: 'Buscar título ou mensagem',
+                              hintText: 'Buscar conversas',
                               prefixIcon: const Icon(
                                 Icons.search_rounded,
                                 size: 19,
@@ -323,10 +311,10 @@ class _AppDrawerState extends State<AppDrawer> {
                                         Icons.close_rounded,
                                         size: 18,
                                       ),
-                                      onPressed: () => setLocalState(() {
-                                        conversationQuery = '';
+                                      onPressed: () {
                                         _conversationSearchController.clear();
-                                      }),
+                                        _updateSearch('');
+                                      },
                                     ),
                               filled: true,
                               fillColor: context.gama.surfaceCard,
@@ -351,8 +339,7 @@ class _AppDrawerState extends State<AppDrawer> {
                               color: context.gama.textPrimary,
                               fontSize: 13,
                             ),
-                            onChanged: (value) =>
-                                setLocalState(() => conversationQuery = value),
+                            onChanged: _updateSearch,
                           ),
                         ),
                         Expanded(
@@ -380,11 +367,7 @@ class _AppDrawerState extends State<AppDrawer> {
                                       ...pinned.map(
                                         (c) => _ConversationTile(
                                           conversation: c,
-                                          searchSnippet: _conversationSnippet(
-                                            service,
-                                            c,
-                                            query,
-                                          ),
+                                          searchSnippet: snippets[c.id],
                                           isSelected:
                                               c.id ==
                                               service.currentConversationId,
@@ -404,11 +387,7 @@ class _AppDrawerState extends State<AppDrawer> {
                                         ...entry.value.map(
                                           (c) => _ConversationTile(
                                             conversation: c,
-                                            searchSnippet: _conversationSnippet(
-                                              service,
-                                              c,
-                                              query,
-                                            ),
+                                            searchSnippet: snippets[c.id],
                                             isSelected:
                                                 c.id ==
                                                 service.currentConversationId,
@@ -428,61 +407,35 @@ class _AppDrawerState extends State<AppDrawer> {
                         ),
                       ],
                     );
-                  },
-                ),
+                },
               ),
             ),
 
-            // ===== RODAPÉ COMPACTO =====
-            // Ações continuam acessíveis, liberando espaço para o histórico.
+            // RODAPÉ: atalhos legíveis; o encerramento da sessão fica
+            // em Conta e privacidade, com confirmação explícita.
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
               child: Divider(color: context.gama.divider, height: 1),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
               child: Row(
                 children: [
                   Expanded(
-                    child: Center(
-                      child: _DrawerFooterButton(
-                        icon: Icons.workspace_premium_outlined,
-                        tooltip: 'Meu plano e consumo',
-                        foreground: context.gama.accent,
-                        onPressed: () {
-                          final navigator = Navigator.of(context);
-                          _close(context);
-                          navigator.push(GamaPageRoute(
-                            builder: (_) => const CommercialScreen(),
-                          ));
-                        },
-                      ),
+                    child: _DrawerFooterButton(
+                      icon: Icons.workspace_premium_outlined,
+                      label: 'Meu plano',
+                      foreground: context.gama.accent,
+                      onPressed: () => _openPage(context, const CommercialScreen()),
                     ),
                   ),
+                  const SizedBox(width: 8),
                   Expanded(
-                    child: Center(
-                      child: _DrawerFooterButton(
-                        icon: Icons.settings_outlined,
-                        tooltip: 'Configurações',
-                        foreground: context.gama.textSecondary,
-                        onPressed: () {
-                          final navigator = Navigator.of(context);
-                          _close(context);
-                          navigator.push(GamaPageRoute(
-                            builder: (_) => const SettingsScreen(),
-                          ));
-                        },
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: Center(
-                      child: _DrawerFooterButton(
-                        icon: Icons.logout_rounded,
-                        tooltip: 'Sair da conta',
-                        foreground: context.gama.error,
-                        onPressed: () => _logout(context),
-                      ),
+                    child: _DrawerFooterButton(
+                      icon: Icons.settings_outlined,
+                      label: 'Configurações',
+                      foreground: context.gama.textSecondary,
+                      onPressed: () => _openPage(context, const SettingsScreen()),
                     ),
                   ),
                 ],
@@ -496,33 +449,10 @@ class _AppDrawerState extends State<AppDrawer> {
     );
   }
 
-  Future<void> _logout(BuildContext context) async {
-    // Captura o Navigator antes de fechar o drawer móvel: o contexto do
-    // drawer pode ser descartado durante o await do logout.
-    final navigator = Navigator.of(context);
-    _close(context);
-    try {
-      await AuthService.instance.signOut();
-    } catch (error, stack) {
-      logSwallowed(error, stack);
-      await IdentityService.instance.signOutLocal();
-    }
-    if (!navigator.mounted) return;
-    navigator.pushAndRemoveUntil(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const LoginScreen(),
-        transitionDuration: const Duration(milliseconds: 350),
-        transitionsBuilder: (_, a, __, child) =>
-            FadeTransition(opacity: a, child: child),
-      ),
-      (_) => false,
-    );
-  }
-
   void _comingSoon(BuildContext context) {
+    final messenger = ScaffoldMessenger.of(context);
     _close(context);
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Em breve')));
+    messenger.showSnackBar(const SnackBar(content: Text('Em breve')));
   }
 
   void _confirmDelete(BuildContext context, Conversation c) {
@@ -573,8 +503,11 @@ class _AppDrawerState extends State<AppDrawer> {
       ),
     );
 
-    if (newTitle != null) {
-      await ConversationService.instance.renameConversation(c.id, newTitle);
+    // A dialog's TextField no longer owns this controller after closing.
+    final cleanTitle = newTitle?.trim();
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    if (cleanTitle != null && cleanTitle.isNotEmpty && cleanTitle != c.title) {
+      await ConversationService.instance.renameConversation(c.id, cleanTitle);
     }
   }
 }
@@ -583,30 +516,43 @@ class _AppDrawerState extends State<AppDrawer> {
 // O estilo usa a mesma superfície dos controles flutuantes do aplicativo.
 class _DrawerFooterButton extends StatelessWidget {
   final IconData icon;
-  final String tooltip;
+  final String label;
   final Color foreground;
   final VoidCallback onPressed;
 
   const _DrawerFooterButton({
     required this.icon,
-    required this.tooltip,
+    required this.label,
     required this.foreground,
     required this.onPressed,
   });
 
   @override
-  Widget build(BuildContext context) => IconButton(
-    tooltip: tooltip,
-    onPressed: onPressed,
-    icon: Icon(icon, size: 21),
-    style: IconButton.styleFrom(
-      foregroundColor: foreground,
-      backgroundColor: context.gama.surfaceCard,
-      fixedSize: const Size(48, 48),
-      padding: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(15),
-        side: BorderSide(color: context.gama.borderSoft),
+  Widget build(BuildContext context) => Material(
+    color: context.gama.surfaceCard,
+    borderRadius: BorderRadius.circular(12),
+    child: InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 46),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+        decoration: BoxDecoration(
+          border: Border.all(color: context.gama.borderSoft),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 18, color: foreground),
+            const SizedBox(width: 7),
+            Flexible(child: Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: context.gama.textPrimary, fontSize: 12.5),
+            )),
+          ],
+        ),
       ),
     ),
   );
@@ -635,25 +581,11 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-bool _matchesConversation(
-  ConversationService service,
-  Conversation conversation,
-  String query,
-) {
-  if (query.isEmpty) return true;
-  if (conversation.title.toLowerCase().contains(query)) return true;
-  // O histórico pode conter imagens inline antigas em base64. Removemos esses
-  // blocos da busca para evitar varrer dezenas de megabytes sem valor textual.
-  final hiddenImage = RegExp(
-    r'\[gama_image\][\s\S]*?\[/gama_image\]|\[gama_image_file\][\s\S]*?\[/gama_image_file\]',
-    caseSensitive: false,
-  );
-  for (final message in service.getMessages(conversation.id)) {
-    final text = message.content.replaceAll(hiddenImage, ' ').toLowerCase();
-    if (text.contains(query)) return true;
-  }
-  return false;
-}
+final RegExp _hiddenImagesInHistory = RegExp(
+  r'\[gama_image\][\s\S]*?\[/gama_image\]|\[gama_image_file\][\s\S]*?\[/gama_image_file\]',
+  caseSensitive: false,
+);
+final RegExp _historyWhitespace = RegExp(r'\s+');
 
 String? _conversationSnippet(
   ConversationService service,
@@ -663,14 +595,10 @@ String? _conversationSnippet(
   if (query.isEmpty) return null;
   final titleAt = conversation.title.toLowerCase().indexOf(query);
   if (titleAt >= 0) return 'Título: ${conversation.title}';
-  final hiddenImage = RegExp(
-    r'\[gama_image\][\s\S]*?\[/gama_image\]|\[gama_image_file\][\s\S]*?\[/gama_image_file\]',
-    caseSensitive: false,
-  );
   for (final message in service.getMessages(conversation.id).reversed) {
     final text = message.content
-        .replaceAll(hiddenImage, ' ')
-        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(_hiddenImagesInHistory, ' ')
+        .replaceAll(_historyWhitespace, ' ')
         .trim();
     final at = text.toLowerCase().indexOf(query);
     if (at < 0) continue;
@@ -709,11 +637,13 @@ class _DrawerItem extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final bool emphasized;
 
   const _DrawerItem({
     required this.icon,
     required this.label,
     required this.onTap,
+    this.emphasized = false,
   });
 
   @override
@@ -725,18 +655,20 @@ class _DrawerItem extends StatelessWidget {
           width: 34,
           height: 34,
           decoration: BoxDecoration(
-            color: context.gama.surfaceCard,
+            color: emphasized ? context.gama.accentSoft : context.gama.surfaceCard,
             borderRadius: BorderRadius.circular(11),
             border: Border.all(color: context.gama.borderSoft),
           ),
-          child: Icon(icon, color: context.gama.textSecondary, size: 18),
+          child: Icon(icon,
+              color: emphasized ? context.gama.accent : context.gama.textSecondary,
+              size: 18),
         ),
         title: Text(
           label,
           style: TextStyle(
             color: context.gama.textPrimary,
             fontSize: 14,
-            fontWeight: FontWeight.w400,
+            fontWeight: emphasized ? FontWeight.w600 : FontWeight.w400,
           ),
         ),
         onTap: onTap,

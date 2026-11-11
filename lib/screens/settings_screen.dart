@@ -9,6 +9,7 @@ import '../services/settings_service.dart';
 import '../utils/friendly_error.dart';
 import '../widgets/gama_floating_page.dart';
 import 'account_screen.dart';
+import 'plugins_screen.dart';
 import 'commercial_screen.dart';
 import 'memory_screen.dart';
 
@@ -16,69 +17,121 @@ class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final settings = SettingsService.instance;
-    return _SettingsPage(
-      title: 'Configurações',
-      children: [
-        _pageLink(
-          context,
-          Icons.palette_outlined,
-          'Aparência',
-          const _AppearanceSettings(),
-        ),
-        _pageLink(
-          context,
-          Icons.record_voice_over_outlined,
-          'Voz',
-          const _VoiceSettings(),
-        ),
-        _pageLink(
-          context,
-          Icons.psychology_outlined,
-          'Memória',
-          const _MemorySettings(),
-        ),
-        _pageLink(
-          context,
-          Icons.workspace_premium_outlined,
-          'Plano',
-          const CommercialScreen(),
-        ),
-        _pageLink(
-          context,
-          Icons.person_outline_rounded,
-          'Conta',
-          const AccountScreen(),
-        ),
-        const Divider(),
-        ListenableBuilder(
-          listenable: settings,
-          builder: (context, _) => ListTile(
-            leading: const Icon(Icons.auto_awesome_outlined),
-            title: Text(
-              settings.mode == GamaMode.conversar ? 'Conversar' : 'Programar',
-            ),
-            subtitle: const Text('Altere o modo na tela principal.'),
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => _SettingsPage(
+    title: 'Configurações',
+    children: [
+      _SettingsGroup(
+        label: 'Experiência',
+        description: 'Personalize o visual e a forma de interagir.',
+        children: [
+          _pageLink(context, Icons.palette_outlined, 'Aparência',
+              const _AppearanceSettings(),
+              subtitle: 'Tema, tamanho do texto e animações'),
+          _pageLink(context, Icons.record_voice_over_outlined, 'Voz',
+              const _VoiceSettings(),
+              subtitle: 'Leitura de respostas'),
+          _pageLink(context, Icons.psychology_outlined, 'Memória',
+              const _MemorySettings(),
+              subtitle: 'Consultar ou gerenciar fatos salvos'),
+        ],
+      ),
+      const SizedBox(height: 22),
+      _SettingsGroup(
+        label: 'Recursos',
+        description: 'Gerencie as ferramentas que ficam disponíveis.',
+        children: [
+          _pageLink(context, Icons.extension_outlined, 'Recursos e integrações',
+              const PluginsScreen(), subtitle: 'Busca, memória, voz e agendamentos'),
+          _pageLink(context, Icons.workspace_premium_outlined, 'Plano',
+              const CommercialScreen(), subtitle: 'Assinatura e uso'),
+        ],
+      ),
+      const SizedBox(height: 22),
+      _SettingsGroup(
+        label: 'Privacidade',
+        description: 'Informações da sessão e controle dos seus dados.',
+        children: [
+          _pageLink(context, Icons.person_outline_rounded, 'Conta',
+              const AccountScreen(), subtitle: 'Perfil, sessão e exclusão de conta'),
+        ],
+      ),
+    ],
+  );
 }
 
 Widget _pageLink(
   BuildContext context,
   IconData icon,
   String title,
-  Widget page,
-) {
+  Widget page, {
+  String? subtitle,
+}) {
   return ListTile(
-    leading: Icon(icon, color: context.gama.accent),
-    title: Text(title),
-    trailing: const Icon(Icons.chevron_right_rounded),
-    onTap: () =>
-        Navigator.of(context).push(GamaPageRoute<void>(builder: (_) => page)),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+    leading: Icon(icon, color: context.gama.accent, size: 23),
+    title: Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
+    subtitle: subtitle == null ? null : Text(subtitle,
+        maxLines: 2, overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: context.gama.textMuted, fontSize: 12)),
+    trailing: Icon(Icons.chevron_right_rounded, color: context.gama.textMuted),
+    onTap: () => Navigator.of(context)
+        .push(GamaPageRoute<void>(builder: (_) => page)),
+  );
+}
+
+class _SettingsGroup extends StatelessWidget {
+  const _SettingsGroup({
+    required this.label,
+    required this.description,
+    required this.children,
+  });
+
+  final String label;
+  final String description;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: const EdgeInsets.only(left: 3, bottom: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: TextStyle(
+              color: context.gama.textPrimary,
+              fontSize: 15, fontWeight: FontWeight.w700,
+            )),
+            const SizedBox(height: 4),
+            Text(description, style: TextStyle(
+              color: context.gama.textMuted, fontSize: 12.5,
+            )),
+          ],
+        ),
+      ),
+      Material(
+        color: context.gama.surfaceCard,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: context.gama.borderSoft),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            children: [
+              for (var index = 0; index < children.length; index++) ...[
+                if (index != 0)
+                  Divider(height: 1, indent: 54, endIndent: 14,
+                      color: context.gama.divider),
+                children[index],
+              ],
+            ],
+          ),
+        ),
+      ),
+    ],
   );
 }
 
