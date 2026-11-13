@@ -1,7 +1,6 @@
 """Fase 3C: planos e créditos internos para beta, sem cobrança externa.
 
-Não cria assinatura financeira, não cobra OpenRouter e NÃO é acionado pelas
-rotas de geração. O motor de cotas é opt-in para integração numa fase posterior.
+Registra uso e aplica as franquias de teste quando habilitadas no servidor.
 Tudo persiste em DATA_DIR, com transações SQLite atômicas e ids idempotentes.
 """
 from __future__ import annotations
@@ -16,12 +15,11 @@ from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
 
-# Franquias ILUSTRATIVAS para testes. Devem ser recalibradas antes de ativar
-# qualquer limitação comercial com os custos reais coletados na Fase 3B.
+# None mantém a contagem de uso sem aplicar franquia.
 CATALOG = {
-    "free": {"chat": 30, "image": 2, "video": 0, "artifact": 3},
-    "pro": {"chat": 150, "image": 10, "video": 2, "artifact": 20},
-    "creator": {"chat": 400, "image": 25, "video": 5, "artifact": 100},
+    "free": {"chat": 30, "image": None, "video": None, "artifact": 3},
+    "pro": {"chat": 150, "image": None, "video": None, "artifact": 20},
+    "creator": {"chat": 400, "image": None, "video": None, "artifact": 100},
 }
 _USER = re.compile(r"^google_(?:email_)?[A-Za-z0-9_.@-]{1,120}$")
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
@@ -133,8 +131,12 @@ def _balance(db: sqlite3.Connection, owner: str) -> int:
     return int(db.execute("SELECT COALESCE(SUM(delta),0) FROM credit_events WHERE owner=?", (owner,)).fetchone()[0])
 
 
+def _daily_limits(plan_code: str) -> dict[str, int]:
+    return {feature: limit for feature, limit in CATALOG[plan_code].items() if limit is not None}
+
+
 def public_catalog() -> list[dict]:
-    return [{"code": code, "daily_limits_preview": dict(limits)} for code, limits in CATALOG.items()]
+    return [{"code": code, "daily_limits_preview": _daily_limits(code)} for code in CATALOG]
 
 
 def _payments_active() -> bool:
@@ -163,7 +165,7 @@ def account_snapshot(owner: str) -> dict:
         "plan": code,
         "plan_expires_at": expires,
         "credits_balance": balance,
-        "limits": dict(CATALOG[code]),
+        "limits": _daily_limits(code),
         "usage_today": {feature: counts.get(feature, 0) for feature in CATALOG[code]},
         "day_utc": day,
         "enforcement_active": enforcement_enabled(),
@@ -253,9 +255,10 @@ def claim_feature(owner: str, feature: str, request_id: str) -> dict:
             return {"accepted": True, "idempotent_replay": True}
         plan_code, _ = _plan_row(db, owner, now)
         limit = CATALOG[plan_code][feature]
-        used = db.execute("SELECT COUNT(*) FROM feature_usage WHERE owner=? AND feature=? AND day=?", (owner, feature, day)).fetchone()[0]
-        if used >= limit:
-            raise FeatureLimitReached("Franquia de teste atingida para esta funcionalidade")
+        if limit is not None:
+            used = db.execute("SELECT COUNT(*) FROM feature_usage WHERE owner=? AND feature=? AND day=?", (owner, feature, day)).fetchone()[0]
+            if used >= limit:
+                raise FeatureLimitReached("Franquia de teste atingida para esta funcionalidade")
         db.execute("INSERT INTO feature_usage VALUES(?,?,?,?,?)", (request_id, owner, day, feature, now.isoformat()))
     return {"accepted": True, "idempotent_replay": False}
 
@@ -329,19 +332,20 @@ def reserve_feature(owner: str, feature: str, request_id: str) -> dict | None:
             raise CommercialError("Identificador de operação reutilizado em outra conta ou recurso")
         if existing:
             raise FeatureRequestAlreadyProcessed("Esta operação já foi iniciada. Consulte o histórico antes de reenviar.")
-        plan, _ = _plan_row(db, owner, now)
-        available = CATALOG[plan][feature]
-        legacy_count = db.execute("SELECT COUNT(*) FROM feature_usage WHERE owner=? AND feature=? AND day=?",
-                                  (owner, feature, day)).fetchone()[0]
-        new_count = db.execute("SELECT COUNT(*) FROM feature_reservations WHERE owner=? AND feature=? "
-                               "AND day=? AND status IN ('reserved','committed')", (owner, feature, day)).fetchone()[0]
         credits = 0
-        if legacy_count + new_count >= available:
-            if not credit_overage_enabled() or _balance(db, owner) < 1:
-                raise FeatureLimitReached("Sua franquia beta de %s acabou. Consulte seu plano ou tente amanhã (UTC)." % feature)
-            credits = 1
-            db.execute("INSERT INTO credit_events VALUES(?,?,?,?,?)",
-                       ("spend:" + request_id, owner, -credits, "excedente_beta_" + feature, stamp))
+        plan, _ = _plan_row(db, owner, now)
+        limit = CATALOG[plan][feature]
+        if limit is not None:
+            legacy_count = db.execute("SELECT COUNT(*) FROM feature_usage WHERE owner=? AND feature=? AND day=?",
+                                      (owner, feature, day)).fetchone()[0]
+            new_count = db.execute("SELECT COUNT(*) FROM feature_reservations WHERE owner=? AND feature=? "
+                                   "AND day=? AND status IN ('reserved','committed')", (owner, feature, day)).fetchone()[0]
+            if legacy_count + new_count >= limit:
+                if not credit_overage_enabled() or _balance(db, owner) < 1:
+                    raise FeatureLimitReached("Sua franquia beta de %s acabou. Consulte seu plano ou tente amanhã (UTC)." % feature)
+                credits = 1
+                db.execute("INSERT INTO credit_events VALUES(?,?,?,?,?)",
+                           ("spend:" + request_id, owner, -credits, "excedente_beta_" + feature, stamp))
         db.execute("INSERT INTO feature_reservations VALUES(?,?,?,?,?,?,?,?)",
                    (request_id, owner, feature, day, "reserved", credits, stamp, stamp))
     return {"request_id": request_id, "feature": feature, "credits_reserved": credits}

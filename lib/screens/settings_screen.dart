@@ -208,11 +208,12 @@ class _AppearanceSettingsState extends State<_AppearanceSettings> {
           title: 'Aparência',
           children: [
             DropdownButtonFormField<GamaAppearance>(
+              key: ValueKey(settings.appearance),
               initialValue: settings.appearance,
               isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'Tema do aplicativo',
-                helperText: 'Automático acompanha o tema do sistema.',
+                helperText: 'Cyberpunk é independente do claro e do escuro.',
                 helperMaxLines: 2,
               ),
               items: const [
@@ -227,6 +228,10 @@ class _AppearanceSettingsState extends State<_AppearanceSettings> {
                 DropdownMenuItem(
                   value: GamaAppearance.dark,
                   child: Text('Escuro'),
+                ),
+                DropdownMenuItem(
+                  value: GamaAppearance.cyberpunk,
+                  child: Text('Cyberpunk · Neon vermelho'),
                 ),
               ],
               onChanged: (value) {

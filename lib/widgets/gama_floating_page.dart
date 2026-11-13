@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/gama_colors.dart';
 import '../core/design_tokens.dart';
+import 'gama_cyberpunk_overlay.dart';
 
 /// Camada de controles sem AppBar: nenhuma superfície é desenhada atrás
 /// da linha inteira. Apenas cada botão possui seu próprio fundo opaco.
@@ -45,13 +46,13 @@ class GamaFloatingPage extends StatelessWidget {
             ),
           )
         : contentBehindHeader
-            ? child
-            : Padding(
-                padding: EdgeInsets.only(top: headerInset),
-                child: child,
-              );
+        ? child
+        : Padding(
+            padding: EdgeInsets.only(top: headerInset),
+            child: child,
+          );
 
-    return Stack(
+    final page = Stack(
       fit: StackFit.expand,
       children: [
         content,
@@ -88,6 +89,7 @@ class GamaFloatingPage extends StatelessWidget {
         ),
       ],
     );
+    return GamaCyberpunkBackdrop(child: page);
   }
 }
 
@@ -99,7 +101,10 @@ class GamaTopShade extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final background = context.gama.background;
+    final palette = context.gama;
+    final background = palette.isCyberpunk
+        ? GamaCyberpunkBackdrop.topColor
+        : palette.background;
     final statusBarHeight = MediaQuery.paddingOf(context).top;
     final height = statusBarHeight + 180.0;
     final statusStop = (statusBarHeight / height).clamp(0.02, 0.40);
@@ -139,6 +144,30 @@ class GamaFloatingControl extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.gama;
+    final buttonContent = IconTheme(
+      data: IconThemeData(
+        color: palette.isCyberpunk ? palette.accentBright : palette.textPrimary,
+        size: 22,
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          minWidth: GamaHitTarget.minimum,
+          minHeight: GamaHitTarget.minimum,
+        ),
+        child: Center(child: child),
+      ),
+    );
+    if (palette.isCyberpunk) {
+      return Material(
+        color: palette.surfaceCard,
+        shape: gamaCyberpunkBorder(
+          cut: 9,
+          side: BorderSide(color: palette.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: buttonContent,
+      );
+    }
     return DecoratedBox(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
@@ -153,19 +182,7 @@ class GamaFloatingControl extends StatelessWidget {
         ],
       ),
       child: ClipOval(
-        child: Material(
-          color: palette.surfaceCard,
-          child: IconTheme(
-            data: IconThemeData(color: palette.textPrimary, size: 22),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                minWidth: GamaHitTarget.minimum,
-                minHeight: GamaHitTarget.minimum,
-              ),
-              child: Center(child: child),
-            ),
-          ),
-        ),
+        child: Material(color: palette.surfaceCard, child: buttonContent),
       ),
     );
   }

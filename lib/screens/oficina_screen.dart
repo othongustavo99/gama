@@ -456,9 +456,9 @@ class _OficinaScaffoldState extends State<_OficinaScaffold> {
 
 class _OficinaCardAsset {
   static String forKind(OficinaKind kind) => switch (kind) {
-    OficinaKind.imagem => 'assets/cards/cardMode1.jpeg',
-    OficinaKind.video => 'assets/cards/cardMode2.jpeg',
-    OficinaKind.programar => 'assets/cards/cardMode3.jpeg',
+    OficinaKind.imagem => 'assets/cards/cardMode1.png',
+    OficinaKind.video => 'assets/cards/cardMode2.png',
+    OficinaKind.programar => 'assets/cards/cardMode3.png',
   };
 }
 

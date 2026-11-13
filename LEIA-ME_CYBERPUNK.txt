@@ -1,0 +1,32 @@
+GAMMA — Tema Cyberpunk (primeira etapa visual)
+
+Este ZIP e um PATCH, nao um projeto Flutter completo.
+Base: gama(20261113-173245).zip enviado nesta conversa.
+
+IMPLEMENTADO
+- Terceira aparencia Cyberpunk em Configuracoes > Aparencia.
+- Paleta bordô/preto, coral neon, detalhes azul-petroleo, texto contrastado.
+- Preferencia persistente com SharedPreferences, independente de Claro/Escuro/Automatico.
+- Formatos angulares em botões flutuantes e campos globais.
+- Marcas vetoriais de HUD nas bordas, sem interceptar interacoes.
+- Sem modificacoes em backend, banco, modelos, memoria ou autenticacao.
+
+INSTALACAO
+1. Faca um commit/backup do projeto atual.
+2. Abra a pasta RAIZ do seu projeto (a mesma que contem pubspec.yaml).
+3. Copie a pasta lib deste ZIP para a raiz do projeto, mesclando pastas
+   e SUBSTITUINDO os 5 arquivos existentes listados abaixo:
+   lib/core/gama_colors.dart
+   lib/main.dart
+   lib/services/settings_service.dart
+   lib/screens/settings_screen.dart
+   lib/widgets/gama_floating_page.dart
+   E adicionando lib/widgets/gama_cyberpunk_overlay.dart.
+4. Execute flutter analyze e flutter run -d windows (ou seu Android).
+5. Em Configuracoes > Aparencia > Tema do aplicativo, selecione Cyberpunk.
+
+OBSERVACOES
+- A alteracao nao reestrutura o layout do chat; e uma base para fases
+  posteriores com cards e menus futuristas ao estilo das referencias.
+- Para voltar, escolha Claro/Escuro/Automatico nas configuracoes.
+- Nao foi possivel executar Flutter/Dart neste ambiente; valide localmente.

@@ -77,16 +77,18 @@ def test_credit_concurrency_does_not_go_negative():
     assert plans.account_snapshot(ALICE)["credits_balance"] == 0
 
 
-def test_feature_engine_is_idempotent_and_is_not_wired_into_generations():
-    assert plans.claim_feature(ALICE, "image", "feature-image-0001")["accepted"]
-    assert plans.claim_feature(ALICE, "image", "feature-image-0001")["idempotent_replay"]
-    plans.claim_feature(ALICE, "image", "feature-image-0002")
-    with pytest.raises(plans.FeatureLimitReached):
-        plans.claim_feature(ALICE, "image", "feature-image-0003")
-    with pytest.raises(plans.FeatureLimitReached):
-        plans.claim_feature(ALICE, "video", "feature-video-0001")
-    assert plans.account_snapshot(ALICE)["usage_today"]["image"] == 2
-    assert plans.account_snapshot(ALICE)["enforcement_active"] is False
+def test_feature_engine_counts_media_without_daily_limits():
+    for feature in ("image", "video"):
+        first_id = f"feature-{feature}-0000"
+        assert plans.claim_feature(ALICE, feature, first_id)["accepted"]
+        assert plans.claim_feature(ALICE, feature, first_id)["idempotent_replay"]
+        for index in range(1, 12):
+            assert plans.claim_feature(ALICE, feature, f"feature-{feature}-{index:04d}")["accepted"]
+    snapshot = plans.account_snapshot(ALICE)
+    assert snapshot["usage_today"]["image"] == 12
+    assert snapshot["usage_today"]["video"] == 12
+    assert snapshot["limits"] == {"chat": 30, "artifact": 3}
+    assert snapshot["enforcement_active"] is False
 
 
 def test_account_deletion_is_scoped_and_blocks_reuse():

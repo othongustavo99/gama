@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../core/gama_colors.dart';
+import 'gama_cyberpunk_overlay.dart';
 import '../core/gama_page_route.dart';
 import '../screens/oficina_screen.dart';
 import '../models/oficina_kind.dart';
@@ -529,11 +530,23 @@ class ChatComposer extends StatelessWidget {
                                           : canSend
                                           ? palette.accent
                                           : palette.surfaceHover,
-                                      borderRadius: BorderRadius.circular(14),
+                                      shape: palette.isCyberpunk
+                                          ? gamaCyberpunkBorder(cut: 9)
+                                          : RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(14),
+                                            ),
+                                      clipBehavior: palette.isCyberpunk
+                                          ? Clip.antiAlias
+                                          : Clip.none,
                                       elevation: canSend && !isLoading ? 3 : 0,
                                       shadowColor: palette.accentGlow,
                                       child: InkWell(
-                                        borderRadius: BorderRadius.circular(14),
+                                        customBorder: palette.isCyberpunk
+                                            ? gamaCyberpunkBorder(cut: 9)
+                                            : null,
+                                        borderRadius: palette.isCyberpunk
+                                            ? null
+                                            : BorderRadius.circular(14),
                                         canRequestFocus: actionEnabled,
                                         onTap: isLoading
                                             ? onStop == null
@@ -671,6 +684,7 @@ class _ComposerSurfaceState extends State<_ComposerSurface> {
     _monitorFrames(
       !kIsWeb &&
           defaultTargetPlatform == TargetPlatform.android &&
+          !context.gama.isCyberpunk &&
           !MediaQuery.disableAnimationsOf(context) &&
           !_solidForPerformance,
     );
@@ -719,12 +733,41 @@ class _ComposerSurfaceState extends State<_ComposerSurface> {
     final palette = context.gama;
     final solid =
         _solidForPerformance || MediaQuery.disableAnimationsOf(context);
+    if (palette.isCyberpunk) {
+      return Material(
+        color: palette.surfaceInput,
+        shape: gamaCyberpunkBorder(
+          side: BorderSide(
+            color: widget.highlighted ? palette.accent : palette.border,
+            width: widget.highlighted ? 1.6 : 1,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 9, 14, 0),
+              child: SizedBox(
+                height: 6,
+                child: CustomPaint(
+                  painter: _ComposerRulePainter(palette.accent),
+                ),
+              ),
+            ),
+            widget.child,
+          ],
+        ),
+      );
+    }
+    final radius = BorderRadius.circular(23);
     final surface = DecoratedBox(
       decoration: BoxDecoration(
         color: solid
             ? palette.surfaceCard
             : palette.surfaceCard.withValues(alpha: .88),
-        borderRadius: BorderRadius.circular(23),
+        borderRadius: radius,
         border: Border.all(
           color: widget.highlighted ? palette.accent : palette.border,
         ),
@@ -732,7 +775,7 @@ class _ComposerSurfaceState extends State<_ComposerSurface> {
       child: widget.child,
     );
     return ClipRRect(
-      borderRadius: BorderRadius.circular(23),
+      borderRadius: radius,
       child: solid
           ? surface
           : BackdropFilter(
@@ -741,6 +784,29 @@ class _ComposerSurfaceState extends State<_ComposerSurface> {
             ),
     );
   }
+}
+
+class _ComposerRulePainter extends CustomPainter {
+  const _ComposerRulePainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final y = size.height / 2;
+    final line = Paint()..color = color.withValues(alpha: .32);
+    canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
+    final marks = Paint()..color = color.withValues(alpha: .80);
+    final left = (size.width * .12).clamp(0.0, 40.0);
+    canvas.drawRect(Rect.fromLTWH(0, y - 1, left, 2), marks);
+    for (var x = size.width - 36; x < size.width - 2; x += 5) {
+      canvas.drawLine(Offset(x, 0), Offset(x - 3, size.height), marks);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ComposerRulePainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 class _SendMessageIntent extends Intent {
@@ -768,28 +834,29 @@ class _ModeChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final g = context.gama;
 
+    final shape = g.isCyberpunk
+        ? gamaCyberpunkBorder(side: BorderSide(color: g.border), cut: 8)
+        : RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: g.border, width: 1.15),
+          );
     return Tooltip(
       message: label,
       child: Material(
         color: g.surfaceCard,
-        borderRadius: BorderRadius.circular(20),
+        shape: shape,
         child: InkWell(
           onTap: () {
             HapticFeedback.selectionClick();
             onTap();
           },
-          borderRadius: BorderRadius.circular(20),
+          customBorder: shape,
           splashColor: g.accent.withValues(alpha: 0.08),
           highlightColor: g.accent.withValues(alpha: 0.04),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
+          child: Padding(
             padding: EdgeInsets.symmetric(
               horizontal: 11,
               vertical: iconOnly ? 11 : 7,
-            ),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: g.border, width: 1.15),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,

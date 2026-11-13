@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../widgets/gama_floating_page.dart';
+import '../widgets/gama_cyberpunk_overlay.dart';
 
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -3934,85 +3935,86 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildModeFloatingControl(BuildContext context, {bool compact = false}) {
     final palette = context.gama;
+    final menu = PopupMenuButton<GamaMode>(
+      enabled: !_isLoading,
+      tooltip: 'Selecionar modo de IA',
+      onSelected: (value) async {
+        if (_mode == value) return;
+        setState(() => _mode = value);
+        await SettingsService.instance.setMode(value);
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem(
+          value: GamaMode.conversar,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.chat_bubble_outline_rounded),
+            title: Text('Conversar'),
+            subtitle: Text('Conversas e tarefas do dia a dia'),
+          ),
+        ),
+        const PopupMenuItem(
+          value: GamaMode.programar,
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.code_rounded),
+            title: Text('Programar'),
+            subtitle: Text('Código e análise técnica'),
+          ),
+        ),
+      ],
+      padding: EdgeInsets.zero,
+      shape: palette.isCyberpunk
+          ? null
+          : RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+      child: SizedBox(
+        height: _headerControlHeight,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 13),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _mode == GamaMode.conversar
+                    ? Icons.chat_bubble_outline_rounded
+                    : Icons.auto_awesome_rounded,
+                size: 17,
+                color: palette.textPrimary,
+              ),
+              if (!compact) ...[
+                const SizedBox(width: 8),
+                Text(
+                  _mode == GamaMode.conversar ? 'Conversar' : 'Programar',
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+              const SizedBox(width: 4),
+              Icon(
+                Icons.expand_more_rounded,
+                size: 18,
+                color: palette.textSecondary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (palette.isCyberpunk) return GamaFloatingControl(child: menu);
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: palette.border.withValues(alpha: 0.55)),
         color: palette.surfaceCard,
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(23),
-        child: PopupMenuButton<GamaMode>(
-            enabled: !_isLoading,
-            tooltip: 'Selecionar modo de IA',
-            onSelected: (value) async {
-              if (_mode == value) return;
-              setState(() => _mode = value);
-              await SettingsService.instance.setMode(value);
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: GamaMode.conversar,
-                child: ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.chat_bubble_outline_rounded),
-                  title: Text('Conversar'),
-                  subtitle: Text('Conversas e tarefas do dia a dia'),
-                ),
-              ),
-              const PopupMenuItem(
-                value: GamaMode.programar,
-                child: ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.code_rounded),
-                  title: Text('Programar'),
-                  subtitle: Text('Código e análise técnica'),
-                ),
-              ),
-            ],
-            padding: EdgeInsets.zero,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: SizedBox(
-              height: _headerControlHeight,
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 13),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _mode == GamaMode.conversar
-                          ? Icons.chat_bubble_outline_rounded
-                          : Icons.auto_awesome_rounded,
-                      size: 17,
-                      color: palette.textPrimary,
-                    ),
-                    if (!compact) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        _mode == GamaMode.conversar ? 'Conversar' : 'Programar',
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.expand_more_rounded,
-                      size: 18,
-                      color: palette.textSecondary,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ),
+      child: ClipRRect(borderRadius: BorderRadius.circular(23), child: menu),
     );
   }
 
@@ -4282,13 +4284,15 @@ class _ChatScreenState extends State<ChatScreen> {
       window: _historyWindow,
     );
     final lastAssistantIndex = messagePresentation.lastAssistantIndex;
+    final cyberpunk = context.gama.isCyberpunk;
     final topInset =
         MediaQuery.paddingOf(context).top +
         _headerControlHeight +
-        2 * _headerVerticalPadding;
+        2 * _headerVerticalPadding +
+        (cyberpunk ? GamaCyberpunkHeaderRule.height : 0);
     final bottomInset = _composerHeight + _messageInset;
     _measureComposer();
-    final chat = Material(
+    final chatContent = Material(
       color: Colors.transparent,
       child: DropTarget(
         onDragDone: _handleDroppedFiles,
@@ -4330,6 +4334,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: _messages.isEmpty
                               ? EmptyState(
                                   key: const ValueKey('chat-empty'),
+                                  topInset: topInset,
+                                  bottomInset: bottomInset,
                                   oficinaKind: widget.oficinaKind,
                                   attachmentKinds: _attachments
                                       .map((attachment) => attachment.kind)
@@ -5215,6 +5221,13 @@ class _ChatScreenState extends State<ChatScreen> {
               top: 0,
               child: IgnorePointer(child: GamaTopShade()),
             ),
+            if (cyberpunk)
+              Positioned(
+                left: 12,
+                right: 12,
+                top: topInset - GamaCyberpunkHeaderRule.height,
+                child: const GamaCyberpunkHeaderRule(),
+              ),
             Positioned(
               left: 0,
               right: 0,
@@ -5401,6 +5414,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+    final chat = GamaCyberpunkBackdrop(child: chatContent);
     if (!_isWindows) return chat;
     return Focus(
       autofocus: true,

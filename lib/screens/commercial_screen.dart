@@ -300,6 +300,8 @@ class _FeatureUsage extends StatelessWidget {
     final used = account.used(feature);
     final limit = account.limit(feature);
     final left = account.remaining(feature);
+    final unlimitedMedia = limit == null &&
+        (feature == 'image' || feature == 'video');
     final progress = limit == null || limit == 0
         ? 0.0 : (used / limit).clamp(0.0, 1.0).toDouble();
     return Container(
@@ -317,7 +319,7 @@ class _FeatureUsage extends StatelessWidget {
             color: context.gama.textPrimary, fontWeight: FontWeight.w600))),
           if (limit != null) Text('$used / $limit', style: TextStyle(
             color: context.gama.textSecondary, fontWeight: FontWeight.w600))
-          else Text('$used usadas', style: TextStyle(
+          else if (!unlimitedMedia || enforced) Text('$used usadas', style: TextStyle(
             color: context.gama.textSecondary)),
         ]),
         const SizedBox(height: 9),
@@ -338,8 +340,12 @@ class _FeatureUsage extends StatelessWidget {
             '$left restantes hoje', style: TextStyle(
               color: context.gama.textMuted, fontSize: 12)),
         ] else
-          Text(limit == null ? 'Informação de referência indisponível' :
-            'Referência experimental: $limit por dia (sem bloqueio)',
+          Text(
+            unlimitedMedia
+                ? 'Sem cota diária de criação'
+                : limit == null
+                    ? 'Informação de referência indisponível'
+                    : 'Referência experimental: $limit por dia (sem bloqueio)',
             style: TextStyle(color: context.gama.textMuted, fontSize: 12)),
       ]),
     );

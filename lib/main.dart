@@ -11,6 +11,7 @@ import 'core/constants.dart';
 import 'core/gama_colors.dart';
 import 'core/design_tokens.dart';
 import 'core/gama_text_scaler.dart';
+import 'widgets/gama_cyberpunk_overlay.dart';
 import 'models/conversation.dart';
 import 'models/message.dart';
 import 'screens/splash_screen.dart';
@@ -136,9 +137,12 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  ThemeData _theme(Brightness brightness) {
+  ThemeData _theme(Brightness brightness, {bool cyberpunk = false}) {
     final isDark = brightness == Brightness.dark;
-    final palette = isDark ? GamaPalette.dark() : GamaPalette.light();
+    final palette = cyberpunk
+        ? GamaPalette.cyberpunk()
+        : (isDark ? GamaPalette.dark() : GamaPalette.light());
+    final cornerRadius = cyberpunk ? 3.0 : GamaRadius.md;
     final background = palette.background;
     final surface = palette.surface;
     final textPrimary = palette.textPrimary;
@@ -152,7 +156,7 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
       surface: palette.surface,
       error: palette.error,
       onPrimary: palette.onAccent,
-      onSecondary: Colors.white,
+      onSecondary: cyberpunk ? palette.onAccent : Colors.white,
       onSurface: palette.textPrimary,
     );
     return ThemeData(
@@ -213,41 +217,43 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
         behavior: SnackBarBehavior.floating,
         elevation: 8,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(GamaRadius.md),
-          side: BorderSide(color: border, width: 0.5),
+          borderRadius: BorderRadius.circular(cornerRadius),
+          side: BorderSide(color: border, width: cyberpunk ? 1.0 : 0.5),
         ),
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: surface,
         elevation: 12,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(GamaRadius.xl),
-          side: BorderSide(color: border, width: 0.5),
+          borderRadius: BorderRadius.circular(cyberpunk ? 7 : GamaRadius.xl),
+          side: BorderSide(color: border, width: cyberpunk ? 1.0 : 0.5),
         ),
       ),
       popupMenuTheme: PopupMenuThemeData(
         color: surface,
         elevation: 10,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(GamaRadius.md),
-          side: BorderSide(color: border, width: 0.5),
-        ),
+        shape: cyberpunk
+            ? gamaCyberpunkBorder(side: BorderSide(color: border))
+            : RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(cornerRadius),
+                side: BorderSide(color: border, width: 0.5),
+              ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: palette.surfaceInput,
         hintStyle: TextStyle(color: textSecondary),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(GamaRadius.md),
-          borderSide: BorderSide(color: border),
+          borderRadius: BorderRadius.circular(cornerRadius),
+          borderSide: BorderSide(color: border, width: cyberpunk ? 1.0 : 0.9),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(GamaRadius.md),
-          borderSide: BorderSide(color: border),
+          borderRadius: BorderRadius.circular(cornerRadius),
+          borderSide: BorderSide(color: border, width: cyberpunk ? 1.0 : 0.9),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(GamaRadius.md),
-          borderSide: BorderSide(color: palette.accent, width: 1.4),
+          borderRadius: BorderRadius.circular(cornerRadius),
+          borderSide: BorderSide(color: palette.accent, width: cyberpunk ? 1.7 : 1.4),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
@@ -255,7 +261,7 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
           elevation: 0,
           minimumSize: const Size(0, GamaHitTarget.minimum),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(GamaRadius.md),
+            borderRadius: BorderRadius.circular(cornerRadius),
           ),
         ),
       ),
@@ -263,9 +269,9 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
         style: OutlinedButton.styleFrom(
           foregroundColor: textPrimary,
           minimumSize: const Size(0, GamaHitTarget.minimum),
-          side: BorderSide(color: border),
+          side: BorderSide(color: border, width: cyberpunk ? 1.0 : 0.9),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(GamaRadius.md),
+            borderRadius: BorderRadius.circular(cornerRadius),
           ),
         ),
       ),
@@ -275,9 +281,9 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
       chipTheme: ChipThemeData(
         backgroundColor: surface,
         selectedColor: palette.accentSoft,
-        side: BorderSide(color: border),
+        side: BorderSide(color: border, width: cyberpunk ? 1.0 : 0.9),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(GamaRadius.md),
+          borderRadius: BorderRadius.circular(cornerRadius),
         ),
         labelStyle: TextStyle(color: textSecondary),
       ),
@@ -295,12 +301,16 @@ class _GamaAppState extends State<GamaApp> with WidgetsBindingObserver {
           GamaAppearance.system => ThemeMode.system,
           GamaAppearance.light => ThemeMode.light,
           GamaAppearance.dark => ThemeMode.dark,
+          GamaAppearance.cyberpunk => ThemeMode.dark,
         };
         return MaterialApp(
           title: kAppName,
           debugShowCheckedModeBanner: false,
           theme: _theme(Brightness.light),
-          darkTheme: _theme(Brightness.dark),
+          darkTheme: _theme(
+            Brightness.dark,
+            cyberpunk: selectedAppearance == GamaAppearance.cyberpunk,
+          ),
           themeMode: selectedMode,
           locale: const Locale('pt', 'BR'),
           supportedLocales: const [Locale('pt', 'BR'), Locale('en')],

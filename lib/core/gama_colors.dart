@@ -28,6 +28,9 @@ class GamaPalette extends ThemeExtension<GamaPalette> {
   final Color bubbleUserSoft;
   final Color bubbleAssistant;
 
+  /// Variante visual Cyberpunk; nenhum efeito sobre serviços ou conversas.
+  final bool isCyberpunk;
+
   const GamaPalette({
     required this.background,
     required this.surface,
@@ -53,6 +56,7 @@ class GamaPalette extends ThemeExtension<GamaPalette> {
     required this.bubbleUser,
     required this.bubbleUserSoft,
     required this.bubbleAssistant,
+    this.isCyberpunk = false,
   });
 
   factory GamaPalette.dark() => const GamaPalette(
@@ -86,7 +90,7 @@ class GamaPalette extends ThemeExtension<GamaPalette> {
   /// No tema escuro o laranja é luminoso (texto escuro); no tema claro
   /// o laranja é fechado (texto branco). Mantém a identidade sem sacrificar
   /// o contraste dos ícones e dos rótulos.
-  Color get onAccent => accent.computeLuminance() > 0.30
+  Color get onAccent => isCyberpunk || accent.computeLuminance() > 0.30
       ? const Color(0xFF171B22)
       : Colors.white;
 
@@ -119,6 +123,36 @@ class GamaPalette extends ThemeExtension<GamaPalette> {
     bubbleAssistant: Color(0xFFFFFFFF),
   );
 
+  /// Terceira aparência da Gamma: referência a interfaces cyberpunk de
+  /// ficção científica, preservando contraste de leitura e acessibilidade.
+  factory GamaPalette.cyberpunk() => const GamaPalette(
+    background: Color(0xFF0A1119),
+    surface: Color(0xFF10171F),
+    surfaceElevated: Color(0xFF1A242B),
+    surfaceCard: Color(0xFF192B32),
+    surfaceInput: Color(0xFF111C23),
+    surfaceHover: Color(0xFF223A42),
+    accent: Color(0xFFFF6A61),
+    accentSoft: Color(0x26FF6A61),
+    accentMuted: Color(0xFFFF8C80),
+    accentGlow: Color(0x2EFF6A61),
+    accentBright: Color(0xFFFFA698),
+    accentCool: Color(0xFF82C1C4),
+    textPrimary: Color(0xFFF8E5E1),
+    textSecondary: Color(0xFFE0BFBB),
+    textMuted: Color(0xFFBD9C99),
+    textHint: Color(0xFFBD9C99),
+    border: Color(0xFF94524F),
+    borderSoft: Color(0xFF4A393C),
+    divider: Color(0xFF382C33),
+    error: Color(0xFFFF7A7A),
+    success: Color(0xFF62D2B6),
+    bubbleUser: Color(0xFF351F24),
+    bubbleUserSoft: Color(0xFF48292D),
+    bubbleAssistant: Color(0xFF14242C),
+    isCyberpunk: true,
+  );
+
   @override
   GamaPalette copyWith({
     Color? background,
@@ -145,6 +179,7 @@ class GamaPalette extends ThemeExtension<GamaPalette> {
     Color? bubbleUser,
     Color? bubbleUserSoft,
     Color? bubbleAssistant,
+    bool? isCyberpunk,
   }) => GamaPalette(
     background: background ?? this.background,
     surface: surface ?? this.surface,
@@ -170,6 +205,7 @@ class GamaPalette extends ThemeExtension<GamaPalette> {
     bubbleUser: bubbleUser ?? this.bubbleUser,
     bubbleUserSoft: bubbleUserSoft ?? this.bubbleUserSoft,
     bubbleAssistant: bubbleAssistant ?? this.bubbleAssistant,
+    isCyberpunk: isCyberpunk ?? this.isCyberpunk,
   );
 
   @override
@@ -200,6 +236,7 @@ class GamaPalette extends ThemeExtension<GamaPalette> {
       bubbleUser: Color.lerp(bubbleUser, other.bubbleUser, t)!,
       bubbleUserSoft: Color.lerp(bubbleUserSoft, other.bubbleUserSoft, t)!,
       bubbleAssistant: Color.lerp(bubbleAssistant, other.bubbleAssistant, t)!,
+      isCyberpunk: t < 0.5 ? isCyberpunk : other.isCyberpunk,
     );
   }
 }

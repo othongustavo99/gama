@@ -1,0 +1,17 @@
+CORREÇÃO DA FASE 2 – Widgets não declarados
+
+Esta correção resolve os erros "undefined_method" e "invalid_constant"
+relacionados a _ComposerHudGlyph, _ComposerHudMarks e _CyberCornerNotch.
+
+Copie a pasta lib deste ZIP para a raiz do projeto, substituindo SOMENTE:
+  lib/widgets/chat_composer.dart
+  lib/widgets/gama_floating_page.dart
+
+Não substitua o restante do projeto. Esta correção pressupõe a Fase 2
+Cyberpunk já aplicada.
+
+No terminal do VS Code (pasta raiz do projeto):
+  flutter analyze
+  flutter run -d windows
+
+Se persistirem erros, envie as primeiras linhas do resultado de flutter analyze.

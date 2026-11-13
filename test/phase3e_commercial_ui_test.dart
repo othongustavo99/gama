@@ -82,6 +82,26 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('mídia sem cota exibe o uso sem barra de franquia', (tester) async {
+    final account = CommercialAccount.fromJson({
+      ..._payload(enforced: true),
+      'limits': {'chat': 150, 'artifact': 20},
+    });
+    expect(account.remaining('image'), isNull);
+    expect(account.remaining('video'), isNull);
+    await tester.pumpWidget(_app(CommercialScreen(
+      requireGoogleAccount: false,
+      loadAccount: () async => account,
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Sem cota diária de criação'), findsNWidgets(2));
+    expect(find.text('3 usadas'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('19 restantes hoje'), 100);
+    expect(find.text('19 restantes hoje'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('erro de consulta não mostra saldo antigo; tenta novamente', (tester) async {
     var calls = 0;
     await tester.pumpWidget(_app(CommercialScreen(

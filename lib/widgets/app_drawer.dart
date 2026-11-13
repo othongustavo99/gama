@@ -8,6 +8,7 @@ import '../core/gama_page_route.dart';
 import '../core/gama_colors.dart';
 import '../core/design_tokens.dart';
 import 'gama_floating_page.dart';
+import 'gama_cyberpunk_overlay.dart';
 import '../models/conversation.dart';
 import '../models/oficina_kind.dart';
 import '../services/conversation_service.dart';
@@ -100,9 +101,164 @@ class _AppDrawerState extends State<AppDrawer> {
   @override
   Widget build(BuildContext context) {
     final service = ConversationService.instance;
+    final palette = context.gama;
+    final cyberpunk = palette.isCyberpunk;
+    final entryRadius = BorderRadius.circular(cyberpunk ? 3 : 16);
+    final searchRadius = BorderRadius.circular(cyberpunk ? 3 : 13);
+    final newChatShape = cyberpunk
+        ? gamaCyberpunkBorder()
+        : RoundedRectangleBorder(borderRadius: entryRadius);
+
+    final header = <Widget>[
+      // PERFIL — área única, sem uma segunda ação de criar conversa.
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        child: Material(
+          color: palette.surfaceCard,
+          borderRadius: entryRadius,
+          child: InkWell(
+            key: const Key('drawer-account-entry'),
+            onTap: () => _openPage(context, const AccountScreen()),
+            borderRadius: entryRadius,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+              decoration: BoxDecoration(
+                borderRadius: entryRadius,
+                border: Border.all(color: palette.borderSoft),
+              ),
+              child: Row(
+                children: [
+                  const _ProfileAvatar(size: 40),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          IdentityService.instance.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: context.gama.textPrimary,
+                            fontSize: GamaType.secondary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'Conta e privacidade',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: context.gama.textMuted,
+                            fontSize: GamaType.caption,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (onOpenWelcome != null)
+                    IconButton(
+                      icon: const Icon(Icons.help_outline_rounded, size: 19),
+                      tooltip: 'Conheça a $kAppName',
+                      onPressed: onOpenWelcome,
+                    ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: context.gama.textMuted,
+                  ),
+                  const SizedBox(width: 3),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+      // Botão nova conversa
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+        child: Material(
+          color: palette.accent,
+          shape: newChatShape,
+          clipBehavior: cyberpunk ? Clip.antiAlias : Clip.none,
+          child: InkWell(
+            onTap: onNewChat,
+            customBorder: newChatShape,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: entryRadius,
+                boxShadow: [
+                  if (!cyberpunk)
+                    BoxShadow(
+                      color: palette.accent.withValues(alpha: 0.18),
+                      blurRadius: 16,
+                      offset: const Offset(0, 5),
+                    ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.add_rounded,
+                      color: context.gama.onAccent,
+                      size: 21,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Nova conversa',
+                      style: TextStyle(
+                        color: context.gama.onAccent,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.1,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+
+      const SizedBox(height: 8),
+      const _SectionLabel('Ferramentas'),
+      _DrawerItem(
+        icon: Icons.handyman_outlined,
+        label: 'Oficina',
+        onTap: onOpenOficina ?? () => _comingSoon(context),
+        emphasized: true,
+      ),
+      _DrawerItem(
+        icon: Icons.menu_book_outlined,
+        label: 'Biblioteca',
+        onTap: onOpenLibrary ?? () => _comingSoon(context),
+      ),
+      _DrawerItem(
+        icon: Icons.schedule_outlined,
+        label: 'Agendamentos',
+        onTap: onOpenScheduled ?? () => _comingSoon(context),
+      ),
+      _DrawerItem(
+        icon: Icons.extension_outlined,
+        label: 'Recursos e integrações',
+        onTap: onOpenPlugins ?? () => _comingSoon(context),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+        child: Divider(color: context.gama.divider, height: 1),
+      ),
+    ];
 
     return Drawer(
-      backgroundColor: context.gama.surface,
+      backgroundColor: palette.surface,
+      shape: cyberpunk ? const RoundedRectangleBorder() : null,
       child: Stack(
         children: [
           const Positioned(
@@ -112,336 +268,259 @@ class _AppDrawerState extends State<AppDrawer> {
             child: IgnorePointer(child: GamaTopShade()),
           ),
           SafeArea(
-            child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // PERFIL — área única, sem uma segunda ação de criar conversa.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-              child: Material(
-                color: context.gama.surfaceCard,
-                borderRadius: BorderRadius.circular(16),
-                child: InkWell(
-                  key: const Key('drawer-account-entry'),
-                  onTap: () => _openPage(context, const AccountScreen()),
-                  borderRadius: BorderRadius.circular(16),
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: context.gama.borderSoft),
-                    ),
-                    child: Row(
-                      children: [
-                        const _ProfileAvatar(size: 40),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                IdentityService.instance.displayName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: context.gama.textPrimary,
-                                  fontSize: GamaType.secondary,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 3),
-                              Text(
-                                'Conta e privacidade',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: context.gama.textMuted,
-                                  fontSize: GamaType.caption,
-                                ),
-                              ),
-                            ],
-                          ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final textSize = MediaQuery.textScalerOf(context).scale(14);
+                final compact =
+                    cyberpunk &&
+                    constraints.maxHeight < 550 + (textSize - 14) * 25;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (compact)
+                      SizedBox(
+                        height: constraints.maxHeight * .54,
+                        child: ListView(
+                          padding: EdgeInsets.zero,
+                          children: header,
                         ),
-                        if (onOpenWelcome != null)
-                          IconButton(
-                            icon: const Icon(Icons.help_outline_rounded, size: 19),
-                            tooltip: 'Conheça a $kAppName',
-                            onPressed: onOpenWelcome,
-                          ),
-                        Icon(Icons.chevron_right_rounded,
-                            size: 18, color: context.gama.textMuted),
-                        const SizedBox(width: 3),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            // Botão nova conversa
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-              child: Material(
-                color: context.gama.accent,
-                borderRadius: BorderRadius.circular(16),
-                child: InkWell(
-                  onTap: onNewChat,
-                  borderRadius: BorderRadius.circular(16),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      // Superfície sólida: o texto mantém contraste em ambos os temas.
-                      color: context.gama.accent,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: context.gama.accent.withValues(alpha: 0.18),
-                          blurRadius: 16,
-                          offset: const Offset(0, 5),
-                        ),
-                      ],
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 13,
-                      ),
+                      )
+                    else
+                      ...header,
+
+                    // HISTÓRICO: conversas fixadas permanecem aqui, e a página
+                    // completa continua disponível sem ocupar um item principal.
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 10, 8),
                       child: Row(
                         children: [
-                          Icon(
-                            Icons.add_rounded,
-                            color: context.gama.onAccent,
-                            size: 21,
+                          Expanded(
+                            child: Text(
+                              'Histórico',
+                              style: TextStyle(
+                                color: context.gama.textMuted,
+                                fontSize: GamaType.label,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Nova conversa',
-                            style: TextStyle(
-                              color: context.gama.onAccent,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.1,
+                          if (onOpenProjects != null)
+                            TextButton.icon(
+                              key: const Key('drawer-pinned-shortcut'),
+                              onPressed: onOpenProjects,
+                              style: TextButton.styleFrom(
+                                foregroundColor: context.gama.textSecondary,
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                ),
+                              ),
+                              icon: const Icon(
+                                Icons.push_pin_outlined,
+                                size: 15,
+                              ),
+                              label: const Text(
+                                'Fixadas',
+                                style: TextStyle(fontSize: GamaType.label),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+
+                    // ===== CONVERSAS =====
+                    Expanded(
+                      child: ListenableBuilder(
+                        listenable: service,
+                        builder: (context, _) {
+                          final query = conversationQuery.trim().toLowerCase();
+                          // Uma única busca calcula tanto o filtro quanto o trecho
+                          // exibido; evita reler as mesmas mensagens duas vezes.
+                          final snippets = <String, String?>{};
+                          bool matches(Conversation c) {
+                            if (query.isEmpty) return true;
+                            final snippet = _conversationSnippet(
+                              service,
+                              c,
+                              query,
+                            );
+                            if (snippet == null) return false;
+                            snippets[c.id] = snippet;
+                            return true;
+                          }
+
+                          final pinned = service.pinnedConversations
+                              .where(matches)
+                              .toList();
+                          final recent = service.recentConversations
+                              .where(matches)
+                              .toList();
+                          final historyRows = buildConversationHistoryRows(
+                            pinned: pinned,
+                            recent: recent,
+                          );
+                          final hasAny = historyRows.isNotEmpty;
+
+                          return Column(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  2,
+                                  12,
+                                  8,
+                                ),
+                                child: TextField(
+                                  controller: _conversationSearchController,
+                                  focusNode: widget.searchFocusNode,
+                                  textInputAction: TextInputAction.search,
+                                  decoration: InputDecoration(
+                                    hintText: 'Buscar conversas',
+                                    prefixIcon: const Icon(
+                                      Icons.search_rounded,
+                                      size: 19,
+                                    ),
+                                    suffixIcon: query.isEmpty
+                                        ? null
+                                        : IconButton(
+                                            tooltip: 'Limpar busca',
+                                            icon: const Icon(
+                                              Icons.close_rounded,
+                                              size: 18,
+                                            ),
+                                            onPressed: () {
+                                              _conversationSearchController
+                                                  .clear();
+                                              _updateSearch('');
+                                            },
+                                          ),
+                                    filled: true,
+                                    fillColor: context.gama.surfaceCard,
+                                    isDense: true,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      vertical: 10,
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: searchRadius,
+                                      borderSide: BorderSide(
+                                        color: context.gama.border,
+                                      ),
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: searchRadius,
+                                      borderSide: BorderSide(
+                                        color: context.gama.border,
+                                      ),
+                                    ),
+                                  ),
+                                  style: TextStyle(
+                                    color: context.gama.textPrimary,
+                                    fontSize: 13,
+                                  ),
+                                  onChanged: _updateSearch,
+                                ),
+                              ),
+                              Expanded(
+                                child: !hasAny
+                                    ? Center(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(24),
+                                          child: Text(
+                                            query.isEmpty
+                                                ? 'Nenhuma conversa ainda'
+                                                : 'Nenhuma conversa encontrada',
+                                            style: TextStyle(
+                                              color: context.gama.textMuted,
+                                              fontSize: 13,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ),
+                                      )
+                                    : ListView.builder(
+                                        key: const Key('drawer-history-list'),
+                                        padding: const EdgeInsets.only(
+                                          bottom: 8,
+                                        ),
+                                        itemCount: historyRows.length,
+                                        itemBuilder: (context, index) {
+                                          final row = historyRows[index];
+                                          if (row.isSection) {
+                                            return _SectionLabel(
+                                              row.sectionTitle!,
+                                            );
+                                          }
+                                          final conversation =
+                                              row.conversation!;
+                                          return _ConversationTile(
+                                            key: ValueKey(
+                                              'drawer-conversation-${conversation.id}',
+                                            ),
+                                            conversation: conversation,
+                                            searchSnippet:
+                                                snippets[conversation.id],
+                                            isSelected:
+                                                conversation.id ==
+                                                service.currentConversationId,
+                                            onTap: () => onSelectConversation(
+                                              conversation.id,
+                                            ),
+                                            onPin: () => service.togglePin(
+                                              conversation.id,
+                                            ),
+                                            onDelete: () => _confirmDelete(
+                                              context,
+                                              conversation,
+                                            ),
+                                            onRename: () => _renameDialog(
+                                              context,
+                                              conversation,
+                                            ),
+                                          );
+                                        },
+                                      ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+
+                    // RODAPÉ: atalhos legíveis; o encerramento da sessão fica
+                    // em Conta e privacidade, com confirmação explícita.
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                      child: Divider(color: context.gama.divider, height: 1),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _DrawerFooterButton(
+                              icon: Icons.workspace_premium_outlined,
+                              label: 'Meu plano',
+                              foreground: context.gama.accent,
+                              onPressed: () =>
+                                  _openPage(context, const CommercialScreen()),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _DrawerFooterButton(
+                              icon: Icons.settings_outlined,
+                              label: 'Configurações',
+                              foreground: context.gama.textSecondary,
+                              onPressed: () =>
+                                  _openPage(context, const SettingsScreen()),
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 8),
-            const _SectionLabel('Ferramentas'),
-            _DrawerItem(
-              icon: Icons.handyman_outlined,
-              label: 'Oficina',
-              onTap: onOpenOficina ?? () => _comingSoon(context),
-              emphasized: true,
-            ),
-            _DrawerItem(
-              icon: Icons.menu_book_outlined,
-              label: 'Biblioteca',
-              onTap: onOpenLibrary ?? () => _comingSoon(context),
-            ),
-            _DrawerItem(
-              icon: Icons.schedule_outlined,
-              label: 'Agendamentos',
-              onTap: onOpenScheduled ?? () => _comingSoon(context),
-            ),
-            _DrawerItem(
-              icon: Icons.extension_outlined,
-              label: 'Recursos e integrações',
-              onTap: onOpenPlugins ?? () => _comingSoon(context),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-              child: Divider(color: context.gama.divider, height: 1),
-            ),
-
-            // HISTÓRICO: conversas fixadas permanecem aqui, e a página
-            // completa continua disponível sem ocupar um item principal.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 10, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text('Histórico', style: TextStyle(
-                      color: context.gama.textMuted,
-                      fontSize: GamaType.label,
-                      fontWeight: FontWeight.w700,
-                    )),
-                  ),
-                  if (onOpenProjects != null)
-                    TextButton.icon(
-                      key: const Key('drawer-pinned-shortcut'),
-                      onPressed: onOpenProjects,
-                      style: TextButton.styleFrom(
-                        foregroundColor: context.gama.textSecondary,
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                      ),
-                      icon: const Icon(Icons.push_pin_outlined, size: 15),
-                      label: const Text('Fixadas', style: TextStyle(fontSize: GamaType.label)),
-                    ),
-                ],
-              ),
-            ),
-
-            // ===== CONVERSAS =====
-            Expanded(
-              child: ListenableBuilder(
-                listenable: service,
-                builder: (context, _) {
-
-                    final query = conversationQuery.trim().toLowerCase();
-                    // Uma única busca calcula tanto o filtro quanto o trecho
-                    // exibido; evita reler as mesmas mensagens duas vezes.
-                    final snippets = <String, String?>{};
-                    bool matches(Conversation c) {
-                      if (query.isEmpty) return true;
-                      final snippet = _conversationSnippet(service, c, query);
-                      if (snippet == null) return false;
-                      snippets[c.id] = snippet;
-                      return true;
-                    }
-                    final pinned = service.pinnedConversations.where(matches).toList();
-                    final recent = service.recentConversations.where(matches).toList();
-                    final historyRows = buildConversationHistoryRows(
-                      pinned: pinned,
-                      recent: recent,
-                    );
-                    final hasAny = historyRows.isNotEmpty;
-
-                    return Column(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
-                          child: TextField(
-                            controller: _conversationSearchController,
-                            focusNode: widget.searchFocusNode,
-                            textInputAction: TextInputAction.search,
-                            decoration: InputDecoration(
-                              hintText: 'Buscar conversas',
-                              prefixIcon: const Icon(
-                                Icons.search_rounded,
-                                size: 19,
-                              ),
-                              suffixIcon: query.isEmpty
-                                  ? null
-                                  : IconButton(
-                                      tooltip: 'Limpar busca',
-                                      icon: const Icon(
-                                        Icons.close_rounded,
-                                        size: 18,
-                                      ),
-                                      onPressed: () {
-                                        _conversationSearchController.clear();
-                                        _updateSearch('');
-                                      },
-                                    ),
-                              filled: true,
-                              fillColor: context.gama.surfaceCard,
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                vertical: 10,
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(13),
-                                borderSide: BorderSide(
-                                  color: context.gama.border,
-                                ),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(13),
-                                borderSide: BorderSide(
-                                  color: context.gama.border,
-                                ),
-                              ),
-                            ),
-                            style: TextStyle(
-                              color: context.gama.textPrimary,
-                              fontSize: 13,
-                            ),
-                            onChanged: _updateSearch,
-                          ),
-                        ),
-                        Expanded(
-                          child: !hasAny
-                              ? Center(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(24),
-                                    child: Text(
-                                      query.isEmpty
-                                          ? 'Nenhuma conversa ainda'
-                                          : 'Nenhuma conversa encontrada',
-                                      style: TextStyle(
-                                        color: context.gama.textMuted,
-                                        fontSize: 13,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
-                                )
-                              : ListView.builder(
-                                  key: const Key('drawer-history-list'),
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  itemCount: historyRows.length,
-                                  itemBuilder: (context, index) {
-                                    final row = historyRows[index];
-                                    if (row.isSection) {
-                                      return _SectionLabel(row.sectionTitle!);
-                                    }
-                                    final conversation = row.conversation!;
-                                    return _ConversationTile(
-                                      key: ValueKey('drawer-conversation-${conversation.id}'),
-                                      conversation: conversation,
-                                      searchSnippet: snippets[conversation.id],
-                                      isSelected: conversation.id ==
-                                          service.currentConversationId,
-                                      onTap: () => onSelectConversation(conversation.id),
-                                      onPin: () => service.togglePin(conversation.id),
-                                      onDelete: () => _confirmDelete(context, conversation),
-                                      onRename: () => _renameDialog(context, conversation),
-                                    );
-                                  },
-                                ),
-                        ),
-                      ],
-                    );
-                },
-              ),
-            ),
-
-            // RODAPÉ: atalhos legíveis; o encerramento da sessão fica
-            // em Conta e privacidade, com confirmação explícita.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-              child: Divider(color: context.gama.divider, height: 1),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _DrawerFooterButton(
-                      icon: Icons.workspace_premium_outlined,
-                      label: 'Meu plano',
-                      foreground: context.gama.accent,
-                      onPressed: () => _openPage(context, const CommercialScreen()),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _DrawerFooterButton(
-                      icon: Icons.settings_outlined,
-                      label: 'Configurações',
-                      foreground: context.gama.textSecondary,
-                      onPressed: () => _openPage(context, const SettingsScreen()),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-              ],
+                  ],
+                );
+              },
             ),
           ),
         ],
@@ -528,34 +607,46 @@ class _DrawerFooterButton extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: context.gama.surfaceCard,
-    borderRadius: BorderRadius.circular(12),
-    child: InkWell(
-      onTap: onPressed,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 46),
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
-        decoration: BoxDecoration(
-          border: Border.all(color: context.gama.borderSoft),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 18, color: foreground),
-            const SizedBox(width: 7),
-            Flexible(child: Text(label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: context.gama.textPrimary, fontSize: GamaType.label),
-            )),
-          ],
+  Widget build(BuildContext context) {
+    final palette = context.gama;
+    final cyberpunk = palette.isCyberpunk;
+    final shape = cyberpunk
+        ? gamaCyberpunkBorder(cut: 8, side: BorderSide(color: palette.border))
+        : RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: palette.borderSoft),
+          );
+    return Material(
+      color: palette.surfaceCard,
+      shape: shape,
+      child: InkWell(
+        onTap: onPressed,
+        customBorder: shape,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 46),
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: foreground),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: cyberpunk ? null : 1,
+                  overflow: cyberpunk ? null : TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: cyberpunk ? 11 : GamaType.label,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 // ==================== WIDGETS AUXILIARES ====================
@@ -625,6 +716,40 @@ class _DrawerItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.gama;
+    if (palette.isCyberpunk) {
+      final shape = gamaCyberpunkBorder(
+        cut: 10,
+        side: BorderSide(color: palette.border),
+      );
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 5),
+        child: Material(
+          color: emphasized ? palette.bubbleUserSoft : palette.surfaceCard,
+          shape: shape,
+          clipBehavior: Clip.antiAlias,
+          child: ListTile(
+            shape: shape,
+            dense: true,
+            leading: Icon(icon, color: palette.accentBright, size: 20),
+            title: Text(
+              label,
+              style: TextStyle(
+                color: palette.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            trailing: Icon(
+              Icons.chevron_right,
+              size: 16,
+              color: palette.accentMuted,
+            ),
+            onTap: onTap,
+          ),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: ListTile(

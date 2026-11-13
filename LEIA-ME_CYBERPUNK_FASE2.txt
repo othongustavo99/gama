@@ -1,0 +1,32 @@
+GAMMA — Tema Cyberpunk (fase 2: vermelho mais fiel + HUD futurista)
+
+Este ZIP é um PATCH visual.
+Base: projeto Gamma + tema cyberpunk inicial já aplicado ou projeto original.
+
+MELHORIAS DESTA FASE
+- Paleta ajustada: menos rosa, mais vermelho neon/coral como as referências.
+- Fundo mais azul-escuro/preto, reduzindo o aspecto arroxeado.
+- Overlay/HUD mais rico: cabeçalho técnico, progress bar, binários, barcode, marcas laterais e arcos futuristas.
+- Composer com acabamento mais tecnológico e detalhes HUD.
+- Botões flutuantes com notch angular no canto para reforçar a linguagem visual.
+
+ARQUIVOS INCLUÍDOS
+- lib/core/gama_colors.dart
+- lib/main.dart
+- lib/services/settings_service.dart
+- lib/screens/settings_screen.dart
+- lib/widgets/gama_floating_page.dart
+- lib/widgets/chat_composer.dart
+- lib/widgets/gama_cyberpunk_overlay.dart
+
+COMO APLICAR
+1. Faça um commit/backup.
+2. Extraia este ZIP na raiz do projeto Gamma.
+3. Mescle a pasta lib e substitua os arquivos quando solicitado.
+4. Rode:
+   flutter analyze
+   flutter run -d windows
+5. Vá em Configurações > Aparência > Tema do aplicativo > Cyberpunk.
+
+OBSERVAÇÃO
+Se você já aplicou a Fase 1, pode simplesmente sobrescrever com esta Fase 2.

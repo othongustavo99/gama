@@ -39,7 +39,7 @@ from ..core.file_bundle import chat_with_continuation, generate_files_per_file
 from ..core.conversation_session import load_session, save_session, session_key
 from ..core.code_analyzer.source_detector import parse_github_url
 from ..core.identity import current_user_id
-from ..core.media_quota import DailyQuotaExceeded, consume_daily_media_quota, refund_daily_media_quota
+from ..core.media_quota import consume_daily_media_quota, refund_daily_media_quota
 from ..core.commercial_plans import (
     reserve_feature, finalize_feature, FeatureLimitReached,
     FeatureRequestAlreadyProcessed, CommercialError,
@@ -1498,14 +1498,12 @@ async def chat(
                     if not prompt:
                         yield {"type": "result", "content": "Descreva a imagem a gerar."}
                         return
-                    # Cota comercial é reservada somente depois de validar pedido.
-                    # O provedor NÃO é acionado se a conta atingiu a franquia beta.
+                    # Registra a tentativa somente depois de validar o pedido.
                     image_hold = None
                     try:
                         image_hold = reserve_feature(user_id, "image", uuid.uuid4().hex)
                         consume_daily_media_quota(user_id, "image")
-                    except (FeatureLimitReached, FeatureRequestAlreadyProcessed, CommercialError,
-                            DailyQuotaExceeded, RuntimeError) as exc:
+                    except (CommercialError, RuntimeError) as exc:
                         finalize_feature(user_id, image_hold, provider_contacted=False)
                         yield {"type": "result", "content": str(exc)}
                         return
@@ -1602,8 +1600,7 @@ async def chat(
                     try:
                         video_hold = reserve_feature(user_id, "video", uuid.uuid4().hex)
                         consume_daily_media_quota(user_id, "video")
-                    except (FeatureLimitReached, FeatureRequestAlreadyProcessed, CommercialError,
-                            DailyQuotaExceeded, RuntimeError) as exc:
+                    except (CommercialError, RuntimeError) as exc:
                         finalize_feature(user_id, video_hold, provider_contacted=False)
                         yield {"type": "result", "content": str(exc)}
                         return
@@ -2416,7 +2413,7 @@ async def chat(
                     queue.get_nowait()
 
     # Chat comum usa a cota chat. Pedido direto de imagem/vídeo utiliza
-    # a cota correspondente dentro da ferramenta (não cobra chat duas vezes).
+    # a contagem de mídia dentro da ferramenta, sem consumir franquia de chat.
     # Fase 3K: reserve the ID synchronously, before the StreamingResponse body
     # begins. Two simultaneous HTTP requests cannot pass the old task-only check.
     try:

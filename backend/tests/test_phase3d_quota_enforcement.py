@@ -1,10 +1,11 @@
 """Fase 3D: cotas transacionais, reversão, replay e rotas com opt-in."""
 from concurrent.futures import ThreadPoolExecutor
+import sqlite3
 
 import httpx
 import pytest
 
-from app.core import commercial_plans as cp
+from app.core import commercial_plans as cp, media_quota
 from app.core.account_privacy import delete_account_data
 
 A = "google_email_alice@example.com"
@@ -31,23 +32,35 @@ def test_disabled_does_not_touch_any_usage(monkeypatch):
     assert not cp.account_snapshot(A)["enforcement_active"]
 
 
-def test_atomic_quota_and_replay(monkeypatch):
+@pytest.mark.parametrize("feature", ["image", "video"])
+def test_media_reservations_are_unlimited_and_reject_replays(monkeypatch, feature):
     activate(monkeypatch)
-    cp.assign_plan(A, "pro", "plan-pro-test-001")
-    hold = cp.reserve_feature(A, "video", "video-operation-0001")
-    assert hold
-    with pytest.raises(cp.FeatureRequestAlreadyProcessed):
-        cp.reserve_feature(A, "video", "video-operation-0001")
-    cp.finalize_feature(A, hold, provider_contacted=True)
-    with pytest.raises(cp.FeatureRequestAlreadyProcessed):
-        cp.reserve_feature(A, "video", "video-operation-0001")
-    hold2 = cp.reserve_feature(A, "video", "video-operation-0002")
-    cp.finalize_feature(A, hold2, delivered=True)
-    with pytest.raises(cp.FeatureLimitReached):
-        cp.reserve_feature(A, "video", "video-operation-0003")
-    assert cp.account_snapshot(A)["usage_today"]["video"] == 2
-    assert cp.account_snapshot(B)["usage_today"]["video"] == 0
-    assert cp.account_snapshot(A)["enforcement_active"] is True
+    for index in range(12):
+        request_id = f"{feature}-operation-{index:04d}"
+        hold = cp.reserve_feature(A, feature, request_id)
+        assert hold["credits_reserved"] == 0
+        with pytest.raises(cp.FeatureRequestAlreadyProcessed):
+            cp.reserve_feature(A, feature, request_id)
+        assert cp.finalize_feature(A, hold, delivered=True)
+        with pytest.raises(cp.FeatureRequestAlreadyProcessed):
+            cp.reserve_feature(A, feature, request_id)
+    snapshot = cp.account_snapshot(A)
+    assert snapshot["usage_today"][feature] == 12
+    assert feature not in snapshot["limits"]
+    assert snapshot["enforcement_active"]
+    assert cp.account_snapshot(B)["usage_today"][feature] == 0
+
+
+@pytest.mark.parametrize("feature", ["image", "video"])
+def test_media_attempts_continue_past_old_daily_quota(monkeypatch, tmp_path, feature):
+    monkeypatch.setattr(media_quota.settings, "DATA_DIR", str(tmp_path))
+    for _ in range(12):
+        media_quota.consume_daily_media_quota(A, feature)
+    assert media_quota.refund_daily_media_quota(A, feature)
+    with sqlite3.connect(tmp_path / "gama_media_quota.sqlite3") as db:
+        assert db.execute(
+            "SELECT used FROM media_quota WHERE user_id=? AND media_type=?", (A, feature)
+        ).fetchone() == (11,)
 
 
 def test_refund_if_never_called_provider(monkeypatch):
@@ -67,18 +80,19 @@ def test_overage_credits_and_refund_no_provider(monkeypatch):
     activate(monkeypatch)
     monkeypatch.setenv("GAMA_COMMERCIAL_ALLOW_OVERAGE_CREDITS", "1")
     cp.adjust_credits(A, 3, "grant-credits-0001", reason="crédito de teste")
-    h1 = cp.reserve_feature(A, "video", "video-credit-0001")  # Free tem 0 vídeos
+    monkeypatch.setitem(cp.CATALOG["free"], "artifact", 0)
+    h1 = cp.reserve_feature(A, "artifact", "artifact-credit-0001")
     assert h1["credits_reserved"] == 1
     assert cp.account_snapshot(A)["credits_balance"] == 2
     cp.finalize_feature(A, h1, provider_contacted=False)
     assert cp.account_snapshot(A)["credits_balance"] == 3
     assert not cp.finalize_feature(A, h1, delivered=True)
-    h2 = cp.reserve_feature(A, "video", "video-credit-0002")
+    h2 = cp.reserve_feature(A, "artifact", "artifact-credit-0002")
     cp.finalize_feature(A, h2, provider_contacted=True)
     assert cp.account_snapshot(A)["credits_balance"] == 2
-    assert cp.account_snapshot(A)["usage_today"]["video"] == 1
+    assert cp.account_snapshot(A)["usage_today"]["artifact"] == 1
     with pytest.raises(cp.CommercialError):
-        cp.reserve_feature(B, "video", "video-credit-0002")
+        cp.reserve_feature(B, "artifact", "artifact-credit-0002")
 
 
 def test_concurrent_reservations_never_exceed_free_daily_chat(monkeypatch):
@@ -180,7 +194,8 @@ def test_36_hour_orphan_hold_is_released(monkeypatch):
     activate(monkeypatch)
     monkeypatch.setenv("GAMA_COMMERCIAL_ALLOW_OVERAGE_CREDITS", "1")
     cp.adjust_credits(A, 1, "grant-one-credit-01", reason="teste de recuperação")
-    hold = cp.reserve_feature(A, "video", "stale-hold-video-01")
+    monkeypatch.setitem(cp.CATALOG["free"], "artifact", 0)
+    hold = cp.reserve_feature(A, "artifact", "stale-hold-artifact-01")
     assert cp.account_snapshot(A)["credits_balance"] == 0
     with cp._connect() as db:
         db.execute("UPDATE feature_reservations SET created_at='2000-01-01T00:00:00+00:00' WHERE request_id=?",
@@ -188,4 +203,4 @@ def test_36_hour_orphan_hold_is_released(monkeypatch):
     # Próxima reserva também libera estornos abandonados.
     cp.reserve_feature(A, "image", "next-image-0001")
     assert cp.account_snapshot(A)["credits_balance"] == 1
-    assert cp.account_snapshot(A)["usage_today"]["video"] == 0
+    assert cp.account_snapshot(A)["usage_today"]["artifact"] == 0

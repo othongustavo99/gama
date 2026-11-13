@@ -6,7 +6,7 @@ import '../core/constants.dart';
 enum GamaMode { programar, conversar }
 
 /// Preferência persistida. Não afeta modelos, memória nem histórico.
-enum GamaAppearance { system, light, dark }
+enum GamaAppearance { system, light, dark, cyberpunk }
 
 class SettingsService extends ChangeNotifier {
   SettingsService._();
@@ -82,6 +82,7 @@ class SettingsService extends ChangeNotifier {
     return switch (_prefs.getString(_keyAppearance)) {
       'light' => GamaAppearance.light,
       'dark' => GamaAppearance.dark,
+      'cyberpunk' => GamaAppearance.cyberpunk,
       _ => GamaAppearance.dark,
     };
   }
